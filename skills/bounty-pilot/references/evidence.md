@@ -9,7 +9,7 @@ cause together.
 
 - `id`, `title`, `status`, `severity`, `bug_class`, `revision`, `root_cause`, `affected_paths`,
   `attacker_capabilities`, `preconditions`, `impact`, `scope_status`, `deployment_status`,
-  `novelty`, `evidence`, `objections`, `rejection_reason`.
+  `novelty`, `evidence`, `objections`, `rejection_reason`. Optional until the gate: `escalation`.
 - `status`: `hypothesis` | `needs-evidence` | `verified` | `refuted`.
 - `severity`: `unassessed` | `informational` | `low` | `medium` | `high` | `critical`. Cite the
   program's rubric in `severity_rationale` before assigning a final label.
@@ -32,6 +32,14 @@ cause together.
 - `next_experiment`: required for `hypothesis` and `needs-evidence`; it must name a decisive
   `question`, a reproducible `method`, and the `expected_evidence`. Add `blocker` when the test
   cannot run yet. `queue --run` lists these leads; a queued experiment is not an attempted test.
+- `escalation`: the amplifier ladder from `escalate.md`, recorded rather than assumed.
+  `escalation.attempted` holds one entry per amplifier — `repetition`, `other-parties-funds`,
+  `composition`, `become-the-trusted-party`, `timing`, `freeze-instead-of-theft` — each with a
+  `result` of `reached`, `blocked` or `not-applicable`, and an `anchor` whenever the result is
+  `reached` or `blocked`. An unanchored `blocked` is an assumption, not a result. `ceiling` names
+  the highest impact class the evidence actually reached and `ceiling_evidence` anchors it. The
+  field is optional on a hypothesis; the submission gate requires every amplifier to carry a
+  result, and `queue --run` lists the missing ones for every open record.
 - `history_review`: record the private-ledger comparison before submission. Use
   `no-match` only after `history check` reports none; use `different-root-cause` with prior case IDs
   and a concrete mechanism comparison; use `regression` only with `evidence` citing how the issue

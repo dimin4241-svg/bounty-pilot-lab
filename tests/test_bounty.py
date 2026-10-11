@@ -692,8 +692,19 @@ class RunTests(unittest.TestCase):
                                           'latest', opener=node, run=self.run)
         return str(Path(result['evidence_file']).relative_to(self.run.resolve()))
 
+    def escalation(self, **overrides):
+        """A completed ladder: every amplifier tried exactly once, every result anchored."""
+        record = {'attempted': [{'amplifier': amplifier, 'result': 'blocked',
+                                 'anchor': 'code: src/Vault.sol:144 bounds ' + amplifier}
+                                for amplifier in bounty.ESCALATION_AMPLIFIERS],
+                  'ceiling': 'informational',
+                  'ceiling_evidence': 'Self-harm only; every amplifier came back blocked.'}
+        record.update(overrides)
+        return record
+
     def submittable(self):
         row = self.verified()
+        row['escalation'] = self.escalation()
         row['objections'] = [self.objection()]
         row.update(severity='high', scope_status='in-scope', deployment_status='exact',
                    deployment_evidence=[self.deployment_evidence()],
@@ -936,6 +947,106 @@ class RunTests(unittest.TestCase):
     def test_submission_gate_refuses_an_empty_file(self):
         self.assertTrue(any('no verified records' in e
                             for e in bounty.validate(self.run, submission=True)))
+
+    # ---- escalation ladder ----
+    def test_the_template_carries_the_amplifier_ladder_shape(self):
+        self.assertEqual(bounty.template()['escalation'],
+                         {'attempted': [], 'ceiling': '', 'ceiling_evidence': ''})
+        self.assertEqual(bounty.ESCALATION_AMPLIFIERS,
+                         ('repetition', 'other-parties-funds', 'composition',
+                          'become-the-trusted-party', 'timing', 'freeze-instead-of-theft'))
+
+    def test_escalation_is_optional_for_an_open_candidate(self):
+        # A hypothesis has not been escalated yet; only submission demands the completed ladder.
+        row = self.candidate()
+        del row['escalation']
+        self.assertEqual(self.check(row), [])
+        row['escalation'] = {'attempted': [], 'ceiling': '', 'ceiling_evidence': ''}
+        self.assertEqual(self.check(row), [])
+
+    def test_a_misshapen_escalation_is_an_error_not_a_crash(self):
+        row = self.candidate()
+        row['escalation'] = 'tried everything'
+        self.assertTrue(any('escalation must be an object' in e for e in self.check(row)))
+        row['escalation'] = {'attempted': 'repetition'}
+        self.assertTrue(any('escalation.attempted must be an array' in e for e in self.check(row)))
+        row['escalation'] = {'attempted': ['repetition']}
+        self.assertTrue(any('attempted[0]: must be an object' in e for e in self.check(row)))
+        row['escalation'] = {'attempted': [], 'ceiling': ['critical']}
+        self.assertTrue(any('escalation.ceiling must be a string' in e for e in self.check(row)))
+        row['escalation'] = {'attempted': [{'amplifier': 'repetition', 'result': 'not-applicable',
+                                            'anchor': 7}]}
+        self.assertTrue(any('anchor must be a string' in e for e in self.check(row)))
+
+    def test_amplifier_and_result_come_from_the_fixed_sets(self):
+        row = self.candidate()
+        row['escalation'] = {'attempted': [{'amplifier': 'flash-loan', 'result': 'maybe'}]}
+        errors = self.check(row)
+        self.assertTrue(any('amplifier must be one of' in e for e in errors))
+        self.assertTrue(any('result must be one of' in e for e in errors))
+
+    def test_a_reached_or_blocked_amplifier_needs_an_anchor(self):
+        # An unanchored `blocked` is an assumption, and the assumption is what files a record
+        # one impact class too low.
+        row = self.candidate()
+        for result in ('reached', 'blocked'):
+            row['escalation'] = {'attempted': [{'amplifier': 'repetition', 'result': result}]}
+            self.assertTrue(any('requires an anchor' in e for e in self.check(row)), result)
+        row['escalation'] = {'attempted': [{'amplifier': 'repetition',
+                                            'result': 'not-applicable'}]}
+        self.assertEqual(self.check(row), [])
+
+    def test_submission_requires_every_amplifier_to_have_been_tried(self):
+        row = self.submittable()
+        row['escalation'] = self.escalation(
+            attempted=[{'amplifier': 'repetition', 'result': 'reached',
+                        'anchor': 'code: src/Vault.sol:214 no bound on deposit()'}])
+        errors = self.check(row, submission=True)
+        for amplifier in bounty.ESCALATION_AMPLIFIERS[1:]:
+            self.assertTrue(any(amplifier in e for e in errors), amplifier)
+        self.assertFalse(any('missing repetition' in e for e in errors))
+
+    def test_submission_accepts_a_completed_ladder_of_blocked_amplifiers(self):
+        # The point is a completed checklist, not a long one: blocked with an anchor is a pass.
+        self.assertEqual(self.check(self.submittable(), submission=True), [])
+
+    def test_submission_requires_an_escalation_record_at_all(self):
+        row = self.submittable()
+        del row['escalation']
+        self.assertTrue(any('requires an escalation record' in e
+                            for e in self.check(row, submission=True)))
+
+    def test_an_amplifier_carries_exactly_one_result(self):
+        row = self.submittable()
+        ladder = self.escalation()
+        ladder['attempted'].append(dict(ladder['attempted'][0], result='reached'))
+        row['escalation'] = ladder
+        errors = self.check(row, submission=True)
+        self.assertTrue(any('more than once' in e and 'repetition' in e for e in errors))
+
+    def test_queue_reports_the_amplifiers_nobody_has_tried(self):
+        row = self.candidate()
+        row['escalation'] = {'attempted': [{'amplifier': 'repetition', 'result': 'reached',
+                                            'anchor': 'code: src/Vault.sol:214 unbounded loop'}],
+                             'ceiling': '', 'ceiling_evidence': ''}
+        bounty.dump(self.run / 'findings.json', [row])
+        result = bounty.lead_queue(self.run)
+        self.assertEqual(result['state'], 'open-leads')          # still a report, never a gate
+        self.assertEqual(result['leads'][0]['escalation_gaps'],
+                         list(bounty.ESCALATION_AMPLIFIERS[1:]))
+
+    def test_queue_reports_a_refusal_made_without_one_amplifier_tried(self):
+        weak = self.candidate()
+        weak.update(id='BP-001', status='refuted',
+                    rejection_reason='The caller is checked against the recorded owner.')
+        strong = self.candidate()
+        strong.update(id='BP-002', status='refuted', escalation=self.escalation(),
+                      rejection_reason='Quoted guard on every writer of the aggregate.')
+        bounty.dump(self.run / 'findings.json', [weak, strong])
+        result = bounty.lead_queue(self.run)
+        self.assertEqual([r['id'] for r in result['weak_refusals']], ['BP-001'])
+        self.assertEqual(result['state'], 'all-leads-closed')     # reported, not failed
+        self.assertEqual(bounty.validate(self.run), [])
 
     # ---- objection exchange ----
     def test_objections_must_be_an_array_of_anchored_objects(self):
@@ -1547,6 +1658,72 @@ class BundleTests(unittest.TestCase):
         self.assertIn('delta.json', text)
         self.assertGreaterEqual(result['context_sections'], 2)
 
+    def test_saturated_ground_travels_with_every_later_bundle(self):
+        (self.run / 'saturated.md').write_text(
+            '# Saturated ground\n\n'
+            'src/Vault.sol | aggregate-not-decremented | reported by 9 readings '
+            '(8 claims, 1 leads)\n')
+        result = bounty.bundle(self.repo, self.run, ['accounting'])
+        text = (self.run / 'bundles/accounting-bundle.md').read_text()
+        self.assertIn('saturated.md', text)                    # named as run context
+        self.assertIn('reported by 9 readings', text)          # and its content carried
+        self.assertIn(bounty.SATURATED_NOTICE, text)           # with the instruction to skip it
+        self.assertGreaterEqual(result['context_sections'], 2)
+
+    def test_the_bundle_header_is_unchanged_while_nothing_is_saturated(self):
+        bounty.bundle(self.repo, self.run, ['accounting'])
+        self.assertNotIn(bounty.SATURATED_NOTICE,
+                         (self.run / 'bundles/accounting-bundle.md').read_text())
+        (self.run / 'saturated.md').write_text('')             # written but empty: still nothing
+        bounty.bundle(self.repo, self.run, ['accounting'])
+        self.assertNotIn(bounty.SATURATED_NOTICE,
+                         (self.run / 'bundles/accounting-bundle.md').read_text())
+
+    def test_spec_divergence_is_a_dispatchable_aiming_lens(self):
+        self.assertIn('spec-divergence', bounty.LENSES)
+        self.assertIn('spec-divergence', bounty.AIM_LENSES)
+        result = bounty.bundle(self.repo, self.run, ['spec-divergence'])
+        self.assertEqual([b['lens'] for b in result['bundles']], ['spec-divergence'])
+        self.assertIn('spec-divergence',
+                      [b['lens'] for b in bounty.bundle(self.repo, self.run, ['aim'])['bundles']])
+
+    def test_only_the_spec_divergence_lens_receives_the_documentation(self):
+        # Markdown is in no other bundle: the promise a project published is this lens's raw
+        # material, and NatSpec already travels with the source for everyone else.
+        (self.repo / 'docs').mkdir()
+        (self.repo / 'README.md').write_text('# Vault\n\nWithdrawals are always honoured.\n')
+        (self.repo / 'docs/spec.md').write_text('The index is checkpointed before every read.\n')
+        (self.repo / 'docs/secrets.md').write_text('PRIVATE_KEY=do-not-bundle\n')
+        commit(self.repo, 'docs')
+        result = bounty.bundle(self.repo, self.run, ['spec-divergence', 'accounting'])
+        spec = (self.run / 'bundles/spec-divergence-bundle.md').read_text()
+        accounting = (self.run / 'bundles/accounting-bundle.md').read_text()
+        self.assertIn('Withdrawals are always honoured', spec)
+        self.assertIn('checkpointed before every read', spec)
+        self.assertNotIn('do-not-bundle', spec)            # a secrets file is not documentation
+        self.assertNotIn('Withdrawals are always honoured', accounting)
+        self.assertEqual(result['doc_files_bundled_for_spec_divergence'], 2)
+        self.assertTrue((self.run / 'bundles/docs.md').is_file())
+
+    def test_an_oversize_documentation_file_is_omitted_and_disclosed(self):
+        (self.repo / 'README.md').write_text('# Vault\n' + 'a promise. ' * 100)
+        commit(self.repo, 'big docs')
+        with mock.patch.object(bounty, 'DOCS_MAX_FILE_BYTES', 100):
+            result = bounty.bundle(self.repo, self.run, ['spec-divergence'])
+        self.assertEqual(result['doc_files_omitted'], 1)
+        self.assertIn('omitted by path or size budget',
+                      (self.run / 'bundles/docs.md').read_text())
+
+    def test_a_symlinked_documentation_file_is_never_followed(self):
+        outside = Path(self.temp.name) / 'secret-notes.md'
+        outside.write_text('TOP-SECRET promise\n')
+        os.symlink(outside, self.repo / 'NOTES.md')
+        commit(self.repo, 'symlinked docs')
+        result = bounty.bundle(self.repo, self.run, ['spec-divergence'])
+        self.assertNotIn('TOP-SECRET',
+                         (self.run / 'bundles/spec-divergence-bundle.md').read_text())
+        self.assertIn({'path': 'NOTES.md', 'reason': 'symlink'}, result['skipped_files'])
+
     def test_missing_include_is_refused(self):
         with self.assertRaises(ValueError):
             bounty.bundle(self.repo, self.run, ['accounting'], includes=['/nonexistent.json'])
@@ -1637,6 +1814,174 @@ class BundleTests(unittest.TestCase):
             self.assertNotIn(secret, redacted)
         self.assertIn('solc_version = "0.8.24"', redacted)
         self.assertIn('https://eth-mainnet.g.alchemy.com/v2/<redacted>', redacted)
+
+
+class ConvergeTests(unittest.TestCase):
+    """Repeated readings are bought for recall. In a backtest 9 of 12 readings reported one
+    mechanism, so the budget bought duplicates; converge is how a later pass is told which
+    ground is already covered."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.repo = self.base / 'repo'
+        (self.repo / 'src').mkdir(parents=True)
+        git(self.repo, 'init', '-q')
+        (self.repo / 'src/Vault.sol').write_text('contract Vault {}\n')
+        commit(self.repo, 'fixture')
+        self.run = self.base / 'run'
+        bounty.initialize(self.repo, self.run)
+        self.readings = self.base / 'readings'
+        self.readings.mkdir()
+
+    def reading(self, name, *lines):
+        path = self.readings / name
+        path.write_text('\n'.join(lines) + '\n')
+        return path
+
+    def saturated_lines(self):
+        body = (self.run / 'saturated.md').read_text()
+        return [line for line in body.splitlines()
+                if line.count('|') == 2 and not line.startswith('`')]   # skip the shape in the header
+
+    def test_the_same_mechanism_at_neighbouring_functions_is_one_group(self):
+        # Grouping on the full `path:Contract.function` would split this into two singletons,
+        # and the next pass would be told nothing is saturated.
+        self.reading('pass1.md', 'CANDIDATE | lens: accounting | surface: '
+                                 'src/Vault.sol:Vault.withdraw | bug_class: aggregate-not-decremented')
+        self.reading('pass2.md', 'CANDIDATE | lens: seam | surface: '
+                                 'src/Vault.sol:Vault.redeem | bug_class: aggregate-not-decremented')
+        result = bounty.converge([str(self.readings)], self.run)
+        self.assertEqual(result['readings_parsed'], 2)
+        self.assertEqual(result['distinct_groups'], 1)
+        self.assertEqual(result['saturated_groups'], 1)
+        self.assertEqual(self.saturated_lines(),
+                         ['src/Vault.sol | aggregate-not-decremented | reported by 2 readings '
+                          '(2 claims, 0 leads)'])
+
+    def test_findings_and_leads_count_into_the_same_group(self):
+        # FINDING is what the sibling solidity-auditor skill emits, and labels are normalised,
+        # so `Aggregate Not Decremented` is the same ground as `aggregate-not-decremented`.
+        self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
+                                 'bug_class: aggregate-not-decremented')
+        self.reading('pass2.md', 'FINDING | surface: src/Vault.sol:Vault.redeem | '
+                                 'bug_class: Aggregate Not Decremented')
+        self.reading('pass3.txt', '  LEAD | bug_class: aggregate-not-decremented | lens: seam '
+                                  '| surface: src/Vault.sol:Vault.deposit')
+        bounty.converge([str(self.readings)], self.run)
+        report = bounty.read_json(self.run / 'convergence.json')
+        self.assertEqual(report['blocks_parsed'], 3)
+        group = report['saturated'][0]
+        self.assertEqual((group['readings'], group['claims'], group['leads']), (3, 2, 1))
+        self.assertEqual(len(group['sources']), 3)
+        self.assertIn('src/Vault.sol:Vault.deposit', group['surfaces'])
+        self.assertEqual(self.saturated_lines(),
+                         ['src/Vault.sol | aggregate-not-decremented | reported by 3 readings '
+                          '(2 claims, 1 leads)'])
+
+    def test_format_examples_are_never_counted_as_reports(self):
+        # Every reading quotes the output format from _shared.md; counting those placeholders
+        # would make every reading look like it reported the same mechanism.
+        for name in ('pass1.md', 'pass2.md'):
+            self.reading(name,
+                         '```',
+                         'CANDIDATE | lens: <lens-name> | surface: <path:Contract.function> | '
+                         'bug_class: <kebab-case>',
+                         '```',
+                         'LEAD | lens: liveness | surface: src/Vault.sol:Vault.pause | '
+                         'bug_class: pause-blocks-exit')
+        result = bounty.converge([str(self.readings)], self.run)
+        self.assertEqual(result['blocks_parsed'], 2)
+        self.assertEqual(result['blocks_skipped'], 2)
+        self.assertEqual(result['distinct_groups'], 1)
+        self.assertEqual(self.saturated_lines(),
+                         ['src/Vault.sol | pause-blocks-exit | reported by 2 readings '
+                          '(0 claims, 2 leads)'])
+
+    def test_the_singletons_are_what_the_next_pass_needs(self):
+        self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
+                                 'bug_class: aggregate-not-decremented')
+        self.reading('pass2.md', 'CANDIDATE | surface: src/Vault.sol:Vault.redeem | '
+                                 'bug_class: aggregate-not-decremented',
+                     'LEAD | surface: src/Oracle.sol:Oracle.peek | bug_class: stale-price-accepted')
+        result = bounty.converge([str(self.readings)], self.run)
+        self.assertEqual(result['singletons'], 1)
+        report = bounty.read_json(self.run / 'convergence.json')
+        self.assertEqual([g['bug_class'] for g in report['singletons']], ['stale-price-accepted'])
+        self.assertNotIn('stale-price-accepted', (self.run / 'saturated.md').read_text())
+
+    def test_the_threshold_decides_what_counts_as_saturated(self):
+        self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
+                                 'bug_class: aggregate-not-decremented')
+        self.reading('pass2.md', 'CANDIDATE | surface: src/Vault.sol:Vault.redeem | '
+                                 'bug_class: aggregate-not-decremented')
+        result = bounty.converge([str(self.readings)], self.run, threshold=3)
+        self.assertEqual(result['saturated_groups'], 0)
+        self.assertEqual(self.saturated_lines(), [])
+        self.assertIn('No mechanism reached 3 independent readings',
+                      (self.run / 'saturated.md').read_text())
+        with self.assertRaises(ValueError):
+            bounty.converge([str(self.readings)], self.run, threshold=0)
+
+    def test_a_single_file_is_a_reading_and_directories_combine(self):
+        first = self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
+                                         'bug_class: aggregate-not-decremented')
+        second = self.base / 'other'
+        second.mkdir()
+        (second / 'pass2.md').write_text('LEAD | surface: src/Vault.sol:Vault.redeem | '
+                                         'bug_class: aggregate-not-decremented\n')
+        result = bounty.converge([str(first), str(second)], self.run)
+        self.assertEqual(result['readings_parsed'], 2)
+        self.assertEqual(result['saturated_groups'], 1)
+
+    def test_missing_fields_and_stray_shapes_are_tolerated(self):
+        self.reading('pass1.md',
+                     '## **CANDIDATE** | surface: src/Vault.sol:Vault.withdraw',  # no bug_class
+                     '- CANDIDATE | bug_class: unvalidated-compose-sender',       # no surface
+                     'LEAD without any fields',                            # not a record header
+                     'candidate | surface: src/Vault.sol | bug_class: lowercase-word')
+        (self.readings / 'notes.json').write_text('{"not": "a reading"}\n')
+        result = bounty.converge([str(self.readings)], self.run)
+        self.assertEqual(result['readings_parsed'], 1)       # the .json file is not a reading
+        self.assertEqual(result['blocks_parsed'], 2)
+        self.assertEqual(result['distinct_groups'], 2)
+        self.assertEqual(result['saturated_groups'], 0)
+
+    def test_converge_refuses_a_directory_that_init_did_not_create(self):
+        self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol | bug_class: x-y')
+        plain = self.base / 'not-a-run'
+        plain.mkdir()
+        with self.assertRaisesRegex(ValueError, 'run.json'):
+            bounty.converge([str(self.readings)], plain)
+        inside = self.repo / 'private-run'
+        inside.mkdir()
+        (inside / 'run.json').write_text((self.run / 'run.json').read_text())
+        with self.assertRaisesRegex(ValueError, 'outside the target'):
+            bounty.converge([str(self.readings)], inside)
+        with self.assertRaisesRegex(ValueError, 'not a file or a directory'):
+            bounty.converge([str(self.base / 'nowhere')], self.run)
+
+    def test_converge_reports_what_it_could_not_read(self):
+        self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
+                                 'bug_class: aggregate-not-decremented')
+        big = self.reading('pass2.md', 'CANDIDATE | surface: src/Vault.sol | bug_class: x-y')
+        with mock.patch.object(bounty, 'READING_MAX_BYTES', 10):
+            result = bounty.converge([str(self.readings)], self.run)
+        self.assertEqual(result['readings_parsed'], 0)
+        self.assertEqual(sorted(result['unreadable_files']),
+                         sorted([str(self.readings / 'pass1.md'), str(big)]))
+
+    def test_converge_output_is_the_input_of_the_next_bundle(self):
+        self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
+                                 'bug_class: aggregate-not-decremented')
+        self.reading('pass2.md', 'CANDIDATE | surface: src/Vault.sol:Vault.redeem | '
+                                 'bug_class: aggregate-not-decremented')
+        bounty.converge([str(self.readings)], self.run)
+        bounty.bundle(self.repo, self.run, ['accounting'])
+        text = (self.run / 'bundles/accounting-bundle.md').read_text()
+        self.assertIn('aggregate-not-decremented', text)
+        self.assertIn(bounty.SATURATED_NOTICE, text)
 
 
 class CompilerBugTests(unittest.TestCase):
@@ -2223,6 +2568,9 @@ class CliTests(unittest.TestCase):
         for argv in (['init', '--repo', '.', '--out', 'x'], ['check', '--run', 'x'],
                      ['check', '--run', 'x', '--submission'], ['dup-check', '--run', 'x'],
                      ['queue', '--run', 'x'],
+                     ['converge', '--readings', 'readings', '--run', 'x'],
+                     ['converge', '--readings', 'a', '--readings', 'b', '--run', 'x',
+                      '--threshold', '3'],
                      ['history', 'check', '--run', 'x'],
                      ['history', 'record', '--run', 'x', '--finding', 'BP-001',
                       '--outcome', 'submitted'],

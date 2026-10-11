@@ -78,6 +78,12 @@ DEPLOY_STATUSES = {'unknown', 'exact', 'partial', 'mismatch', 'not-applicable'}
 NOVELTY_STATUSES = {'not-checked', 'no-public-match-found', 'matched-public-issue'}
 GATES = {'interruption', 'reachability', 'trigger', 'harm', 'eligibility', 'evidence'}
 OBJECTION_OUTCOMES = {'answered', 'sustained', 'withdrawn'}
+# The amplifier ladder a record climbs before it closes, in the order `references/escalate.md`
+# works it. A hunter stops at the first consequence noticed, so the ladder is recorded rather
+# than assumed: a `blocked` amplifier with an anchor is coverage, an unrecorded one is a gap.
+ESCALATION_AMPLIFIERS = ('repetition', 'other-parties-funds', 'composition',
+                         'become-the-trusted-party', 'timing', 'freeze-instead-of-theft')
+ESCALATION_RESULTS = {'reached', 'blocked', 'not-applicable'}
 HISTORY_SCHEMA = 1
 HISTORY_DISPOSITIONS = {'submitted', 'pending', 'accepted', 'paid', 'duplicate',
                         'invalid', 'out-of-scope', 'rejected', 'withdrawn'}
@@ -335,6 +341,7 @@ def template():
                                               'blocker': ''},
                 history_review={'status': 'unchecked', 'case_ids': [], 'rationale': '',
                                 'evidence': ''},
+                escalation={'attempted': [], 'ceiling': '', 'ceiling_evidence': ''},
                 objections=[], concessions=[], rejection_reason='')
 
 
@@ -751,21 +758,214 @@ def lead_queue(run):
     records = read_json(run / 'findings.json')
     if errors:
         return {'state': 'invalid', 'errors': errors, 'leads': []}
-    leads = []
+    leads, weak_refusals = [], []
     for row in records:
+        if row['status'] == 'refuted' and not _escalation_attempted(row):
+            # A mechanism dropped without one amplifier tried was refuted at its cheapest
+            # consequence. This is a report, not a gate: only submission is gated.
+            weak_refusals.append({'id': row['id'], 'bug_class': row['bug_class'],
+                                  'rejection_reason': row['rejection_reason']})
         if row['status'] not in ('hypothesis', 'needs-evidence'):
             continue
         leads.append({
             'id': row['id'], 'status': row['status'], 'severity': row['severity'],
             'bug_class': row['bug_class'], 'root_cause': row['root_cause'],
             'next_experiment': row['next_experiment'],
+            'escalation_gaps': _escalation_gaps(row),
         })
     leads.sort(key=lambda row: (0 if row['status'] == 'needs-evidence' else 1,
                                 row['id']))
+    weak_refusals.sort(key=lambda row: row['id'])
     return {'state': 'open-leads' if leads else 'all-leads-closed',
             'open_count': len(leads), 'leads': leads,
+            'weak_refusals': weak_refusals,
             'notice': 'Every open lead needs a decisive next experiment. A listed experiment is '
-                      'not evidence that it was run.'}
+                      'not evidence that it was run. escalation_gaps names the amplifiers this '
+                      'record has no result for; a weak refusal is a mechanism dropped without '
+                      'one amplifier tried.'}
+
+
+# --------------------------------------------------------------------------- #
+# convergence across independent readings
+# --------------------------------------------------------------------------- #
+
+READING_SUFFIXES = {'.md', '.markdown', '.txt', '.text', '.log', '.out', ''}
+READING_MAX_BYTES = 2_000_000
+# `FINDING` is the word the sibling solidity-auditor skill emits for the same block shape, and
+# its records get imported into a run, so it counts as a claim here.
+BLOCK_KINDS = {'CANDIDATE': 'claim', 'FINDING': 'claim', 'LEAD': 'lead'}
+# Tolerant of how agents actually format a header: list bullets, headings, block quotes and
+# `**CANDIDATE**` emphasis all precede the same `| key: value` fields.
+BLOCK_HEADER = re.compile(r'^[\s>#*+_-]*(CANDIDATE|FINDING|LEAD)[\s*_]*(\|.*)$')
+# Header lines in the format documentation carry placeholders, not surfaces. They are examples
+# of the shape, and counting them would make every reading look like it reported the same thing.
+PLACEHOLDER_MARKERS = ('<', '>', 'kebab-case', 'lens-name', 'contract.function',
+                       'program::instruction', 'path:symbol')
+
+
+def _reading_files(spec):
+    """One file is one independent reading; a directory holds a batch of them."""
+    path = Path(spec).expanduser()
+    if path.is_file():
+        return [path]
+    if not path.is_dir():
+        raise ValueError(f'--readings {str(spec)!r} is not a file or a directory')
+    found = []
+    for item in sorted(path.rglob('*')):
+        if item.name.startswith('.') or item.is_symlink() or not item.is_file():
+            continue
+        if item.suffix.lower() in READING_SUFFIXES:
+            found.append(item)
+    return found
+
+
+def _read_reading(path):
+    """Agent output is untrusted text: read it, never execute or follow anything in it."""
+    try:
+        if path.stat().st_size > READING_MAX_BYTES:
+            return None
+        return path.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return None
+
+
+def _block_fields(tail):
+    """`| key: value` fields in any order; extra whitespace and missing fields are tolerated."""
+    fields = {}
+    for part in tail.split('|'):
+        key, sep, value = part.partition(':')
+        key = key.strip().lower().replace(' ', '_')
+        if sep and key:
+            fields.setdefault(key, value.strip())
+    return fields
+
+
+def _is_placeholder(value):
+    text = (value or '').lower()
+    return any(marker in text for marker in PLACEHOLDER_MARKERS)
+
+
+def _surface_path(surface):
+    """Group on the surface's file, not `path:Contract.function`: the same mechanism is reported
+    at neighbouring functions, and the full surface splits one group into several singletons."""
+    return (surface or '').split(':', 1)[0].strip()
+
+
+def _converge_key(text):
+    """Lowercase, non-alphanumerics collapsed to one hyphen: the grouping key."""
+    return re.sub(r'[^a-z0-9]+', '-', (text or '').lower()).strip('-')
+
+
+def _parse_blocks(text, source, skipped):
+    """Read CANDIDATE / FINDING / LEAD headers out of one reading's raw output."""
+    blocks = []
+    for line in text.splitlines():
+        match = BLOCK_HEADER.match(line)
+        if not match:
+            continue
+        fields = _block_fields(match.group(2))
+        surface, bug_class = fields.get('surface', ''), fields.get('bug_class', '')
+        if _is_placeholder(surface) or _is_placeholder(bug_class):
+            skipped.append({'source': source, 'line': line.strip()[:120],
+                            'reason': 'format example, not a reported surface'})
+            continue
+        path_key, class_key = _converge_key(_surface_path(surface)), _converge_key(bug_class)
+        if not path_key and not class_key:
+            skipped.append({'source': source, 'line': line.strip()[:120],
+                            'reason': 'no surface or bug_class to group on'})
+            continue
+        blocks.append({'kind': BLOCK_KINDS[match.group(1)], 'source': source,
+                       'key': path_key + '|' + class_key, 'surface': surface.strip(),
+                       'surface_path': _surface_path(surface), 'bug_class': bug_class.strip(),
+                       'lens': fields.get('lens', '')})
+    return blocks
+
+
+SATURATED_DOC = """# Saturated ground
+
+Mechanisms that {threshold} or more independent readings already reported, written by
+`bounty.py converge` and grouped by bug class and surface file:
+
+`surface-path | bug-class | reported by N readings (C claims, L leads)`
+
+A line here is covered ground, not a verdict - nothing below has been judged, and a mechanism
+many readings agreed on can still be invalid. Later passes read it to spend their pass on
+surfaces and mechanisms it does not name. `convergence.json` holds the full grouping and the
+singletons, the mechanisms one reading saw and nobody has confirmed.
+"""
+
+
+def converge(readings, run, threshold=2):
+    """Group what independent readings reported, so later passes can skip saturated ground.
+
+    Repeated readings are bought for recall. In a backtest of this skill 9 of 12 readings
+    reported the same mechanism, so most of the budget bought duplicates; what the next pass
+    needs is the ground already covered, and the singletons nobody has confirmed.
+    """
+    run = Path(run).resolve()
+    if not (run / 'run.json').is_file():
+        raise ValueError('converge --run must be a run directory created by init '
+                         '(no run.json found)')
+    meta = read_json(run / 'run.json')
+    require_private_output(run, meta.get('target_root'), what='converge --run')
+    if type(threshold) is not int or threshold < 1:
+        raise ValueError('--threshold must be a positive number of distinct readings')
+    if not readings:
+        raise ValueError('converge needs at least one --readings directory or file')
+    files = []
+    for spec in readings:
+        files.extend(_reading_files(spec))
+    files = list(dict.fromkeys(files))
+
+    parsed, unreadable, blocks, skipped_blocks = [], [], [], []
+    for path in files:
+        text = _read_reading(path)
+        if text is None:
+            unreadable.append(str(path))
+            continue
+        parsed.append(str(path))
+        blocks.extend(_parse_blocks(text, str(path), skipped_blocks))
+
+    groups = {}
+    for block in blocks:
+        group = groups.setdefault(block['key'], {
+            'key': block['key'], 'surface_path': block['surface_path'],
+            'bug_class': block['bug_class'], 'bug_classes': [], 'surfaces': [], 'lenses': [],
+            'readings': 0, 'claims': 0, 'leads': 0, 'sources': []})
+        for field, value in (('bug_classes', block['bug_class']), ('surfaces', block['surface']),
+                             ('lenses', block['lens']), ('sources', block['source'])):
+            if value and value not in group[field]:
+                group[field].append(value)
+        group['claims' if block['kind'] == 'claim' else 'leads'] += 1
+    for group in groups.values():
+        # One file is one reading, so the distinct sources are the distinct readings.
+        group['readings'] = len(group['sources'])
+    ordered = sorted(groups.values(), key=lambda g: (-g['readings'], g['key']))
+    saturated = [g for g in ordered if g['readings'] >= threshold]
+    singletons = [g for g in ordered if g['readings'] == 1]
+
+    lines = [SATURATED_DOC.format(threshold=threshold)]
+    lines.extend('{0} | {1} | reported by {2} readings ({3} claims, {4} leads)'.format(
+        g['surface_path'] or '(no surface)', g['bug_class'] or '(no bug_class)',
+        g['readings'], g['claims'], g['leads']) for g in saturated)
+    if not saturated:
+        lines.append(f'No mechanism reached {threshold} independent readings yet.')
+    (run / 'saturated.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    dump(run / 'convergence.json', {
+        'schema_version': SCHEMA_VERSION, 'run_id': meta.get('run_id'),
+        'generated_at': datetime.now(timezone.utc).isoformat(), 'threshold': threshold,
+        'readings_parsed': len(parsed), 'blocks_parsed': len(blocks),
+        'distinct_groups': len(groups), 'saturated_groups': len(saturated),
+        'readings': parsed, 'unreadable': unreadable, 'skipped_blocks': skipped_blocks,
+        'groups': ordered, 'saturated': saturated, 'singletons': singletons})
+    return {'run': str(run), 'threshold': threshold, 'readings_parsed': len(parsed),
+            'blocks_parsed': len(blocks), 'distinct_groups': len(groups),
+            'saturated_groups': len(saturated), 'singletons': len(singletons),
+            'blocks_skipped': len(skipped_blocks), 'unreadable_files': unreadable,
+            'written': ['saturated.md', 'convergence.json'],
+            'notice': 'This counts what was reported, not what is true. A mechanism many readings '
+                      'agreed on can still be invalid, and a singleton is the mechanism that still '
+                      'needs a second opinion.'}
 
 
 # --------------------------------------------------------------------------- #
@@ -786,6 +986,61 @@ def _deployment_evidence_paths(value):
     if isinstance(value, list) and all(has_text(item) for item in value):
         return list(value)
     return None
+
+
+def _escalation_attempted(row):
+    """Amplifiers this record actually recorded a result for; wrong shapes simply do not count."""
+    escalation = row.get('escalation')
+    attempted = escalation.get('attempted') if isinstance(escalation, dict) else None
+    recorded = set()
+    if isinstance(attempted, list):
+        for item in attempted:
+            if (isinstance(item, dict) and _is_one_of(item.get('amplifier'), ESCALATION_AMPLIFIERS)
+                    and _is_one_of(item.get('result'), ESCALATION_RESULTS)):
+                recorded.add(item['amplifier'])
+    return recorded
+
+
+def _escalation_gaps(row):
+    """Amplifiers nobody has tried yet. A gap is unfinished escalation, not a refutation."""
+    recorded = _escalation_attempted(row)
+    return [amplifier for amplifier in ESCALATION_AMPLIFIERS if amplifier not in recorded]
+
+
+def _check_escalation(row, prefix, errors):
+    """Shape only: whether the ladder is complete is a submission question, not a structural one."""
+    escalation = row.get('escalation')
+    if escalation is None:
+        return
+    if not isinstance(escalation, dict):
+        errors.append(prefix + ': escalation must be an object with attempted, ceiling and '
+                      'ceiling_evidence')
+        return
+    attempted = escalation.get('attempted', [])
+    if not isinstance(attempted, list):
+        errors.append(prefix + ': escalation.attempted must be an array')
+    else:
+        for j, item in enumerate(attempted):
+            label = f'{prefix}.escalation.attempted[{j}]'
+            if not isinstance(item, dict):
+                errors.append(label + ': must be an object')
+                continue
+            if not _is_one_of(item.get('amplifier'), ESCALATION_AMPLIFIERS):
+                errors.append(label + ': amplifier must be one of '
+                              + ', '.join(ESCALATION_AMPLIFIERS))
+            result = item.get('result')
+            if not _is_one_of(result, ESCALATION_RESULTS):
+                errors.append(label + ': result must be one of '
+                              + ', '.join(sorted(ESCALATION_RESULTS)))
+            elif result in ('reached', 'blocked') and not has_text(item.get('anchor')):
+                # An unanchored `blocked` is an assumption, and it is the assumption that files
+                # a record one impact class too low.
+                errors.append(label + ': a ' + result + ' amplifier requires an anchor')
+            elif 'anchor' in item and not isinstance(item['anchor'], str):
+                errors.append(label + ': anchor must be a string')
+    for key in ('ceiling', 'ceiling_evidence'):
+        if not isinstance(escalation.get(key, ''), str):
+            errors.append(prefix + ': escalation.' + key + ' must be a string')
 
 
 def _check_record(row, prefix, run, seen, errors):
@@ -839,6 +1094,7 @@ def _check_record(row, prefix, run, seen, errors):
                 errors.append(prefix + ': history_review.rationale must be a string')
             if not isinstance(history_review.get('evidence', ''), str):
                 errors.append(prefix + ': history_review.evidence must be a string')
+    _check_escalation(row, prefix, errors)
     for key, allowed in (('status', STATUSES), ('severity', SEVERITIES),
                          ('scope_status', SCOPE_STATUSES),
                          ('deployment_status', DEPLOY_STATUSES)):
@@ -998,6 +1254,29 @@ def _check_deployment_evidence(row, prefix, run, errors):
                           'verify-deployment')
 
 
+def _check_escalation_submission(row, prefix, errors):
+    """A completed ladder, not a long one: every amplifier tried once, with its result recorded."""
+    escalation = row.get('escalation')
+    attempted = escalation.get('attempted') if isinstance(escalation, dict) else None
+    if not isinstance(attempted, list):
+        errors.append(prefix + ': submission requires an escalation record trying every amplifier ('
+                      + ', '.join(ESCALATION_AMPLIFIERS) + '); a record closed at the first '
+                      'consequence noticed is usually an unfinished loss-of-funds record')
+        return
+    gaps = _escalation_gaps(row)
+    if gaps:
+        errors.append(prefix + ': submission requires an escalation result for every amplifier; '
+                      'missing ' + ', '.join(gaps) + ' (an anchored blocked result is a pass)')
+    counted = {}
+    for item in attempted:
+        if isinstance(item, dict) and _is_one_of(item.get('amplifier'), ESCALATION_AMPLIFIERS):
+            counted[item['amplifier']] = counted.get(item['amplifier'], 0) + 1
+    repeated = [a for a in ESCALATION_AMPLIFIERS if counted.get(a, 0) > 1]
+    if repeated:
+        errors.append(prefix + ': escalation records ' + ', '.join(repeated) + ' more than once; '
+                      'each amplifier carries exactly one result')
+
+
 def _check_submission(row, prefix, run, errors, history_match_ids=None):
     """Gates that encode why bounty reports actually get rejected."""
     if row['scope_status'] != 'in-scope':
@@ -1018,6 +1297,7 @@ def _check_submission(row, prefix, run, errors, history_match_ids=None):
     if not has_text(row['evidence'].get('impact_quantification')):
         errors.append(prefix + ': submission requires evidence.impact_quantification '
                       '(what moves, how much, at what attacker cost)')
+    _check_escalation_submission(row, prefix, errors)
     history = row.get('history_review')
     ident = row['id'] if isinstance(row['id'], str) else ''
     if not isinstance(history, dict):
@@ -1338,13 +1618,15 @@ def delta(repo, since, scope_prefixes=None, limit=40):
 # lens bundles
 # --------------------------------------------------------------------------- #
 
-LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'privileged-path', 'accounting',
-          'integration-auth', 'external-call', 'economics', 'liveness', 'upgrade',
+LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence', 'privileged-path',
+          'accounting', 'integration-auth', 'external-call', 'economics', 'liveness', 'upgrade',
           'live-reality', 'anchor-account', 'seam', 'business-logic',
           'temporal-logic', 'recovery-failure', 'semantic-mismatch', 'composition',
           'impact-first')
 TRIAGE = 'triage'
-AIM_LENSES = ('delta', 'upstream-diff', 'coverage-gap')
+# Aiming lenses produce a reading order, not findings: spec-divergence reads what the project
+# promised in its own documentation and says where to go looking for the promise being broken.
+AIM_LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence')
 # The six highest-yield mechanism lenses. privileged-path leads because access control and
 # initialization are the categories automated reviewers measurably miss most, and the ones
 # the largest real losses came from.
@@ -1376,6 +1658,13 @@ strength. Do not claim any command ran, test passed or chain value was read unle
 
 {untrusted}
 """
+
+# Added to the header only when the run holds a converge result. Repeated readings are bought
+# for recall; without this paragraph most of them buy the same mechanism again.
+SATURATED_NOTICE = """`saturated.md` in the run context lists the mechanisms several independent readings have already
+reported, with the surface file and bug class each was reported at. That is saturated ground: do
+not re-derive it, and do not re-report it under a new name. Spend this reading on the surfaces and
+mechanisms the list does not name."""
 
 BUNDLE_FOOTER = """
 ---
@@ -1551,6 +1840,39 @@ def _is_project_context_path(path):
         'anchor.toml', 'go.mod', 'pyproject.toml'}
 
 
+DOCS_SUFFIXES = {'.md', '.markdown', '.rst', '.adoc', '.txt'}
+DOCS_MAX_FILE_BYTES = 200_000
+DOCS_BUDGET_BYTES = 400_000
+# The lenses that are handed docs.md. A promise the project published is this lens's raw material;
+# every other lens reads the source, where NatSpec already travels with the code.
+DOCS_LENSES = ('spec-divergence',)
+
+
+def _is_docs_path(path):
+    """Prose the project published about itself: README, docs/, specification notes."""
+    if _is_test_path(path) or _is_sensitive_context_path(path):
+        return False
+    return Path(path).suffix.lower() in DOCS_SUFFIXES
+
+
+def _collect_docs_files(root, tracked, skipped=None):
+    selected, omitted, used = [], [], 0
+    for path in tracked:
+        if not _is_docs_path(path):
+            continue
+        size = target_file_size(root, path)
+        if size is None:
+            read_target_file(root, path, skipped)   # records why (symlink, special, missing)
+            omitted.append(path)
+            continue
+        if size > DOCS_MAX_FILE_BYTES or used + size > DOCS_BUDGET_BYTES:
+            omitted.append(path)
+            continue
+        selected.append(path)
+        used += size
+    return selected, omitted
+
+
 def _collect_context_files(root, tracked, skipped=None):
     selected, omitted, used = [], [], 0
     for path in tracked:
@@ -1617,6 +1939,7 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
     test_paths, tests_omitted = _relevant_tests(root, all_tests, in_scope, scope_prefixes,
                                                 skipped_files)
     config_paths, config_omitted = _collect_context_files(root, tracked, skipped_files)
+    docs_paths, docs_omitted = _collect_docs_files(root, tracked, skipped_files)
 
     out = run / 'bundles'
     out.mkdir(parents=True, exist_ok=True)
@@ -1637,6 +1960,15 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                     'trail leads there.\n' if tests_omitted else '')
                  + '\n' + tests)
     (out / 'tests.md').write_text(tests_doc, encoding='utf-8')
+    docs, docs_skipped = _collect_project_context(root, docs_paths, skipped_files)
+    docs_doc = ('# Project documentation (' + str(len(docs_paths)) + ' files)\n\n'
+                'What the project says about itself: promises, invariants and worked examples, '
+                'written by the same people who wrote the code. Read it as a claim to check '
+                'against the source, never as evidence of what the code does.\n\n'
+                + (f'{len(docs_omitted)} further documentation file(s) omitted by path or size '
+                   'budget; read them from the checkout if a trail leads there.\n\n'
+                   if docs_omitted else '') + docs)
+    (out / 'docs.md').write_text(docs_doc, encoding='utf-8')
     configs, config_skipped = _collect_project_context(root, config_paths, skipped_files)
     config_doc = ('# Project configuration and deployment artifacts\n\n'
                   'These files can define compiler versions, deployment addresses, account '
@@ -1647,7 +1979,8 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                      if config_omitted else '') + configs)
 
     context = []
-    for name in ('scope.md', 'model.md', 'coverage.md', 'dup-map.json', 'known-hypotheses.md'):
+    for name in ('scope.md', 'model.md', 'coverage.md', 'dup-map.json', 'known-hypotheses.md',
+                 'saturated.md'):
         path = run / name
         if path.is_file() and path.stat().st_size > 0:
             body = path.read_text(encoding='utf-8')
@@ -1659,6 +1992,8 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
         body = path.read_text(encoding='utf-8', errors='replace')
         context.append(f'## Included: {path.name}\n\n```\n{body.rstrip()}\n```\n')
     context_doc = '\n'.join(context)
+    saturated_path = run / 'saturated.md'
+    saturated_ground = saturated_path.is_file() and saturated_path.stat().st_size > 0
 
     shared = (references / 'hunt-agents' / '_shared.md').read_text(encoding='utf-8')
 
@@ -1703,8 +2038,11 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                             'records_under_review': bool(findings_doc)})
             continue
         lens_text = (references / 'hunt-agents' / f'{lens}-agent.md').read_text(encoding='utf-8')
-        pieces = [BUNDLE_HEADER.format(lens=lens, target=root.name, commit=commit,
-                                       untrusted=UNTRUSTED_CONTENT_NOTICE)]
+        header = BUNDLE_HEADER.format(lens=lens, target=root.name, commit=commit,
+                                      untrusted=UNTRUSTED_CONTENT_NOTICE)
+        if saturated_ground:
+            header += '\n' + SATURATED_NOTICE + '\n'
+        pieces = [header]
         if sop:
             pieces.append(sop)
         pieces += [shared, lens_text]
@@ -1733,6 +2071,9 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
             pieces.append(context_doc)
         if config_doc:
             pieces.append(config_doc)
+        # The documented promise is read before the code that is supposed to keep it.
+        if lens in DOCS_LENSES:
+            pieces.append(docs_doc)
         pieces.append(source_doc)
         if lens in ('coverage-gap', 'business-logic', 'temporal-logic', 'composition'):
             pieces.append(tests_doc)
@@ -1755,12 +2096,17 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
     if config_skipped:
         notes.append(f'{len(config_skipped)} configuration file(s) unreadable and omitted: '
                      + ', '.join(config_skipped[:5]))
+    if docs_skipped:
+        notes.append(f'{len(docs_skipped)} documentation file(s) unreadable and omitted: '
+                     + ', '.join(docs_skipped[:5]))
     return {'target': str(root), 'commit': commit, 'run': str(run),
             'detected_stacks_heuristic': [x['stack'] for x in routed['stacks']],
             'in_scope_files': len(in_scope), 'test_files_bundled_for_coverage_gap': len(test_paths),
             'test_files_omitted': len(tests_omitted),
             'config_files_bundled': len(config_paths) - len(config_skipped),
             'config_files_omitted': len(config_omitted),
+            'doc_files_bundled_for_spec_divergence': len(docs_paths) - len(docs_skipped),
+            'doc_files_omitted': len(docs_omitted),
             'context_sections': len(context), 'bundles': written, 'notes': notes,
             'skipped_files': skipped_files,
             'dispatch': 'Give each bundle to its own agent, in its own context. Record in '
@@ -3260,6 +3606,15 @@ def build_parser():
     queue = sub.add_parser('queue', help='show every open lead and its required next experiment')
     queue.add_argument('--run', required=True)
 
+    conv = sub.add_parser('converge',
+                          help='group what independent readings reported and mark saturated ground')
+    conv.add_argument('--readings', action='append', required=True,
+                      help='directory of raw hunt-agent output (one file per reading), or a '
+                           'single reading file. Repeatable.')
+    conv.add_argument('--run', required=True)
+    conv.add_argument('--threshold', type=int, default=2,
+                      help='distinct readings that make a mechanism saturated; default 2')
+
     hist = sub.add_parser('history', help='record and compare private bounty-report outcomes')
     hist_sub = hist.add_subparsers(dest='history_action', required=True)
     hist_check = hist_sub.add_parser('check', help='compare this run with your private report history')
@@ -3400,6 +3755,9 @@ def main(argv=None):
             result = lead_queue(args.run)
             print(json.dumps(result, indent=2))
             return 1 if result['state'] == 'invalid' else 0
+        if args.action == 'converge':
+            print(json.dumps(converge(args.readings, args.run, args.threshold), indent=2))
+            return 0
         if args.action == 'history':
             if args.history_action == 'check':
                 result = history_check(args.run, args.ledger, args.project)
