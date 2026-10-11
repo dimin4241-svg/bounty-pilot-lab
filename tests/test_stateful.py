@@ -107,11 +107,13 @@ class RunnerTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name)
+        # Inline `-c` is rejected as a shell/interpreter wrapper, so run a real file.
+        self.ok = self.repo / "exit0.py"
+        self.ok.write_text("raise SystemExit(0)\n")
+        argv = [sys.executable, "exit0.py"]
         self.plan = {"cases": [
-            {"id": "poc", "pair_id": "one", "role": "candidate",
-             "argv": [sys.executable, "-c", "raise SystemExit(0)"]},
-            {"id": "control", "pair_id": "one", "role": "negative-control",
-             "argv": [sys.executable, "-c", "raise SystemExit(0)"]}
+            {"id": "poc", "pair_id": "one", "role": "candidate", "argv": list(argv)},
+            {"id": "control", "pair_id": "one", "role": "negative-control", "argv": list(argv)}
         ]}
 
     def test_dry_run_never_executes(self):
@@ -159,13 +161,14 @@ class NativeRoutingAndScaffoldTests(unittest.TestCase):
                 '[package]\nname = "worker"\nversion = "0.1.0"\n')
             (repo / "program/Cargo.toml").write_text(
                 '[dependencies]\nanchor-lang = "0.30"\n')
+            # A bare helper script is NOT a backend: it must not acquire a web-backend tag.
             (repo / "api.py").write_text("def main(): pass\n")
             subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
             summary = routing.route(repo)
             stacks = {x["stack"] for x in summary["stacks"]}
             self.assertIn("rust-native", stacks)
             self.assertIn("rust-solana", stacks)
-            self.assertIn("web-backend", stacks)
+            self.assertNotIn("web-backend", stacks)
             self.assertIn("semantic-mismatch", summary["suggested_cross_stack_lenses"])
             self.assertEqual(len(summary["prioritization"]["selected"]), 6)
             limited = routing.prioritize(summary, budget=3)
@@ -173,6 +176,59 @@ class NativeRoutingAndScaffoldTests(unittest.TestCase):
             self.assertNotIn("anchor-account", routing.prioritize({"stacks": []})["selected"])
             with self.assertRaises(ValueError):
                 routing.prioritize(summary, 0)
+
+    def test_hardhat_defi_repo_keeps_accounting_and_avoids_web_backend(self):
+        routing = load("stack_route")
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            (repo / "contracts").mkdir()
+            (repo / "contracts/Vault.sol").write_text(
+                "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\ncontract Vault {}\n")
+            (repo / "hardhat.config.js").write_text("module.exports = {};\n")
+            (repo / "package.json").write_text(
+                '{"name":"defi","devDependencies":{"hardhat":"^2.0.0",'
+                '"@openzeppelin/contracts":"^5.0.0"}}\n')
+            (repo / "scripts").mkdir()
+            (repo / "scripts/deploy.js").write_text("async function main(){}\n")
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+            summary = routing.route(repo)
+            stacks = {x["stack"] for x in summary["stacks"]}
+            self.assertEqual(stacks, {"solidity-evm"})
+            self.assertNotIn("web-backend", stacks)
+            self.assertIn("accounting", summary["prioritization"]["selected"])
+
+    def test_express_backend_is_routed_as_web_backend(self):
+        routing = load("stack_route")
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            (repo / "package.json").write_text(
+                '{"name":"svc","dependencies":{"express":"^4.19.0"}}\n')
+            (repo / "server.js").write_text("const app = require('express')();\n")
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+            stacks = {x["stack"] for x in routing.route(repo)["stacks"]}
+            self.assertIn("web-backend", stacks)
+
+    def test_anchor_workspace_routes_to_solana_and_selects_anchor_account(self):
+        routing = load("stack_route")
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            (repo / "Anchor.toml").write_text('[programs.localnet]\nmy = "11111111111111111111111111111111"\n')
+            (repo / "Cargo.toml").write_text('[workspace]\nmembers = ["programs/*"]\n')
+            (repo / "programs/my/src").mkdir(parents=True)
+            (repo / "programs/my/Cargo.toml").write_text(
+                '[package]\nname = "my"\nversion = "0.1.0"\n[dependencies]\nanchor-lang = "0.30"\n')
+            (repo / "tests").mkdir()
+            (repo / "tests/my.ts").write_text("describe('my', () => {});\n")
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+            summary = routing.route(repo)
+            stacks = {x["stack"] for x in summary["stacks"]}
+            self.assertIn("rust-solana", stacks)
+            # A workspace-only root Cargo.toml must not be tagged plain rust-native.
+            self.assertNotIn("rust-native", stacks)
+            self.assertIn("anchor-account", summary["prioritization"]["selected"])
 
     def test_scaffold_is_explicitly_incomplete_and_rejects_empty_findings(self):
         scaffold = load("poc_scaffold")

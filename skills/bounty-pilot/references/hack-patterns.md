@@ -11,9 +11,9 @@ in a report, never this file. This is a pattern library, not a source of record.
 ## The distribution matters more than any single entry
 
 Across 2025–2026, **the largest losses were not broken Solidity.** Vendor tallies put the majority
-of 2026 losses on stolen keys, compromised infrastructure and social engineering — the Bybit theft
-(~$1.4B, the largest ever) came from a supply-chain compromise of a third-party multisig front end,
-and several nine-figure 2026 incidents started with a socially engineered developer.
+of losses on stolen keys, compromised infrastructure and social engineering. The Bybit theft
+(~$1.4B, February 2025, the largest ever) came from a supply-chain compromise of a third-party
+multisig front end, and several large 2026 incidents started with a socially engineered developer.
 
 Two consequences for a hunter:
 
@@ -34,9 +34,6 @@ Measurably the hardest category for automated reviewers, and consistently the mo
 - **Uninitialised implementation.** Parity multisig (2017, ~500k ETH frozen): a library left
   uninitialised, then destroyed. Still shipping today as UUPS implementations with no
   `_disableInitializers`.
-- **Masquerading as another account.** Balancer v2 (~$120M, Nov 2025): an access-control flaw let
-  the attacker act as the owner of any account inside a pool, combined with a rounding error that
-  moved the invariant. Two ordinary-looking defects, composed.
 - **Role reachable through a message.** Poly Network (~$611M, 2021): a crafted cross-chain message
   changed the keeper role.
 - **Governance by spot balance.** Beanstalk (~$182M, 2022): flash-loaned voting power executed a
@@ -94,14 +91,19 @@ The most *repeated* production bug of the last few years, because every aggregat
 - **Math-library overflow.** Cetus on Sui (~$223M, 2025): an overflow in the concentrated-liquidity
   math library. KyberSwap (~$48M, 2023): an intricate tick/precision edge in concentrated liquidity.
   Tick math, bit shifts, fixed-point helpers and curve invariants are where the big numbers live.
-- **Rounding that favours the caller on both legs, amplified by batching.** The Balancer v2 (2025)
-  invariant manipulation; also the whole family of share-price and exchange-rate round trips.
+- **Rounding that favours the caller on both legs, amplified by batching.** Balancer v2 (Nov 2025,
+  ~$95M by Balancer's own post-mortem, more counting forks): rounding in the upscaling of
+  `EXACT_OUT` swaps in Composable Stable Pools, repeated inside one `batchSwap` at balances pushed
+  to a few wei, moved the invariant and the BPT price. No access-control flaw was involved; early
+  analyses that said otherwise were revised. Also the whole family of share-price and
+  exchange-rate round trips.
 - **Donation / inflation attacks.** Direct transfers that move a share price so later deposits round
   to zero, or an attacker's shares inflate before redemption. ERC-4626 vaults, cToken-style markets,
   empty-market first depositors.
 - **Compiler bugs are a real finding class.** Curve (~$70M, 2023): a malfunctioning reentrancy guard
-  in specific Vyper versions. Truebit (~$26M, 2026): an **old contract compiled with an old Solidity
-  version lacking overflow checks**, letting a price be pushed to near zero. Both are found by
+  in specific Vyper versions. Truebit (~$26M, Jan 2026): an **old contract compiled with a pre-0.8 Solidity
+  version and an unchecked addition** in the purchase price, so a crafted amount priced a mint
+  at zero. Both are found by
   checking the compiler version, not by reading the contract:
   ```sh
   python3 <skill-dir>/scripts/bounty.py solc-bugs --repo <checkout>

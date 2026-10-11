@@ -22,8 +22,9 @@ SINK_TERMS = {
     "settlement": ("claim", "settle", "finaliz", "acknowledge", "processmessage"),
     "price-oracle": ("price", "oracle", "twap", "exchange_rate"),
 }
-MAX_AST_BYTES = 25_000_000
+MAX_AST_BYTES = 256_000_000
 MAX_NODES = 150_000
+EDGE_CAP = 7500
 
 def walk_json(node):
     todo = [node]
@@ -39,29 +40,116 @@ def walk_json(node):
         elif isinstance(x, list):
             todo.extend(reversed(x))
 
-def load_solc(path):
+BUILD_INFO_HINT = (
+    "Foundry build-info without AST: a plain `forge build` writes a minimal build-info "
+    "(id/source_id_to_path/language, no AST). Run `forge build --build-info` and point this "
+    "at the resulting out/build-info/*.json, or pass solc standard-json compiled with "
+    "outputSelection including sources.*.ast.")
+
+
+def load_solc(path, max_ast_bytes=MAX_AST_BYTES):
     p = Path(path)
-    if p.stat().st_size > MAX_AST_BYTES:
-        raise ValueError("compiler JSON exceeds size cap")
-    data = json.loads(p.read_text(encoding="utf-8"))
+    if p.stat().st_size > max_ast_bytes:
+        raise ValueError("compiler JSON exceeds size cap (%d bytes); raise --max-ast-mb" % max_ast_bytes)
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    data = raw
     if "output" in data and isinstance(data["output"], dict):
         data = data["output"]
     sources = data.get("sources", {})
     if not isinstance(sources, dict):
         raise ValueError("Solidity compiler JSON missing sources")
+    # A minimal `forge build` build-info has source_id_to_path but no compiled output.
+    if not sources and (isinstance(raw.get("source_id_to_path"), dict)
+                        or ("language" in raw and "output" not in raw)):
+        raise ValueError(BUILD_INFO_HINT)
     trees = []
+    saw_source_entry = False
     for filename, desc in sorted(sources.items()):
         if not isinstance(desc, dict):
             continue
+        saw_source_entry = True
         tree = desc.get("ast")
         if isinstance(tree, dict) and tree.get("nodeType") == "SourceUnit":
             trees.append((filename, tree))
     if not trees:
-        raise ValueError("no Solidity SourceUnit AST; compile with outputSelection for sources.*.ast")
+        if saw_source_entry:
+            # sources present but none carry an AST → the AST output was not requested.
+            raise ValueError(BUILD_INFO_HINT)
+        raise ValueError("no Solidity SourceUnit AST; " + BUILD_INFO_HINT)
     return trees
+
+ETH_MOVE_MEMBERS = ("send", "transfer")
+
+
+def _analyze_body(body, decls, funcs):
+    """Collect state reads/writes, resolved calls, called-member names and ETH
+    movement from a function or modifier body. Returns a dict of sets."""
+    reads, writes, calls, callnames = set(), set(), set(), set()
+    eth_move = False
+    # Pass 1: map local storage pointers (`Pos storage p = pos[x];`) to their state var.
+    local_ptr = {}
+    for x in walk_json(body):
+        if x.get("nodeType") != "VariableDeclarationStatement":
+            continue
+        target_decl = None
+        for d in x.get("declarations") or []:
+            if isinstance(d, dict) and d.get("storageLocation") == "storage" and isinstance(d.get("id"), int):
+                target_decl = d["id"]
+                break
+        if target_decl is None:
+            continue
+        for ref in walk_json(x.get("initialValue") or {}):
+            rid = ref.get("referencedDeclaration")
+            if rid in decls:
+                local_ptr[target_decl] = decls[rid]
+                break
+
+    def resolve_write(ref_id):
+        if ref_id in decls:
+            writes.add(decls[ref_id])
+        elif ref_id in local_ptr:
+            writes.add(local_ptr[ref_id])
+
+    for x in walk_json(body):
+        nt = x.get("nodeType")
+        if nt in ("Identifier", "MemberAccess"):
+            rid = x.get("referencedDeclaration")
+            if rid in decls:
+                reads.add(decls[rid])
+            elif rid in local_ptr:
+                reads.add(local_ptr[rid])
+        elif nt == "Assignment":
+            for lhs in walk_json(x.get("leftHandSide") or {}):
+                resolve_write(lhs.get("referencedDeclaration"))
+        elif nt == "UnaryOperation" and x.get("operator") in ("++", "--", "delete"):
+            for lhs in walk_json(x.get("subExpression") or {}):
+                resolve_write(lhs.get("referencedDeclaration"))
+        elif nt == "FunctionCallOptions":
+            # `addr.call{value: ...}(...)` moves ETH.
+            if "value" in (x.get("names") or []):
+                eth_move = True
+        elif nt == "FunctionCall":
+            expression = x.get("expression") or {}
+            if expression.get("nodeType") == "MemberAccess":
+                member = expression.get("memberName")
+                if isinstance(member, str):
+                    callnames.add(member)
+                    if member in ETH_MOVE_MEMBERS:
+                        eth_move = True  # addr.send / addr.transfer
+                    if member in ("push", "pop"):
+                        for ref in walk_json(expression.get("expression") or {}):
+                            resolve_write(ref.get("referencedDeclaration"))
+            target = expression.get("referencedDeclaration")
+            if target in funcs:
+                calls.add(funcs[target]["id"])
+                callnames.add(funcs[target]["short"])
+    return {"reads": reads, "writes": writes, "calls": calls,
+            "callnames": callnames, "eth_move": eth_move}
+
 
 def solidity_symbols(trees):
     decls, parent = {}, {}
+    modifier_defs = {}
     for path, tree in trees:
         for node in walk_json(tree):
             nt = node.get("nodeType")
@@ -74,6 +162,8 @@ def solidity_symbols(trees):
                 for child in node.get("nodes", []):
                     if isinstance(child, dict):
                         parent[child.get("id")] = cname
+            if nt == "ModifierDefinition" and isinstance(node.get("id"), int):
+                modifier_defs[node["id"]] = node
     funcs = {}
     for path, tree in trees:
         for node in walk_json(tree):
@@ -82,66 +172,63 @@ def solidity_symbols(trees):
             num = node.get("id")
             if not isinstance(num, int):
                 continue
-            name = node.get("name") or node.get("kind") or "unnamed"
+            short = str(node.get("name") or node.get("kind") or "unnamed")
             funcs[num] = {"id": "solc:" + str(num), "path": str(path),
-                          "name": str(parent.get(num, "")) + "." + str(name),
+                          "name": str(parent.get(num, "")) + "." + short, "short": short,
                           "declaration": num, "language": "solidity",
-                          "entry": node.get("visibility") in ("external", "public"),
+                          "implemented": node.get("implemented", True),
+                          "entry": (node.get("visibility") in ("external", "public")
+                                    and node.get("implemented", True)),
                           "visibility": node.get("visibility", "unknown"),
                           "line": None, "source_span": node.get("src"),
                           "modifiers_unverified": [str((m.get("modifierName") or {}).get("name", "unknown"))
                               for m in node.get("modifiers", []) if isinstance(m, dict)],
                           "writes": [], "reads": [],
                           "calls": [], "sinks": [], "source": "compiler-ast"}
+    # Pre-compute each modifier's own effects so a function inherits them.
+    modifier_effects = {mid: _analyze_body(node.get("body") or {}, decls, funcs)
+                        for mid, node in modifier_defs.items()}
     for path, tree in trees:
         for node in walk_json(tree):
             if node.get("nodeType") != "FunctionDefinition" or node.get("id") not in funcs:
                 continue
             current = funcs[node["id"]]
-            writes, reads, calls, names = set(), set(), set(), {current["name"]}
-            # Iterate the function BODY, not signature, modifiers or nested definitions.
-            body = node.get("body") or {}
-            for x in walk_json(body):
-                nt = x.get("nodeType")
-                if nt in ("Identifier", "MemberAccess"):
-                    rid = x.get("referencedDeclaration")
-                    if rid in decls:
-                        reads.add(decls[rid])
-                if nt == "Assignment":
-                    left = x.get("leftHandSide")
-                    for lhs in walk_json(left):
-                        if lhs.get("referencedDeclaration") in decls:
-                            writes.add(decls[lhs["referencedDeclaration"]])
-                    if x.get("operator") == "=":
-                        # Keep conservative reads: lhs may index a mapping dynamically.
-                        pass
-                if nt == "UnaryOperation" and x.get("operator") in ("++", "--", "delete"):
-                    for lhs in walk_json(x.get("subExpression")):
-                        if lhs.get("referencedDeclaration") in decls:
-                            writes.add(decls[lhs["referencedDeclaration"]])
-                if nt == "FunctionCall":
-                    expression = x.get("expression") or {}
-                    if expression.get("nodeType") == "MemberAccess" and expression.get("memberName") in ("push", "pop"):
-                        for ref in walk_json(expression.get("expression")):
-                            if ref.get("referencedDeclaration") in decls:
-                                writes.add(decls[ref["referencedDeclaration"]])
-                    target = expression.get("referencedDeclaration")
-                    if target in funcs:
-                        calls.add(funcs[target]["id"])
-                    for y in walk_json(expression):
-                        name = y.get("memberName") or y.get("name")
-                        if isinstance(name, str):
-                            names.add(name)
+            if not current["implemented"]:
+                # Interfaces / abstract declarations have no body: never a source or sink.
+                continue
+            eff = _analyze_body(node.get("body") or {}, decls, funcs)
+            writes, reads, calls = set(eff["writes"]), set(eff["reads"]), set(eff["calls"])
+            callnames, eth_move = set(eff["callnames"]), eff["eth_move"]
+            # Inherit the reads/writes/calls of every applied modifier (nonReentrant's
+            # write to `locked`, onlyOwner's read of `owner`, ...).
+            for m in node.get("modifiers", []) or []:
+                if not isinstance(m, dict):
+                    continue
+                mid = (m.get("modifierName") or {}).get("referencedDeclaration")
+                meff = modifier_effects.get(mid)
+                if meff:
+                    writes |= meff["writes"]
+                    reads |= meff["reads"]
+                    calls |= meff["calls"]
+                    callnames |= meff["callnames"]
+                    eth_move = eth_move or meff["eth_move"]
             current["writes"] = sorted(writes)
             current["reads"] = sorted(reads)
             current["calls"] = sorted(calls)
-            current["sinks"] = classify(names)
+            # Classify from the function's OWN name and the names it calls, never the
+            # contract name or an emitted event identifier.
+            current["sinks"] = classify({current["short"]} | callnames, eth_move)
+    for f in funcs.values():
+        f.pop("short", None)
     return list(funcs.values())
 
-def classify(names):
+
+def classify(names, eth_move=False):
     joined = " ".join(str(n).lower() for n in names)
-    return sorted(key for key, words in SINK_TERMS.items()
-                  if any(w in joined for w in words))
+    sinks = {key for key, words in SINK_TERMS.items() if any(w in joined for w in words)}
+    if eth_move:
+        sinks.add("asset-movement")
+    return sorted(sinks)
 
 def attr_name(node):
     if isinstance(node, ast.Name):
@@ -215,6 +302,8 @@ def build(symbols):
             if callee in known:
                 edges.append({"from": s["id"], "to": callee,
                               "kind": "static-call-reference", "confidence": "ast-reference"})
+    call_edges = len(edges)
+    truncated = False
     readers = defaultdict(list)
     for s in symbols:
         for name in s["reads"]:
@@ -226,30 +315,43 @@ def build(symbols):
                     edges.append({"from": s["id"], "to": other,
                                   "kind": "writer-reader-overlap", "state": name,
                                   "confidence": "candidate-only"})
-                if len(edges) >= 7500:
+                if len(edges) >= EDGE_CAP:
+                    truncated = True
                     break
-            if len(edges) >= 7500:
+            if truncated:
                 break
-        if len(edges) >= 7500:
+        if truncated:
             break
+    edges = edges[:EDGE_CAP]
     return {"schema": 1, "method": "compiler-ast-plus-python-ast",
-            "symbols": symbols, "edges": edges[:7500],
+            "symbols": symbols, "edges": edges,
+            "truncated": truncated,
+            "edge_counts": {"total": len(edges), "static_call_reference": call_edges,
+                            "writer_reader_overlap": len(edges) - call_edges, "cap": EDGE_CAP},
             "semantic_scope": "Solidity compiler-resolved declarations and calls; Python syntax only",
             "reachable_verified": False,
-            "warning": "Solidity calls are static references, not full dynamic dispatch. Writer-reader overlap is NOT an executable path. Python entrypoints/calls can be unresolved. No Rust/Move/Cairo semantics are claimed."}
+            "warning": "Solidity calls are static references, not full dynamic dispatch. Writer-reader "
+                       "overlap is NOT an executable path. Python entrypoints/calls can be unresolved. "
+                       "No Rust/Move/Cairo semantics are claimed."
+                       + (" Edge cap reached: graph is TRUNCATED and some overlaps are omitted."
+                          if truncated else "")}
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--repo", help="git checkout for Python AST; optional when --solc provided")
     ap.add_argument("--solc", help="solc output/build-info JSON with sources AST")
+    ap.add_argument("--max-ast-mb", type=int, default=MAX_AST_BYTES // 1_000_000,
+                    help="size cap for the compiler JSON (default %d MB)" % (MAX_AST_BYTES // 1_000_000))
     ap.add_argument("--out")
     args = ap.parse_args(argv)
     if not args.repo and not args.solc:
         ap.error("pass --repo or --solc")
+    if args.max_ast_mb < 1 or args.max_ast_mb > 4096:
+        ap.error("--max-ast-mb must be between 1 and 4096")
     try:
         symbols = []
         if args.solc:
-            symbols += solidity_symbols(load_solc(args.solc))
+            symbols += solidity_symbols(load_solc(args.solc, args.max_ast_mb * 1_000_000))
         if args.repo:
             symbols += py_symbols(args.repo)
         report = build(symbols)

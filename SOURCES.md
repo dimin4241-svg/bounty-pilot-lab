@@ -24,3 +24,14 @@ No upstream version is bundled, and none is claimed to have executed. A runtime 
 record the reviewed commit in `integrations.json` in the private run and retain upstream licensing.
 Bounty Pilot's MIT licence applies only to original content here. Linked projects are not affiliated
 with this one and do not endorse it.
+
+## Incident sources
+
+`references/hack-patterns.md` is a pattern library, not a source of record. Entries revised in
+0.9.1 against these write-ups; add a link here whenever an entry is added or corrected.
+
+- Balancer v2, Nov 2025 — Balancer post-mortem:
+  https://medium.com/balancer-protocol/nov-3-exploit-post-mortem-51dcbeb6b020 ; Certora analysis:
+  https://www.certora.com/blog/breaking-down-the-balancer-hack
+- Truebit, Jan 2026 — BlockSec: https://blocksec.com/blog/in-depth-analysis-the-truebit-incident ;
+  Cantina: https://cantina.xyz/blog/the-truebit-exploit-explained

@@ -26,6 +26,50 @@ LENSES = {
     "web-backend": ["privileged-path", "recovery-failure", "semantic-mismatch"],
 }
 
+BACKEND_JS_DEPS = ("express", "fastify", "@nestjs", "koa", "@hapi/hapi", "hapi",
+                   "apollo-server", "@apollo/server", "graphql-yoga", "socket.io",
+                   "hono", "restify", "polka", "micro", "@feathersjs", "sails",
+                   "loopback", "adonis", "@adonisjs", "nestjs")
+BACKEND_PY_DEPS = ("flask", "fastapi", "django", "aiohttp", "tornado", "sanic",
+                   "starlette", "bottle", "falcon", "uvicorn", "gunicorn", "hypercorn")
+
+
+def _read(path, cap=400000):
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > cap:
+            return ""
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _backend_signals(root, files, lower):
+    """Real server-side signals, not merely the presence of .ts/.js/.py (which in an
+    EVM repo are usually config, deploy scripts or a frontend)."""
+    signals = []
+    names = {Path(x).name.lower(): x for x in files}
+    for manifest in [x for x in files if Path(x).name.lower() == "package.json"]:
+        text = _read(root / manifest).lower()
+        hit = [d for d in BACKEND_JS_DEPS if '"' + d in text or "'" + d in text or '"' + d + '/' in text]
+        if hit:
+            signals.append(manifest + " declares server framework: " + ", ".join(sorted(set(hit))))
+    for manifest in [x for x in files if Path(x).name.lower() in
+                     ("requirements.txt", "pyproject.toml", "setup.py", "setup.cfg", "pipfile")]:
+        text = _read(root / manifest).lower()
+        hit = [d for d in BACKEND_PY_DEPS if d in text]
+        if hit:
+            signals.append(manifest + " declares Python web framework: " + ", ".join(sorted(set(hit))))
+    for entry in ("manage.py", "wsgi.py", "asgi.py", "server.js", "server.ts",
+                  "server.mjs", "app.py", "main.go"):
+        if entry in names:
+            signals.append("server entry point: " + names[entry])
+    for docker in [x for x in files if Path(x).name.lower().startswith("dockerfile")]:
+        text = _read(root / docker).upper()
+        if "EXPOSE" in text or "ENTRYPOINT" in text or "CMD" in text:
+            signals.append(docker + " defines a runnable service")
+    return signals
+
+
 def route(repo):
     root = Path(repo).resolve()
     raw = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
@@ -35,8 +79,10 @@ def route(repo):
     matches, warnings = {}, []
     def add(stack, evidence):
         matches.setdefault(stack, set()).add(evidence)
+    hardhat_names = ("hardhat.config.ts", "hardhat.config.js", "hardhat.config.cjs",
+                     "hardhat.config.mjs")
     if any(x.endswith((".sol", ".vy")) for x in lower) or any(
-            Path(x).name in ("foundry.toml", "hardhat.config.ts", "hardhat.config.js") for x in lower):
+            Path(x).name in ("foundry.toml",) + hardhat_names for x in lower):
         add("solidity-evm", "solidity/vyper source or EVM build manifest")
     if any(Path(x).name == "move.toml" for x in lower) or any(x.endswith(".move") for x in lower):
         add("move", "Move.toml or .move source (exact VM must be confirmed)")
@@ -44,13 +90,22 @@ def route(repo):
         add("cairo-starknet", "Scarb.toml or Cairo source (deployment type unconfirmed)")
     if any(Path(x).name == "go.mod" for x in lower) or any(x.endswith(".go") for x in lower):
         add("go", "Go manifest or .go source")
-    if any(x.endswith((".ts", ".tsx", ".js", ".jsx", ".py")) for x in lower):
-        add("web-backend", "TS/JS/Python detected (may be frontend-only; confirm entrypoints)")
+    # Only route web-backend on real server signals. A plain Hardhat/DeFi repo (its
+    # .ts/.js are config, scripts or a frontend) must not acquire a backend tag, or
+    # it displaces lenses such as accounting.
+    has_web_source = any(x.endswith((".ts", ".tsx", ".js", ".jsx", ".py")) for x in lower)
+    backend = _backend_signals(root, files, lower)
+    if backend:
+        for evidence in backend:
+            add("web-backend", evidence)
+    elif has_web_source:
+        warnings.append("TS/JS/Python present but no server framework or service entry point "
+                        "detected; not routed as web-backend (likely config, scripts or frontend).")
     cargo = [x for x in files if Path(x).name.lower() == "cargo.toml"]
     anchors = [x for x in lower if Path(x).name == "anchor.toml"]
     if anchors:
         for x in anchors:
-            add("rust-solana", x)
+            add("rust-solana", "Anchor workspace manifest: " + x)
     for manifest in cargo:
         path = root / manifest
         if path.is_symlink() or not path.is_file() or path.stat().st_size > 200000:
@@ -59,12 +114,21 @@ def route(repo):
         data = path.read_text(encoding="utf-8", errors="replace").lower()
         solana = any(s in data for s in ("anchor-lang", "solana-program", "solana-sdk", "anchor-spl"))
         cosmwasm = any(s in data for s in ("cosmwasm-std", "cw-storage-plus", "cw-multi-test"))
+        is_workspace = "[workspace]" in data
+        has_package = "[package]" in data
+        has_deps = "[dependencies]" in data or "[dependencies." in data
         if solana:
             add("rust-solana", manifest + " contains Solana/Anchor dependency")
         if cosmwasm:
             add("rust-cosmwasm", manifest + " contains CosmWasm dependency")
         if not solana and not cosmwasm:
-            add("rust-native", manifest + " (no Solana/CosmWasm dependency in this manifest)")
+            if is_workspace and not has_package and not has_deps:
+                # A pure [workspace] root declares no crate of its own; its members
+                # carry the real runtime (e.g. an Anchor programs/* directory).
+                warnings.append(manifest + " is a workspace root only; runtime comes from "
+                                "member crates, not rust-native")
+            else:
+                add("rust-native", manifest + " (no Solana/CosmWasm dependency in this manifest)")
     if any(x.endswith(".rs") for x in lower) and not cargo:
         warnings.append("Rust source without tracked Cargo.toml: runtime unknown")
     stacks = [{"stack": s, "evidence": sorted(ev), "adapter": ADAPTERS[s],

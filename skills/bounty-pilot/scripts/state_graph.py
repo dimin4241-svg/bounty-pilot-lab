@@ -6,6 +6,7 @@ Read the original code before trusting any proposed edge or scenario.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -18,24 +19,40 @@ LANGUAGES = {
     ".func": "func", ".tolk": "tolk",
 }
 EXCLUDE = {"test", "tests", "mock", "mocks", "fixtures", "target", "node_modules",
-           "vendor", "dist", "build", "out", ".git", "generated", "__pycache__"}
+           "vendor", "dist", "build", "out", "cache", "lib", ".git", "generated",
+           "__pycache__"}
+# Source directories that hold the protocol's own code; process them before
+# bundled dependencies so the symbol cap is not spent on third-party crates.
+PRIORITY_DIRS = ("src", "programs", "contracts", "program", "sources", "move")
 SENSITIVE = {".env", "secrets", "secret", "credential", "credentials", "wallet",
              "keystore", "mnemonic"}
+# `<[^(){};\n]*>` tolerates generics and lifetimes (e.g. handler<'info>,
+# f<T: store>, f<T, impl Trait>, foo<T: Into<u64>>) without crossing a body/paren.
+_GENERICS = r"(?:<[^(){};\n]*>)?"
 PATTERNS = {
-    "solidity": r"\b(?:function|modifier)\s+([A-Za-z_]\w*)\s*\(",
+    "solidity": r"\b(?:function|modifier)\s+([A-Za-z_]\w*)\s*" + _GENERICS + r"\s*\(",
     "vyper": r"^\s*def\s+([A-Za-z_]\w*)\s*\(",
-    "rust": r"\b(?:async\s+)?fn\s+([A-Za-z_]\w*)\s*\(",
-    "move": r"\b(?:entry\s+)?fun\s+([A-Za-z_]\w*)\s*\(",
-    "cairo": r"\bfn\s+([A-Za-z_]\w*)\s*\(",
-    "go": r"\bfunc\s+(?:\([^\n]*?\)\s*)?([A-Za-z_]\w*)\s*\(",
+    "rust": r"\b(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:const\s+)?(?:unsafe\s+)?fn\s+([A-Za-z_]\w*)\s*" + _GENERICS + r"\s*\(",
+    "move": r"\b(?:public(?:\([^)]*\))?\s+)?(?:entry\s+)?fun\s+([A-Za-z_]\w*)\s*" + _GENERICS + r"\s*\(",
+    "cairo": r"\b(?:pub\s+)?fn\s+([A-Za-z_]\w*)\s*" + _GENERICS + r"\s*\(",
+    "go": r"\bfunc\s+(?:\([^\n]*?\)\s*)?([A-Za-z_]\w*)\s*" + _GENERICS + r"\s*\(",
     "python": r"^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(",
     "typescript": r"\b(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(",
     "javascript": r"\b(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(",
     "java": r"\b(?:public|private|protected)\s+(?:static\s+)?(?:[\w<>\[\]]+\s+)([A-Za-z_]\w*)\s*\(",
-    "kotlin": r"\bfun\s+([A-Za-z_]\w*)\s*\(",
+    "kotlin": r"\bfun\s+([A-Za-z_]\w*)\s*" + _GENERICS + r"\s*\(",
     "csharp": r"\b(?:public|private|internal)\s+(?:static\s+)?(?:[\w<>\[\]]+\s+)([A-Za-z_]\w*)\s*\(",
 }
-GENERAL_PATTERN = r"\b(?:fn|function|def|fun)\s+([A-Za-z_]\w*)\s*\("
+GENERAL_PATTERN = r"\b(?:pub\s+)?(?:fn|function|def|fun)\s+([A-Za-z_]\w*)\s*" + _GENERICS + r"\s*\("
+# Conservative Solidity/Vyper contract-level state variables: a type followed by an
+# explicit visibility/mutability keyword, or a mapping declaration. Locals cannot
+# carry visibility, so this avoids mistaking a local named `balance` for state.
+SOL_STATE = re.compile(
+    r"(?m)^\s*(?:"
+    r"mapping\s*\([^;{}]*?\)\s+(?:public\s+|private\s+|internal\s+)?([A-Za-z_]\w*)\s*;"
+    r"|[A-Za-z_][\w\.\[\]]*\s+(?:public|private|internal|external|constant|immutable)\s+"
+    r"(?:constant\s+|immutable\s+|public\s+|private\s+|internal\s+)*([A-Za-z_]\w*)\s*(?:=|;)"
+    r")")
 IDENT = re.compile(r"\b[A-Za-z_]\w*\b")
 QUALIFIED_WRITE = re.compile(
     r"\b(?:self|this|storage|state|ctx|account|accounts)\.([A-Za-z_]\w*)\s*(?:\+=|-=|=(?!=)|\.set\b|\.write\b)")
@@ -54,9 +71,28 @@ RISK_TERMS = {
 }
 
 def _tracked(root):
-    proc = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    return sorted(p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p)
+    """Prefer git-tracked files; fall back to a bounded filesystem walk so a
+    non-git directory produces results (and never a traceback)."""
+    try:
+        proc = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        return sorted(p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p), "git"
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        collected = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in EXCLUDE and not d.startswith(".")]
+            for name in filenames:
+                collected.append(os.path.relpath(os.path.join(dirpath, name), root))
+                if len(collected) >= 20000:
+                    return sorted(collected), "filesystem-walk"
+        return sorted(collected), "filesystem-walk"
+
+
+def _ordered(files):
+    def key(path):
+        first = Path(path).parts[0] if Path(path).parts else ""
+        return (0 if first in PRIORITY_DIRS else 1, path)
+    return sorted(files, key=key)
 
 def _safe_path(root, relative):
     path = root / relative
@@ -71,7 +107,8 @@ def scan(root, limit=600):
     if not isinstance(limit, int) or not 1 <= limit <= 5000:
         raise ValueError('symbol limit must be between 1 and 5000')
     root = Path(root).resolve()
-    files = [p for p in _tracked(root) if _safe_path(root, p)]
+    listing, listing_mode = _tracked(root)
+    files = _ordered([p for p in listing if _safe_path(root, p)])
     symbols, omitted = [], []
     for relative in files:
         if len(symbols) >= limit:
@@ -80,6 +117,11 @@ def scan(root, limit=600):
         path = root / relative
         lang = LANGUAGES[path.suffix.lower()]
         content = path.read_text(encoding="utf-8", errors="replace")
+        # Contract-level state variables, so plain Solidity/Vyper writes (`total += x;`,
+        # `x = y;` on a declared state var) become real edges, not local noise.
+        sol_state = set()
+        if lang in ("solidity", "vyper"):
+            sol_state = {g for groups in SOL_STATE.findall(content) for g in groups if g}
         pattern = re.compile(PATTERNS.get(lang, GENERAL_PATTERN), re.MULTILINE)
         found = list(pattern.finditer(content))
         for index, match in enumerate(found):
@@ -91,8 +133,11 @@ def scan(root, limit=600):
             words = set(IDENT.findall(body))
             writes = set(QUALIFIED_WRITE.findall(body)) | set(INDEXED_WRITE.findall(body))
             # Raw assignment is intentionally excluded from graph edges: a local variable
-            # named 'balance' must not be mistaken for a write to protocol state.
+            # named 'balance' must not be mistaken for a write to protocol state...
             local_writes = set(ASSIGN.findall(body))
+            # ...except a bare assignment to a declared Solidity/Vyper state variable,
+            # which IS a protocol state write.
+            writes |= (local_writes & sol_state)
             reads = {w for w in words if w not in IGNORE and len(w) > 3}
             markers = [key for key, terms in RISK_TERMS.items()
                        if any(t in body.lower() for t in terms)]
@@ -154,6 +199,7 @@ def scan(root, limit=600):
                 break
     return {
         "schema": 1, "source": str(root), "method": "regex-lexical-heuristic",
+        "file_listing": listing_mode,
         "sound": False, "reachability_verified": False, "in_scope_files": len(files),
         "truncated_files": sorted(set(omitted)), "symbols": symbols, "edges": edges,
         "scenario_seeds": sequences,
@@ -168,7 +214,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.limit < 1 or args.limit > 5000:
         parser.error("--limit must be between 1 and 5000")
-    report = scan(args.repo, args.limit)
+    try:
+        report = scan(args.repo, args.limit)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        parser.error(str(exc))
     payload = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
     if args.out:
         Path(args.out).write_text(payload, encoding="utf-8")

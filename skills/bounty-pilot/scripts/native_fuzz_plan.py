@@ -26,18 +26,28 @@ def _valid(case, stack):
     if (not pattern.fullmatch(candidate) or not pattern.fullmatch(control)
             or ".." in candidate or ".." in control or candidate == control):
         raise ValueError("invalid or identical test selectors")
+    # A selector must never be able to act as an option (e.g. pytest -pplugin).
+    if candidate.startswith("-") or control.startswith("-"):
+        raise ValueError("test selectors must not begin with '-'")
     if not isinstance(case.get("cwd", "."), str) or Path(case.get("cwd", ".")).is_absolute():
         raise ValueError("cwd must be a relative path")
     if ".." in Path(case.get("cwd", ".")).parts:
         raise ValueError("cwd escapes checkout")
 
 def argv_for(stack, selector, package="."):
+    if selector.startswith("-"):
+        raise ValueError("test selectors must not begin with '-'")
     if stack == "foundry":
-        return ["forge", "test", "--match-test", selector, "-vv"]
+        # forge --match-test is a regex tested against the test SIGNATURE (name plus
+        # argument list), so anchor the name at the start and require the opening
+        # paren. A bare `^name$` never matches because the signature is `name()`;
+        # `^name\(` pins exactly this function (and its fuzz overloads) and nothing
+        # whose name merely begins with it.
+        return ["forge", "test", "--match-test", "^" + re.escape(selector) + r"\(", "-vv"]
     if stack == "cargo":
         return ["cargo", "test", selector, "--", "--exact"]
     if stack == "pytest":
-        return ["python3", "-m", "pytest", "-q", selector]
+        return ["python3", "-m", "pytest", "-q", "--", selector]
     if stack == "go":
         if not PACKAGE.fullmatch(package) or ".." in package:
             raise ValueError("unsafe go package")

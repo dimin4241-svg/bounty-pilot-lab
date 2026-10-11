@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import stat
 import urllib.error
@@ -49,6 +50,10 @@ class FakeNode:
         body = json.loads(request.data.decode('utf-8'))
         self.calls.append((body['method'], body['params']))
         key = body['method']
+        if key not in self.answers:
+            # What a node says to a call it cannot satisfy, e.g. a getter the contract lacks.
+            return FakeResponse({'jsonrpc': '2.0', 'id': body['id'],
+                                 'error': {'code': 3, 'message': 'execution reverted'}})
         value = self.answers[key]
         if callable(value):
             value = value(body['params'])
@@ -429,6 +434,189 @@ class RpcTests(unittest.TestCase):
             bounty.rpc_call('http://node.invalid', 'eth_chainId', [], Failing({}))
 
 
+class ImmutableMaskingTests(unittest.TestCase):
+    """Review 0.9.1, item 4: immutables made every such contract `partial` forever."""
+
+    def setUp(self):
+        self.prefix = bytes.fromhex('608060405234') + b'\x5b' * 40
+        self.suffix = b'\x5b' * 40 + bytes.fromhex('00')
+        self.value = bytes.fromhex('00' * 12 + '33' * 20)     # e.g. OZ UUPS __self
+        self.start = len(self.prefix)
+        self.live = '0x' + (self.prefix + self.value + self.suffix).hex()
+        self.built = '0x' + (self.prefix + b'\0' * 32 + self.suffix).hex()
+        self.refs = {'812': [{'start': self.start, 'length': 32}]}
+
+    def test_without_references_immutables_stay_partial(self):
+        self.assertEqual(bounty.compare_bytecode(self.live, self.built)['status'], 'partial')
+
+    def test_declared_immutables_are_masked_and_reported(self):
+        result = bounty.compare_bytecode(self.live, self.built, immutable_references=self.refs)
+        self.assertEqual(result['status'], 'exact')
+        self.assertEqual(result['masked_ranges'], [{
+            'kind': 'immutable', 'start': self.start, 'length': 32,
+            'onchain_value': '0x' + self.value.hex()}])
+
+    def test_masking_does_not_hide_a_difference_outside_the_ranges(self):
+        mutated = bytearray(bytes.fromhex(self.live[2:]))
+        mutated[2] ^= 0xFF
+        result = bounty.compare_bytecode('0x' + mutated.hex(), self.built,
+                                         immutable_references=self.refs)
+        self.assertEqual(result['status'], 'partial')
+
+    def test_a_range_wider_than_the_compiler_emits_is_not_trusted(self):
+        # An artifact claiming one giant "immutable" would otherwise mask its way to exact.
+        refs = {'1': [{'start': 0, 'length': len(self.prefix) + 32}]}
+        result = bounty.compare_bytecode(self.live, self.built, immutable_references=refs)
+        self.assertEqual(result['status'], 'partial')
+        self.assertTrue(result['masking_skipped'])
+
+    def test_library_placeholders_are_masked_with_link_references(self):
+        address = bytes.fromhex('44' * 20)
+        live = '0x' + (self.prefix + address + self.suffix).hex()
+        placeholder = '__$' + 'ab' * 17 + '$__'
+        built = '0x' + self.prefix.hex() + placeholder + self.suffix.hex()
+        links = {'src/Lib.sol': {'Lib': [{'start': self.start, 'length': 20}]}}
+        result = bounty.compare_bytecode(live, built, link_references=links)
+        self.assertEqual(result['status'], 'exact')
+        self.assertEqual(result['masked_ranges'][0]['onchain_value'], '0x' + address.hex())
+        with self.assertRaisesRegex(ValueError, 'not hex'):
+            bounty.compare_bytecode(live, built)
+
+    def test_verify_deployment_reads_foundry_immutable_references(self):
+        impl = '0x' + '33' * 20
+        slot = bounty.proxy_slots()['eip1967-implementation']
+        node = FakeNode({
+            'eth_chainId': '0x1', 'eth_blockNumber': '0x100',
+            'eth_getCode': lambda p: self.live if p[0] == impl else '0x' + '60' * 30,
+            'eth_getStorageAt': lambda p: ('0x' + '00' * 12 + impl[2:]) if p[1] == slot
+                                          else '0x' + '00' * 32})
+        with tempfile.TemporaryDirectory() as temp:
+            artifact = Path(temp) / 'impl.json'
+            artifact.write_text(json.dumps({'deployedBytecode': {
+                'object': self.built, 'immutableReferences': self.refs, 'linkReferences': {}}}))
+            result = bounty.verify_deployment('http://node.invalid', '0x' + '22' * 20,
+                                              str(artifact), 'latest', opener=node)
+        self.assertEqual(result['deployment_status'], 'exact')
+        self.assertEqual(result['comparison']['masked_ranges'][0]['onchain_value'],
+                         '0x' + self.value.hex())
+
+
+class ProxyDetectionTests(unittest.TestCase):
+    """Review 0.9.1, item 5: unrecognized proxies verified as exact against their own runtime."""
+
+    proxy = '0x' + '22' * 20
+    impl = '0x' + '33' * 20
+    impl_code = '0x' + '61' * 60
+
+    def verify(self, proxy_code, artifact_code, storage=None, calls=None):
+        storage = storage or {}
+        calls = calls or {}
+
+        def get_code(params):
+            return self.impl_code if params[0] == self.impl else proxy_code
+
+        def get_storage(params):
+            return storage.get(params[1], '0x' + '00' * 32)
+
+        def call(params):
+            selector = params[0]['data'][:10]
+            if selector not in calls:
+                raise ValueError('execution reverted')
+            return calls[selector]
+        node = FakeNode({'eth_chainId': '0x1', 'eth_blockNumber': '0x100',
+                         'eth_getCode': get_code, 'eth_getStorageAt': get_storage,
+                         'eth_call': call})
+        with tempfile.TemporaryDirectory() as temp:
+            artifact = Path(temp) / 'a.json'
+            artifact.write_text(json.dumps({'deployedBytecode': {'object': artifact_code}}))
+            return bounty.verify_deployment('http://node.invalid', self.proxy, str(artifact),
+                                            'latest', opener=FakeNodeErrors(node))
+
+    def padded(self, address):
+        return '0x' + '00' * 12 + address[2:]
+
+    def test_zeppelinos_slot_is_derived_and_resolved(self):
+        slot = bounty.proxy_slots()['zeppelinos-implementation']
+        self.assertEqual(slot, '0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8c3')
+        result = self.verify('0x' + '60' * 30, self.impl_code, storage={slot: self.padded(self.impl)})
+        self.assertEqual(result['proxy_kind'], 'zeppelinos-implementation')
+        self.assertEqual(result['compared'], 'implementation')
+        self.assertEqual(result['deployment_status'], 'exact')
+
+    def test_safe_proxy_is_compared_to_its_singleton(self):
+        selector = keccak.selector('masterCopy()')
+        # GnosisSafeProxy compares calldata against the selector left-aligned in a PUSH32.
+        code = '0x7f' + selector[2:] + '00' * 28 + '35' + '14' + '5af4' + '00'
+        result = self.verify(code, self.impl_code, calls={selector: self.padded(self.impl)})
+        self.assertEqual(result['proxy']['gnosis-safe-mastercopy'], self.impl)
+        self.assertEqual(result['deployment_status'], 'exact')
+        matching_proxy = self.verify(code, code, calls={selector: self.padded(self.impl)})
+        self.assertEqual(matching_proxy['deployment_status'], 'partial')
+
+    def test_compound_unitroller_is_compared_to_its_comptroller(self):
+        selector = keccak.selector('comptrollerImplementation()')
+        code = '0x63' + selector[2:] + '14' + '5af4' + '00'
+        result = self.verify(code, self.impl_code, calls={selector: self.padded(self.impl)})
+        self.assertEqual(result['proxy_kind'], 'compound-unitroller')
+        self.assertEqual(result['proxy_implementation']['address'], self.impl)
+        self.assertEqual(result['deployment_status'], 'exact')
+
+    def test_getter_is_not_probed_when_the_runtime_lacks_the_selector(self):
+        # A contract whose fallback returns an address-shaped word is not a Safe.
+        selector = keccak.selector('masterCopy()')
+        code = '0x' + '60' * 40
+        result = self.verify(code, code, calls={selector: self.padded(self.impl)})
+        self.assertEqual(result['proxy'], {})
+        self.assertEqual(result['deployment_status'], 'exact')
+
+    def test_diamond_is_reported_partial_with_its_facets(self):
+        facet_a, facet_b = '0x' + 'a1' * 20, '0x' + 'b2' * 20
+        words = [0x20, 2, 0x40, 0xc0,
+                 int(facet_a, 16), 0x40, 1, int('1f931c1c' + '00' * 28, 16),
+                 int(facet_b, 16), 0x40, 1, int('cdffacc6' + '00' * 28, 16)]
+        encoded = '0x' + ''.join(format(w, '064x') for w in words)
+        code = '0x' + '6000' + '5af4' + '60' * 30
+        result = self.verify(code, code, calls={keccak.selector('facets()'): encoded})
+        self.assertEqual(result['proxy']['eip2535-diamond'], [facet_a, facet_b])
+        self.assertEqual(result['proxy_kind'], 'eip2535-diamond')
+        self.assertEqual(result['deployment_status'], 'partial')
+        self.assertIn('facet', result['comparison']['reason'])
+
+    def test_slot0_singleton_forwarder_is_compared_to_the_singleton(self):
+        code = '0x' + '6000' + '54' + '5af4' + '60' * 20
+        result = self.verify(code, self.impl_code, storage={'0x0': self.padded(self.impl)})
+        self.assertEqual(result['proxy_kind'], 'slot0-singleton')
+        self.assertEqual(result['deployment_status'], 'exact')
+
+    def test_small_unrecognized_delegating_runtime_is_never_exact(self):
+        code = '0x' + '6000' + '5af4' + '60' * 30
+        result = self.verify(code, code)
+        self.assertEqual(result['proxy'], {})
+        self.assertEqual(result['deployment_status'], 'partial')
+        self.assertIn('unrecognized proxy', result['comparison']['reason'])
+
+    def test_a_delegatecall_byte_inside_push_data_is_not_an_opcode(self):
+        code = '0x' + '60f4' * 30        # PUSH1 0xf4, never DELEGATECALL
+        self.assertFalse(bounty.has_delegatecall(bytes.fromhex(code[2:])))
+        self.assertEqual(self.verify(code, code)['deployment_status'], 'exact')
+
+
+class FakeNodeErrors:
+    """Adapts FakeNode so a callable answer can raise to signal a JSON-RPC error (a revert)."""
+
+    def __init__(self, node):
+        self.node = node
+        self.calls = node.calls
+
+    def __call__(self, request, timeout=None):
+        try:
+            return self.node(request, timeout)
+        except ValueError as exc:
+            body = json.loads(request.data.decode('utf-8'))
+            return FakeResponse({'jsonrpc': '2.0', 'id': body['id'],
+                                 'error': {'code': 3, 'message': str(exc)}})
+
+
 class RunTests(unittest.TestCase):
     def test_inventory_recognizes_more_contract_and_service_languages(self):
         self.assertTrue({'.fc', '.tolk', '.move', '.cairo', '.rs', '.java', '.kt', '.php',
@@ -484,15 +672,31 @@ class RunTests(unittest.TestCase):
                 'claim': 'the nonReentrant modifier on redeem() stops the second entry',
                 'anchor': 'code: src/Vault.sol:142 modifier nonReentrant on redeem()',
                 'outcome': outcome}
+        if outcome == 'withdrawn':
+            # Withdrawn means no anchor could be produced; an anchored one is not withdrawn.
+            del item['anchor']
+            item['withdrawn_because'] = 'no guard found on the redeemFor() path'
         if outcome == 'answered':
             item['answer'] = 'redeemFor() reaches _redeem() directly and carries no guard'
             item['answer_anchor'] = 'code: src/Vault.sol:188-204 redeemFor -> _redeem'
         return item
 
+    def deployment_evidence(self, address='0x' + '11' * 20, onchain=None, built=None):
+        """Run verify-deployment against a fake node, saving its result into the run."""
+        code = '0x' + '60' * 40
+        node = FakeNode({'eth_chainId': '0x1', 'eth_blockNumber': '0x100',
+                         'eth_getCode': onchain or code, 'eth_getStorageAt': '0x' + '00' * 32})
+        artifact = self.base / ('artifact-' + address[-6:] + '.json')
+        artifact.write_text(json.dumps({'deployedBytecode': {'object': built or code}}))
+        result = bounty.verify_deployment('http://node.invalid', address, str(artifact),
+                                          'latest', opener=node, run=self.run)
+        return str(Path(result['evidence_file']).relative_to(self.run.resolve()))
+
     def submittable(self):
         row = self.verified()
         row['objections'] = [self.objection()]
         row.update(severity='high', scope_status='in-scope', deployment_status='exact',
+                   deployment_evidence=[self.deployment_evidence()],
                    severity_rationale='Program rubric: permanent loss of core function')
         row['novelty'] = {'status': 'no-public-match-found',
                           'sources': ['https://example.invalid/known-issues (read 2026-10-08)',
@@ -686,11 +890,12 @@ class RunTests(unittest.TestCase):
 
     def test_submission_gate_blocks_unverified_and_out_of_scope(self):
         row = self.submittable()
-        row['status'] = 'needs-evidence'
         row['scope_status'] = 'unknown'
+        self.assertTrue(any('scope_status' in e for e in self.check(row, submission=True)))
+        row = self.submittable()
+        row['status'] = 'needs-evidence'
         errors = self.check(row, submission=True)
-        self.assertTrue(any('status verified' in e for e in errors))
-        self.assertTrue(any('scope_status' in e for e in errors))
+        self.assertTrue(any('no verified records to submit' in e for e in errors))
 
     def test_submission_gate_requires_rubric_and_two_novelty_sources(self):
         row = self.submittable()
@@ -729,7 +934,8 @@ class RunTests(unittest.TestCase):
         self.assertTrue(any('regression requires evidence' in e for e in errors))
 
     def test_submission_gate_refuses_an_empty_file(self):
-        self.assertTrue(any('no records' in e for e in bounty.validate(self.run, submission=True)))
+        self.assertTrue(any('no verified records' in e
+                            for e in bounty.validate(self.run, submission=True)))
 
     # ---- objection exchange ----
     def test_objections_must_be_an_array_of_anchored_objects(self):
@@ -785,8 +991,188 @@ class RunTests(unittest.TestCase):
 
     def test_withdrawn_objections_do_not_block_submission(self):
         row = self.submittable()
-        row['objections'] = [self.objection('withdrawn')]
+        row['objections'] = [self.objection(), self.objection('withdrawn')]
         self.assertEqual(self.check(row, submission=True), [])
+
+    # ---- submission targets (review 0.9.1, item 1) ----
+    def test_submission_gate_applies_only_to_verified_records(self):
+        # Records are never deleted: a refuted sibling and an open lead must not block the
+        # verified record that is actually being submitted.
+        target = self.submittable()
+        refuted = self.candidate()
+        refuted.update(id='BP-002', status='refuted',
+                       rejection_reason='redeem() is guarded by nonReentrant on every path')
+        open_lead = self.candidate()
+        open_lead.update(id='BP-003', status='hypothesis')
+        bounty.dump(self.run / 'findings.json', [target, refuted, open_lead])
+        bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+        self.assertEqual(bounty.submission_targets(self.run), ['BP-001'])
+
+    def test_non_target_records_still_get_structural_validation(self):
+        target = self.submittable()
+        broken = self.candidate()
+        broken.update(id='BP-002')
+        broken['next_experiment']['method'] = ''
+        bounty.dump(self.run / 'findings.json', [target, broken])
+        bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+        errors = bounty.validate(self.run, submission=True)
+        self.assertEqual(errors, ['finding[1]: open candidate requires next_experiment.method'])
+
+    def test_submission_with_no_verified_record_is_refused(self):
+        bounty.dump(self.run / 'findings.json', [self.candidate()])
+        bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+        errors = bounty.validate(self.run, submission=True)
+        self.assertIn('findings.json: no verified records to submit', errors)
+
+    # ---- withdrawn objections and concessions (item 2) ----
+    def test_an_anchored_objection_cannot_be_withdrawn(self):
+        # The bypass: an anchored (i.e. sustained) objection relabelled withdrawn passed the gate.
+        row = self.submittable()
+        item = self.objection('sustained')
+        item['outcome'] = 'withdrawn'
+        row['objections'] = [self.objection(), item]
+        self.assertTrue(any('anchored objection cannot be withdrawn' in e for e in self.check(row)))
+        self.assertTrue(any('anchored objection cannot be withdrawn' in e
+                            for e in self.check(row, submission=True)))
+
+    def test_withdrawn_objections_alone_are_not_a_triage_exchange(self):
+        row = self.submittable()
+        row['objections'] = [self.objection('withdrawn')]
+        self.assertTrue(any('triage exchange' in e for e in self.check(row, submission=True)))
+        row['concessions'] = [{'gate': 'harm', 'reason': 'searched for a fee cap and found none; '
+                                                         'the loss is uncapped'}]
+        self.assertEqual(self.check(row, submission=True), [])
+
+    def test_concessions_are_validated(self):
+        row = self.candidate()
+        row['concessions'] = [{'gate': 'nonsense', 'reason': ''}, 'conceded']
+        errors = self.check(row)
+        self.assertTrue(any('concessions[0]: gate must be one of' in e for e in errors))
+        self.assertTrue(any('concessions[0]: reason is required' in e for e in errors))
+        self.assertTrue(any('concessions[1]: must be an object' in e for e in errors))
+        row['concessions'] = 'all of them'
+        self.assertTrue(any('concessions must be an array' in e for e in self.check(row)))
+
+    # ---- deployment evidence (item 3) ----
+    def test_hand_typed_exact_deployment_is_refused(self):
+        row = self.submittable()
+        del row['deployment_evidence']
+        errors = self.check(row, submission=True)
+        self.assertTrue(any('requires deployment_evidence' in e for e in errors))
+
+    def test_deployment_evidence_must_report_exact_for_its_own_address(self):
+        row = self.submittable()
+        partial = self.deployment_evidence('0x' + '22' * 20, onchain='0x' + '60' * 40,
+                                           built='0x' + '60' * 39 + '61')
+        row['deployment_evidence'] = [row['deployment_evidence'][0], partial]
+        errors = self.check(row, submission=True)
+        self.assertTrue(any('reports partial, not exact' in e for e in errors))
+        # A renamed file no longer names the address it was recorded for.
+        renamed = self.run / 'deployments' / ('0x' + '33' * 20 + '.json')
+        (self.run / row['deployment_evidence'][0]).rename(renamed)
+        row['deployment_evidence'] = ['deployments/' + renamed.name]
+        self.assertTrue(any('does not name the address' in e
+                            for e in self.check(row, submission=True)))
+
+    def test_deployment_evidence_must_live_in_the_runs_deployments_folder(self):
+        row = self.submittable()
+        (self.run / 'stray.json').write_text((self.run / row['deployment_evidence'][0]).read_text())
+        for bad in ('stray.json', '../outside.json', '/etc/hosts', 'deployments/missing.json'):
+            row['deployment_evidence'] = [bad]
+            self.assertTrue(any("deployments/ folder" in e
+                                for e in self.check(row, submission=True)), bad)
+        row['deployment_evidence'] = 42
+        self.assertTrue(any('deployment_evidence must be a string' in e for e in self.check(row)))
+
+    def test_deployment_evidence_goes_stale_when_the_artifact_changes(self):
+        row = self.submittable()
+        record = json.loads((self.run / row['deployment_evidence'][0]).read_text())
+        Path(record['artifact']['path']).write_text(json.dumps({'deployedBytecode': '0x00'}))
+        errors = self.check(row, submission=True)
+        self.assertTrue(any('artifact changed after it was compared' in e for e in errors))
+
+    def test_not_applicable_needs_a_rationale_and_no_contract_source(self):
+        row = self.submittable()
+        row['deployment_status'] = 'not-applicable'
+        row['deployment_evidence'] = []
+        errors = self.check(row, submission=True)
+        self.assertTrue(any('requires deployment_rationale' in e for e in errors))
+        self.assertTrue(any('refused for deployed contract source' in e for e in errors))
+        row['deployment_rationale'] = 'Off-chain keeper service; no contract code involved.'
+        row['affected_paths'] = ['services/keeper/main.go:submitBatch']
+        self.assertEqual(self.check(row, submission=True), [])
+        row['affected_paths'] = ['contracts/Pool.vy:withdraw']
+        self.assertTrue(any('refused for deployed contract source' in e
+                            for e in self.check(row, submission=True)))
+
+    def test_verify_deployment_run_must_be_an_init_run(self):
+        node = FakeNode({})
+        with self.assertRaisesRegex(ValueError, 'created by init'):
+            bounty.verify_deployment('http://node.invalid', '0x' + '11' * 20, None, 'latest',
+                                     opener=node, run=self.base)
+        self.assertEqual(node.calls, [])
+
+    def test_verify_deployment_saves_the_full_result_into_the_run(self):
+        rel = self.deployment_evidence('0x' + 'AB' * 20)
+        self.assertEqual(rel, 'deployments/0x' + 'ab' * 20 + '.json')
+        record = json.loads((self.run / rel).read_text())
+        self.assertEqual(record['address'], '0x' + 'AB' * 20)
+        self.assertEqual(record['deployment_status'], 'exact')
+        self.assertEqual((record['chain_id'], record['block']), (1, 256))
+        self.assertEqual(record['proxy_kind'], 'none')
+        self.assertIsNone(record['implementation_address'])
+        self.assertEqual(record['artifact']['sha256'],
+                         bounty._sha256_file(record['artifact']['path']))
+        self.assertIn('reason', record['comparison'])
+        self.assertNotIn('node.invalid', json.dumps(record))   # the RPC URL may carry a key
+
+    # ---- wrong JSON types (item 12) ----
+    def test_wrong_types_are_errors_not_crashes(self):
+        row = self.submittable()
+        row['novelty'] = {'status': ['no-public-match-found'], 'sources': ['a', 'b']}
+        row['history_review'] = {'status': {'no': 'match'}, 'case_ids': [], 'rationale': 'x'}
+        row['objections'] = [{'gate': ['harm'], 'claim': 'c', 'anchor': 'a',
+                              'outcome': {'answered': True}}]
+        errors = self.check(row, submission=True)
+        for expected in ('invalid novelty.status', 'invalid history_review.status',
+                         'gate must be one of', 'outcome must be one of'):
+            self.assertTrue(any(expected in e for e in errors), expected)
+        row['novelty'] = 'checked'
+        row['id'] = ['BP-001']
+        errors = self.check(row, submission=True)
+        self.assertTrue(any('novelty must be an object' in e for e in errors))
+
+    def test_dup_map_with_wrong_types_is_reported(self):
+        bounty.dump(self.run / 'findings.json', [self.candidate()])
+        bounty.dump(self.run / 'dup-map.json', [{'kind': ['past-audit'], 'source': 's',
+                                                 'surfaces': ['src/Vault.sol'],
+                                                 'bug_classes': 'aggregate-not-decremented'}])
+        errors, _ = bounty.check_dup_map(self.run)
+        self.assertTrue(any('kind must be one of' in e for e in errors))
+        self.assertTrue(any('bug_classes must be a string array' in e for e in errors))
+
+    # ---- small ones (item 15) ----
+    def test_dup_check_treats_a_string_path_as_one_path(self):
+        row = self.candidate()
+        row['affected_paths'] = 'src/Vault.sol'
+        bounty.dump(self.run / 'findings.json', [row])
+        bounty.dump(self.run / 'dup-map.json', [{
+            'kind': 'past-audit', 'source': 'https://example.invalid/a',
+            'surfaces': ['lib/Other.sol']}])
+        self.assertEqual(bounty.check_dup_map(self.run), ([], []))   # was: matched on 'l'
+        bounty.dump(self.run / 'dup-map.json', [{
+            'kind': 'past-audit', 'source': 'https://example.invalid/a',
+            'surfaces': ['src/Vault.sol']}])
+        self.assertEqual(len(bounty.check_dup_map(self.run)[1]), 1)
+
+    def test_an_invalid_project_is_an_error_not_a_fallback(self):
+        bounty.dump(self.run / 'findings.json', [self.verified()])
+        with self.assertRaisesRegex(ValueError, '--project must be'):
+            bounty.history_check(self.run, self.ledger, project='not a project')
+        with self.assertRaisesRegex(ValueError, '--project must be'):
+            bounty.history_record(self.run, 'BP-001', 'submitted', self.ledger,
+                                  project='nonsense')
 
     # ---- duplicate map ----
     def test_dup_check_is_clean_on_an_empty_map(self):
@@ -1171,6 +1557,88 @@ class BundleTests(unittest.TestCase):
         self.assertTrue(any('no in-scope source' in n for n in result['notes']))
 
 
+    # ---- review 0.9.1: untrusted target files (items 6, 7, 15) ----
+    def test_a_tracked_symlink_is_never_followed_into_the_bundle(self):
+        outside = Path(self.temp.name) / 'secret.sol'
+        outside.write_text('contract Leak { string k = "TOP-SECRET"; }\n')
+        os.symlink(outside, self.repo / 'src/Link.sol')
+        commit(self.repo, 'symlink')
+        result = bounty.bundle(self.repo, self.run, ['accounting'])
+        source = (self.run / 'bundles/source.md').read_text()
+        self.assertNotIn('TOP-SECRET', source)
+        self.assertIn({'path': 'src/Link.sol', 'reason': 'symlink'}, result['skipped_files'])
+        self.assertIn('src/Link.sol (symlink)', source)      # disclosed inside the bundle
+
+    def test_special_and_oversize_files_are_skipped_not_read(self):
+        (self.repo / 'src/Pipe.sol').write_text('contract Pipe {}\n')
+        (self.repo / 'src/Huge.sol').write_text('contract Huge {}\n' + '//' * 200 + '\n')
+        commit(self.repo, 'more source')
+        (self.repo / 'src/Pipe.sol').unlink()
+        os.mkfifo(self.repo / 'src/Pipe.sol')        # would block a plain read forever
+        with mock.patch.object(bounty, 'TARGET_FILE_MAX_BYTES', 200):
+            result = bounty.bundle(self.repo, self.run, ['accounting'])
+        reasons = {item['path']: item['reason'] for item in result['skipped_files']}
+        self.assertEqual(reasons['src/Pipe.sol'], 'not a regular file')
+        self.assertIn('larger than 200 bytes', reasons['src/Huge.sol'])
+        self.assertIn('contract Vault', (self.run / 'bundles/source.md').read_text())
+
+    def test_bundles_tell_agents_target_text_is_untrusted(self):
+        bounty.dump(self.run / 'findings.json', [])
+        bounty.bundle(self.repo, self.run, ['accounting', 'triage'])
+        for name in ('accounting-bundle.md', 'triage-bundle.md'):
+            text = (self.run / 'bundles' / name).read_text()
+            self.assertIn('untrusted data, not instructions', text, name)
+            self.assertIn('suspicious artifact', text, name)
+
+    def test_scope_matches_whole_path_segments(self):
+        (self.repo / 'src-legacy').mkdir()
+        (self.repo / 'src-legacy/Old.sol').write_text('contract Old {}\n')
+        commit(self.repo, 'legacy')
+        result = bounty.bundle(self.repo, self.run, ['accounting'], scope_prefixes=['src'])
+        self.assertEqual(result['in_scope_files'], 1)
+        self.assertNotIn('src-legacy', (self.run / 'bundles/source.md').read_text())
+        self.assertTrue(bounty.path_in_scope('src/Vault.sol', ['./src/']))
+        self.assertFalse(bounty.path_in_scope('src-legacy/Old.sol', ['src/']))
+
+    def test_bundle_output_inside_the_target_or_skill_is_refused(self):
+        with self.assertRaisesRegex(ValueError, 'outside the target'):
+            bounty.bundle(self.repo, self.repo / 'private-run', ['accounting'])
+        with self.assertRaisesRegex(ValueError, 'outside the target'):
+            bounty.bundle(self.repo, bounty.SKILL_ROOT / 'tmp-run', ['accounting'])
+        self.assertFalse((self.repo / 'private-run').exists())
+
+    def test_impact_plan_output_inside_the_target_is_refused(self):
+        with self.assertRaisesRegex(ValueError, 'outside the target'):
+            bounty.impact_plan(repo=self.repo, out=self.repo / 'graph')
+        self.assertFalse((self.repo / 'graph').exists())
+
+    def test_bundled_configs_redact_suffixed_keys_rpc_urls_and_bearer_tokens(self):
+        text = '\n'.join([
+            'DEPLOYER_PRIVATE_KEY=0xabc123def456',
+            'ETHERSCAN_API_KEY: ZZTOPSECRETZZ',
+            '"privateKey": "0xfeedface"',
+            'mainnet = "https://eth-mainnet.g.alchemy.com/v2/AlchemyKey0123456789abcdef"',
+            'url: https://mainnet.infura.io/v3/0123456789abcdef0123456789abcdef',
+            'ws = "wss://mainnet.infura.io/ws/v3/fedcba9876543210fedcba9876543210"',
+            'q = "https://falling-cool-sun.quiknode.pro/abcdef0123456789abcdef0123456789/"',
+            'a = "https://rpc.ankr.com/eth/0a1b2c3d4e5f60718293a4b5c6d7e8f9"',
+            'other = "https://rpc.example.org/v2/GenericProviderKey12345678"',
+            'auth = "https://user:hunter2@rpc.example.org"',
+            'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig',
+            'headers = { Authorization = "Bearer tok_live_ABCDEFGH12345" }',
+            'solc_version = "0.8.24"',
+        ])
+        redacted = bounty._redact_context_secrets(text)
+        for secret in ('0xabc123def456', 'ZZTOPSECRETZZ', '0xfeedface', 'AlchemyKey0123',
+                       '0123456789abcdef0123456789abcdef', 'fedcba9876543210',
+                       'abcdef0123456789abcdef0123456789', '0a1b2c3d4e5f6071',
+                       'GenericProviderKey', 'hunter2', 'eyJhbGciOiJIUzI1NiJ9',
+                       'tok_live_ABCDEFGH'):
+            self.assertNotIn(secret, redacted)
+        self.assertIn('solc_version = "0.8.24"', redacted)
+        self.assertIn('https://eth-mainnet.g.alchemy.com/v2/<redacted>', redacted)
+
+
 class CompilerBugTests(unittest.TestCase):
     BY_VERSION = {'0.6.12': {'released': '2020-06-03', 'bugs': ['BadBug', 'TinyBug']},
                   '0.8.19': {'released': '2023-02-22', 'bugs': ['TinyBug']}}
@@ -1219,8 +1687,9 @@ class CompilerBugTests(unittest.TestCase):
                                   'x:{version:"4.4.4"}', {'0.8.20', '0.7.6'}),
             ('truffle-config.js', 'compilers:{solc:{version:"0.8.4"}},plugins:{version:"2.0.0"}',
              {'0.8.4'}),
+            # A caret is a range: reading it as exact 0.8.24 reports another compiler's bugs.
             ('package.json', '{"name":"p","version":"1.2.3",'
-                             '"devDependencies":{"solc":"^0.8.24"}}', {'0.8.24'}),
+                             '"devDependencies":{"solc":"^0.8.24"}}', {'^0.8.24'}),
             ('package.json', '{"name":"p","version":"1.2.3"}', set()),
             ('package.json', 'not json at all', set()),
         ]
@@ -1272,6 +1741,74 @@ class CompilerBugTests(unittest.TestCase):
         result = bounty.solc_bugs(self.repo, None, failing)
         self.assertTrue(any('could not fetch' in n for n in result['notes']))
         self.assertIn('0.6.12', result['checked'])
+
+
+    # ---- review 0.9.1, item 10 ----
+    def test_caret_in_package_json_is_a_range_not_an_exact_version(self):
+        (self.repo / 'package.json').write_text('{"devDependencies":{"solc":"^0.8.0"}}')
+        commit(self.repo, 'package')
+        found = bounty.collect_compiler_versions(self.repo)
+        self.assertNotIn('0.8.0', found['exact'])
+        self.assertIn('^0.8.0', found['ranges'])
+
+    def test_commented_pragmas_are_ignored_and_equals_pins_exactly(self):
+        (self.repo / 'src/Commented.sol').write_text(
+            '// pragma solidity 0.4.24;\n'
+            '/* pragma solidity 0.5.0;\n   still a comment */\n'
+            'pragma solidity =0.7.6;\n'
+            'contract C { string u = "http://example.invalid/*"; }\n'
+            '/* unterminated pragma solidity 0.4.11;\n')
+        commit(self.repo, 'commented')
+        found = bounty.collect_compiler_versions(self.repo)
+        self.assertIn('0.7.6', found['exact'])
+        for ghost in ('0.4.24', '0.5.0', '0.4.11'):
+            self.assertNotIn(ghost, found['exact'])
+            self.assertFalse(any(ghost in spec for spec in found['ranges']), ghost)
+
+    def test_pragma_ranges_are_matched_against_released_versions(self):
+        (self.repo / 'src/Range.sol').write_text('pragma solidity >=0.6.0 <0.8.20;\n')
+        commit(self.repo, 'range')
+        result = bounty.solc_bugs(self.repo, None, self.opener())
+        by_range = {m['range']: m for m in result['range_matches']}
+        wide = by_range['>=0.6.0 <0.8.20']
+        self.assertEqual(wide['released_versions_in_range'], 2)
+        self.assertEqual(sorted(wide['possible_bugs']), ['BadBug', 'TinyBug'])
+        self.assertEqual([b['name'] for b in wide['possible_medium_or_higher']], ['BadBug'])
+        self.assertEqual(by_range['^0.8.20']['possible_bugs'], [])   # no listed release admits it
+        self.assertTrue(any("no released version" in n for n in result['notes']))
+
+    def test_version_range_semantics(self):
+        cases = [('^0.8.0', '0.8.19', True), ('^0.8.0', '0.9.0', False),
+                 ('^0.8.0', '0.7.6', False), ('~0.8.1', '0.8.30', True),
+                 ('~0.8.1', '0.8.0', False), ('0.8', '0.8.4', True), ('0.8', '0.9.0', False),
+                 ('>=0.4.22 <0.9.0', '0.8.30', True), ('>=0.4.22 <0.9.0', '0.9.0', False),
+                 ('0.4.0 - 0.5.0', '0.5.0', True), ('0.4.0 - 0.5.0', '0.5.1', False),
+                 ('^0.5.0 || ^0.8.0', '0.8.3', True), ('^0.5.0 || ^0.8.0', '0.6.0', False),
+                 ('>0.8.4', '0.8.4', False), ('<=0.8', '0.8.99', True), ('*', '0.1.0', True)]
+        for spec, version, expected in cases:
+            parsed = bounty.parse_version_range(spec)
+            self.assertIsNotNone(parsed, spec)
+            self.assertEqual(bounty.version_satisfies(parsed, bounty._version_tuple(version)),
+                             expected, f'{spec} vs {version}')
+        self.assertIsNone(bounty.parse_version_range('latest'))
+
+    def test_a_json_array_under_out_does_not_crash(self):
+        (self.repo / 'out').mkdir()
+        (self.repo / 'out/list.json').write_text('[1, 2, 3]')
+        (self.repo / 'out/str-meta.json').write_text(json.dumps(
+            {'metadata': json.dumps({'compiler': {'version': '0.8.21+commit.d9974bed'}})}))
+        found = bounty.collect_compiler_versions(self.repo)
+        self.assertEqual(found['artifacts_read'], 1)
+        self.assertIn('0.8.21', found['exact'])
+
+    def test_a_symlinked_config_is_not_read(self):
+        outside = Path(self.temp.name) / 'foundry.toml'
+        outside.write_text('[profile.default]\nsolc_version = "0.4.11"\n')
+        (self.repo / 'foundry.toml').unlink()
+        os.symlink(outside, self.repo / 'foundry.toml')
+        found = bounty.collect_compiler_versions(self.repo)
+        self.assertNotIn('0.4.11', found['exact'])
+        self.assertIn({'path': 'foundry.toml', 'reason': 'symlink'}, found['skipped_files'])
 
 
 class BacktestTests(unittest.TestCase):
@@ -1398,6 +1935,42 @@ class BacktestTests(unittest.TestCase):
             bounty.backtest_score(self.case)
 
 
+    def test_refuted_records_earn_no_rediscovery_credit(self):
+        refuted = self.finding('BP-002', lens='economics')
+        refuted.update(status='refuted', rejection_reason='guarded by nonReentrant')
+        self.seal_with([refuted])
+        bounty.dump(self.case / 'truth.json', [
+            {'id': 'T1', 'severity': 'high', 'title': 'redeem does not decrement totalDebt',
+             'root_cause': 'the redeem path omits the totalDebt decrement',
+             'paths': ['src/Vault.sol:Vault.redeem']}])
+        # Even a pair decided by hand cannot credit a record that withdrew its claim.
+        bounty.dump(self.case / 'matches.json', [{
+            'truth_id': 'T1', 'finding_id': 'BP-002', 'overlap_score': 4.0,
+            'decision': 'same-mechanism', 'decision_reason': 'same decrement'}])
+        scored = bounty.backtest_score(self.case)
+        self.assertEqual(scored['state'], 'scored')
+        self.assertEqual(scored['rediscovered'], [])
+        self.assertEqual([r['id'] for r in scored['missed']], ['T1'])
+        self.assertEqual(scored['credited_lenses'], {})
+        self.assertEqual([f['id'] for f in scored['refuted_hunt_findings']], ['BP-002'])
+        self.assertEqual(scored['refuted_matches'], [{'truth_id': 'T1', 'finding_id': 'BP-002'}])
+        self.assertEqual(scored['unmatched_hunt_findings'], [])
+        self.assertEqual(scored['hunt_findings'], 0)
+
+    def test_refuted_records_are_not_proposed_for_matching(self):
+        refuted = self.finding('BP-002')
+        refuted.update(status='refuted', rejection_reason='guarded')
+        self.seal_with([self.finding(), refuted])
+        bounty.dump(self.case / 'truth.json', [
+            {'id': 'T1', 'severity': 'high', 'title': 'redeem does not decrement totalDebt',
+             'root_cause': 'the redeem path omits the totalDebt decrement',
+             'paths': ['src/Vault.sol:Vault.redeem']}])
+        pending = bounty.backtest_score(self.case)
+        self.assertEqual(pending['undecided'], 1)
+        rows = json.loads((self.case / 'matches.json').read_text())
+        self.assertEqual([r['finding_id'] for r in rows], ['BP-001'])
+
+
 class ValueTests(unittest.TestCase):
     def test_balances_are_read_and_ranked_per_token(self):
         token = '0x' + 'aa' * 20
@@ -1414,6 +1987,8 @@ class ValueTests(unittest.TestCase):
                 result = '0x200'
             elif method == 'eth_getBalance':
                 result = '0xde0b6b3a7640000' if params[0] == rich else '0x0'
+            elif method == 'eth_getCode':
+                result = '0x6001'
             elif method == 'eth_call':
                 data = params[0]['data']
                 if data.startswith(keccak.selector('decimals()')):
@@ -1437,6 +2012,48 @@ class ValueTests(unittest.TestCase):
     def test_bad_address_is_refused_before_any_call(self):
         with self.assertRaises(ValueError):
             bounty.value_at_risk('http://node.invalid', ['nope'], None, 'latest', lambda *a: None)
+
+
+    def test_one_bad_token_is_reported_without_aborting_the_rest(self):
+        good, zero_dec, broken, empty = ('0x' + 'aa' * 20, '0x' + 'bb' * 20,
+                                         '0x' + 'cc' * 20, '0x' + 'dd' * 20)
+        holder = '0x' + '11' * 20
+
+        def answer(method, params):
+            if method == 'eth_chainId':
+                return '0x1'
+            if method == 'eth_blockNumber':
+                return '0x10'
+            if method == 'eth_getBalance':
+                return '0x0'
+            if method == 'eth_getCode':
+                return '0x' if params[0] == empty else '0x6001'
+            token, data = params[0]['to'], params[0]['data']
+            if token == broken:
+                raise ValueError('execution reverted')
+            if data.startswith(keccak.selector('decimals()')):
+                return '0x' + format(0 if token == zero_dec else 6, '064x')
+            return '0x' + format(5_000_000, '064x')
+
+        def node(request, timeout=None):
+            body = json.loads(request.data.decode('utf-8'))
+            try:
+                payload = {'result': answer(body['method'], body['params'])}
+            except ValueError as exc:
+                payload = {'error': {'code': 3, 'message': str(exc)}}
+            return FakeResponse(dict(payload, jsonrpc='2.0', id=body['id']))
+
+        out = bounty.value_at_risk('http://node.invalid', [holder],
+                                   [good, zero_dec, broken, empty], 'latest', node)
+        held = {h['token']: h for h in out['holdings'][0]['tokens']}
+        self.assertEqual(held[good]['scaled'], 5.0)
+        self.assertEqual(held[zero_dec]['decimals'], 0)
+        self.assertEqual(held[zero_dec]['scaled'], 5_000_000)      # was None for decimals 0
+        self.assertIn('decimals() failed', out['token_errors'][broken])
+        self.assertIn('balanceOf() failed', held[broken]['error'])
+        self.assertIn('no code', out['token_errors'][empty])
+        self.assertIsNone(held[empty]['raw'])                      # not a false zero balance
+        self.assertEqual(out['ranked_per_token'][empty], [])
 
 
 class DeltaTests(unittest.TestCase):
@@ -1516,6 +2133,77 @@ class DeltaTests(unittest.TestCase):
         self.assertTrue(any('duplicate_policy' in u for u in result['unknowns']))
 
 
+    def test_cross_directory_rename_keeps_the_real_path(self):
+        (self.repo / 'src/a').mkdir()
+        (self.repo / 'src/a/Vault.sol').write_text(
+            'contract Vault {\n  function f() external { (bool ok,) = msg.sender.call(""); }\n}\n')
+        commit(self.repo, 'vault')
+        base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'], check=True,
+                              stdout=subprocess.PIPE).stdout.decode().strip()
+        (self.repo / 'src/b').mkdir()
+        git(self.repo, 'mv', 'src/a/Vault.sol', 'src/b/Vault.sol')
+        with open(self.repo / 'src/b/Vault.sol', 'a') as handle:
+            handle.write('// moved\n')
+        commit(self.repo, 'move vault')
+        report = bounty.delta(self.repo, base)
+        paths = [row['path'] for row in report['ranked']]
+        self.assertEqual(paths, ['src/b/Vault.sol'])          # was: 'b}/Vault.sol'
+        self.assertTrue(report['ranked'][0]['exists_at_head'])
+        self.assertIn('external-call', report['ranked'][0]['signals'])
+
+    def test_delta_scope_matches_whole_segments(self):
+        (self.repo / 'src-legacy').mkdir()
+        (self.repo / 'src-legacy/Old.sol').write_text('contract Old { uint256 z; }\n')
+        commit(self.repo, 'legacy')
+        report = bounty.delta(self.repo, self.audited, ['src'])
+        paths = [row['path'] for row in report['ranked']]
+        self.assertIn('src/Risky.sol', paths)
+        self.assertNotIn('src-legacy/Old.sol', paths)
+
+    def test_delta_and_score_target_do_not_follow_symlinks(self):
+        outside = Path(self.temp.name) / 'outside.sol'
+        outside.write_text('contract X { function f() external { msg.sender.call(""); } }\n')
+        os.symlink(outside, self.repo / 'src/Link.sol')
+        commit(self.repo, 'symlink')
+        report = bounty.delta(self.repo, self.audited)
+        link = next(r for r in report['ranked'] if r['path'] == 'src/Link.sol')
+        self.assertEqual(link['signals'], {})
+        self.assertIn({'path': 'src/Link.sol', 'reason': 'symlink'}, report['skipped_files'])
+        program = Path(self.temp.name) / 'program.json'
+        program.write_text(json.dumps({'program': 'P', 'in_scope_paths': ['src/']}))
+        scored = bounty.score_target(self.repo, program)
+        self.assertIn({'path': 'src/Link.sol', 'reason': 'symlink'}, scored['skipped_files'])
+
+
+class GitHardeningTests(unittest.TestCase):
+    """Review 0.9.1, item 8: a target's .git/config must not run commands through git."""
+
+    def test_target_fsmonitor_hook_is_never_executed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            repo = base / 'repo'
+            (repo / 'src').mkdir(parents=True)
+            git(repo, 'init', '-q')
+            (repo / 'src/Vault.sol').write_text('contract Vault {}\n')
+            commit(repo, 'fixture')
+            marker = base / 'pwned'
+            hook = base / 'hook.sh'
+            hook.write_text(f'#!/bin/sh\necho ran > "{marker}"\nexit 1\n')
+            hook.chmod(0o755)
+            git(repo, 'config', 'core.fsmonitor', str(hook))
+            git(repo, 'config', 'core.hooksPath', str(base))
+            (repo / 'src/Vault.sol').write_text('contract Vault { uint x; }\n')  # dirty
+            subprocess.run(['git', '-C', str(repo), 'status', '--porcelain'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if not marker.exists():
+                self.skipTest('this git does not run fsmonitor hooks; premise not testable')
+            marker.unlink()
+            bounty.initialize(repo, base / 'run')
+            bounty.git(repo, 'status', '--porcelain')
+            bounty.git(repo, 'diff', '--numstat', 'HEAD')
+            self.assertFalse(marker.exists(), 'core.fsmonitor from the target config ran')
+
+
 class TemplateTests(unittest.TestCase):
     def test_the_solana_control_test_cannot_pass_while_empty(self):
         # A passing empty negative control looks like evidence and establishes nothing.
@@ -1554,6 +2242,8 @@ class CliTests(unittest.TestCase):
                      ['backtest', 'score', '--case', 'c'],
                      ['score-target', '--repo', '.', '--program', 'p.json'],
                      ['verify-deployment', '--rpc', 'u', '--address', 'a'],
+                     ['verify-deployment', '--rpc', 'u', '--address', 'a', '--artifact', 'f',
+                      '--block', '1', '--run', 'r'],
                      ['sig', 'transfer(address,uint256)'],
                      ['eth-call', '--rpc', 'u', '--to', 't', '--sig', 's']):
             parser.parse_args(argv)
@@ -1572,6 +2262,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertTrue(err.getvalue().startswith('Error:'))
 
+
+    def test_unexpected_exceptions_become_one_error_line(self):
+        err = io.StringIO()
+        with mock.patch.object(bounty, 'validate', side_effect=TypeError('unhashable type')), \
+                mock.patch.dict(bounty.os.environ, {'BOUNTY_DEBUG': ''}), \
+                contextlib.redirect_stderr(err):
+            code = bounty.main(['check', '--run', 'x'])
+        self.assertEqual(code, 2)
+        lines = err.getvalue().strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith('Error: unexpected TypeError'))
 
 if __name__ == '__main__':
     unittest.main()

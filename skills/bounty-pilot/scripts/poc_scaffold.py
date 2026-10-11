@@ -28,42 +28,59 @@ def scaffold(finding, stack):
 pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 
+// CONVENTION (see templates/README.md): both tests are expected to exit 0 (pass).
+//   - The CANDIDATE passes IFF the vulnerability is demonstrated: assert the attacker's
+//     gain, the broken invariant, or the wrong resulting state.
+//   - The NEGATIVE CONTROL passes IFF the protection holds on the control path.
+// Until filled in, both deliberately FAIL so an empty skeleton is never mistaken for evidence.
 // TODO: replace with the actual deployed/unmodified target and pinned dependencies.
 contract BountyPilotScenario is Test {
     function test_candidate_''' + ident + '''() public {
-        // TODO: implement reachable ordered actions and quantify impact.
-        assertTrue(false, "TODO: no evidence; fill candidate assertions");
+        // TODO: reach the state, run the attacker's ordered actions, then assert the
+        //       attacker gained / the invariant broke (this PASSES only when the bug is real).
+        revert("fill in: candidate must assert the demonstrated vulnerability");
     }
 
     function test_negative_control_''' + ident + '''() public {
-        // TODO: same path with a safe input; assert absence of the violation.
-        assertTrue(false, "TODO: no evidence; fill negative-control assertions");
+        // TODO: same path with the attacker capability removed (or patched code);
+        //       assert the protection holds (this PASSES only when the control is safe).
+        revert("fill in: negative control must assert the protection holds");
     }
 }
 '''
     elif stack == "rust":
-        data = '''// TODO: import the original target crate and build realistic actors/state.
+        data = '''// CONVENTION (see templates/README.md): both tests are expected to exit 0 (pass).
+//   - The CANDIDATE passes IFF the vulnerability is demonstrated (assert the attacker's
+//     gain / broken invariant / wrong state).
+//   - The NEGATIVE CONTROL passes IFF the protection holds on the control path.
+// Until filled in, both deliberately panic so an empty skeleton is never mistaken for evidence.
+// TODO: import the original target crate and build realistic actors/state.
 #[test]
 fn candidate_''' + ident + '''() {
-    // TODO: execute attack sequence with the native runtime.
-    panic!("TODO: candidate invariant and impact assertions not implemented");
+    // TODO: execute attack sequence; assert the demonstrated impact so this PASSES only when real.
+    panic!("fill in: candidate must assert the demonstrated vulnerability");
 }
 
 #[test]
 fn negative_control_''' + ident + '''() {
-    // TODO: execute the comparable protected scenario.
-    panic!("TODO: negative-control assertions not implemented");
+    // TODO: execute the comparable protected scenario; assert the protection holds.
+    panic!("fill in: negative control must assert the protection holds");
 }
 '''
     elif stack == "python":
-        data = '''"""TODO: import the original service, fixtures and real dependencies."""
+        data = '''"""CONVENTION (see templates/README.md): both tests are expected to exit 0 (pass).
+- The CANDIDATE passes IFF the vulnerability is demonstrated (assert the attacker's gain /
+  broken invariant / wrong state).
+- The NEGATIVE CONTROL passes IFF the protection holds on the control path.
+Until filled in, both deliberately fail so an empty skeleton is never mistaken for evidence.
+TODO: import the original service, fixtures and real dependencies."""
 def test_candidate_''' + ident + '''():
-    # TODO: reachable setup, ordered actions, measurable victim effect.
-    raise AssertionError("TODO: candidate not implemented")
+    # TODO: reachable setup, ordered actions; assert the measurable victim effect (PASS == bug real).
+    raise AssertionError("fill in: candidate must assert the demonstrated vulnerability")
 
 def test_negative_control_''' + ident + '''():
-    # TODO: protected counterpart, with real checks.
-    raise AssertionError("TODO: negative control not implemented")
+    # TODO: protected counterpart; assert the protection holds.
+    raise AssertionError("fill in: negative control must assert the protection holds")
 '''
     else:
         camel = "".join(p[:1].upper() + p[1:] for p in ident.split("_"))
@@ -71,13 +88,18 @@ def test_negative_control_''' + ident + '''():
 
 import "testing"
 
+// CONVENTION (see templates/README.md): both tests are expected to exit 0 (pass).
+//   - The CANDIDATE passes IFF the vulnerability is demonstrated (assert the attacker's
+//     gain / broken invariant / wrong state).
+//   - The NEGATIVE CONTROL passes IFF the protection holds on the control path.
+// Until filled in, both deliberately fail so an empty skeleton is never mistaken for evidence.
 // TODO: use the target package's native test setup and actual process semantics.
 func TestCandidate''' + camel + '''(t *testing.T) {
-    t.Fatal("TODO: candidate evidence not implemented")
+    t.Fatal("fill in: candidate must assert the demonstrated vulnerability")
 }
 
 func TestNegativeControl''' + camel + '''(t *testing.T) {
-    t.Fatal("TODO: negative-control evidence not implemented")
+    t.Fatal("fill in: negative control must assert the protection holds")
 }
 '''
     notes = {"finding_id": finding["id"], "stack": stack,
@@ -99,7 +121,9 @@ def main(argv=None):
         ident, code, notes = scaffold(finding, args.stack)
         out = Path(args.out_dir)
         out.mkdir(parents=True, exist_ok=True)
-        basename = "bp_" + ident
+        # Prefix with test_ so pytest collects the Python skeletons by default
+        # (its default collection only picks up test_*.py / *_test.py).
+        basename = "test_bp_" + ident
         path = out / (basename + KINDS[args.stack])
         meta = out / (basename + ".json")
         # Exclusive creation means we never silently erase test work.

@@ -1,9 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// Fork PoC against a DEPLOYED protocol.
-//   forge test --match-path ForkPoC.t.sol -vvvv
+// Fork PoC against a DEPLOYED protocol, run inside a DISPOSABLE copy/worktree of the
+// target at the recorded commit (see templates/README.md) so --match-path can find it
+// without touching the user's working tree.
+//   forge test --match-path test/ForkPoC.t.sol -vvvv
 // Pin the block. An unpinned fork test is not reproducible evidence.
+//
+// CONVENTION (templates/README.md): both tests are expected to exit 0 (pass).
+//   - The CANDIDATE passes IFF the vulnerability is demonstrated: it asserts the attacker's
+//     gain, the broken invariant, or the wrong resulting state.
+//   - The CONTROL passes IFF the protection holds on the control path.
+//
+// The RPC endpoint is read from an environment variable. With scenario_runner.py, name that
+// variable in the plan/case `pass_env` list so only it is copied into the test environment
+// (its value is redacted from captured output); never hardcode an RPC key here.
 //
 // Fill every <...> and delete the guidance comments before attaching this to a report.
 
@@ -19,7 +30,7 @@ interface ITarget {
 contract ForkPoC is Test {
     // ---- pinned environment -------------------------------------------------
     uint256 constant FORK_BLOCK = <block number>;          // the block this was observed at
-    string  constant RPC_ENV    = "<RPC_ENV_VAR>";          // read from env, never hardcode a key
+    string  constant RPC_ENV    = "<RPC_ENV_VAR>";          // name it in pass_env, never hardcode a key
 
     ITarget constant TARGET = ITarget(<0xdeployed address>);
     address constant VICTIM = <0x... an address that already holds the position at risk>;
@@ -33,47 +44,38 @@ contract ForkPoC is Test {
         deal(attacker, <capital the attacker must supply> ether);
     }
 
-    // ---- the finding --------------------------------------------------------
-    function test_<property>_breaks() public {
-        uint256 before = TARGET.<stateReader>();
-        console2.log("property before", before);
+    // ---- the finding (PASSES when the bug is real) --------------------------
+    function test_candidate_<property>() public {
+        uint256 attackerBefore = attacker.balance;
+        uint256 stateBefore = TARGET.<stateReader>();
+        console2.log("state before", stateBefore);
 
         vm.startPrank(attacker);
         TARGET.<attackEntryPoint>(<attacker-chosen value>);
         vm.stopPrank();
 
-        uint256 after_ = TARGET.<stateReader>();
-        console2.log("property after", after_);
+        uint256 stateAfter = TARGET.<stateReader>();
+        console2.log("state after", stateAfter);
+        console2.log("attacker net", int256(attacker.balance) - int256(attackerBefore));
 
-        // Assert the PROPERTY, and name it in the message. Not "it reverted".
-        assertEq(after_, <what a correct implementation would hold>,
-            "<the aggregate/balance/liability that must have changed and did not>");
+        // Assert the VULNERABILITY: the attacker gained, or the invariant broke. Name it in
+        // the message. This test must PASS only because the bug exists.
+        assertGt(attacker.balance, attackerBefore,
+            "<the attacker extracted value they should not have been able to>");
     }
 
-    // ---- negative control ---------------------------------------------------
-    // Same sequence, one attacker capability removed (or against the patched code).
+    // ---- negative control (PASSES when the protection holds) ----------------
+    // Same sequence with the one attacker capability removed (or against the patched code).
     // This is what tells a reviewer the harness is not the finding.
-    function test_control_<property>_holds() public {
-        uint256 before = TARGET.<stateReader>();
+    function test_control_<property>() public {
+        uint256 stateBefore = TARGET.<stateReader>();
 
         vm.startPrank(attacker);
-        TARGET.<attackEntryPoint>(<the benign value, or the privileged path>);
+        TARGET.<attackEntryPoint>(<the benign value / the legitimate path>);
         vm.stopPrank();
 
-        assertEq(TARGET.<stateReader>(), before + <the expected change>,
+        // On the control path the protection holds: state moves only by the legitimate amount.
+        assertEq(TARGET.<stateReader>(), stateBefore + <the expected legitimate change>,
             "control: the same path behaves correctly without the attacker capability");
-    }
-
-    // ---- quantification -----------------------------------------------------
-    // The report needs numbers, not adjectives. Print what moved and what it cost.
-    function test_quantify_impact() public {
-        uint256 attackerBefore = attacker.balance;
-        uint256 victimBefore   = <victim's accounted balance>;
-
-        // ... run the attack ...
-
-        console2.log("attacker net", int256(attacker.balance) - int256(attackerBefore));
-        console2.log("victim loss",  victimBefore - <victim's accounted balance after>);
-        console2.log("gas/capital required: see -vvvv trace and the deal() above");
     }
 }

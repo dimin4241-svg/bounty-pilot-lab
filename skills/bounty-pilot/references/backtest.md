@@ -113,6 +113,9 @@ What the output gives you, and what each number is worth:
   aggressively, scope differs, and some of your findings may be genuinely novel. Judge each one
   separately and label it: likely wrong, out of the contest's scope, or possibly novel. If one is
   possibly novel on a live protocol, stop backtesting and go check whether it is still there.
+- **`refuted_hunt_findings`** — records the hunt itself marked `refuted`. They withdrew their claim,
+  so they are never proposed for matching and earn no rediscovery credit, even from a pair decided
+  by hand; `refuted_matches` lists any such pair, which means the refutation was wrong.
 
 ## What a backtest cannot tell you
 

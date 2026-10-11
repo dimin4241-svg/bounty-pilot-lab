@@ -76,9 +76,15 @@ def rank(graph, max_depth=5, limit=120):
     findings.sort(key=lambda r: (-r["priority_heuristic"],
                                   r["confidence"] != "unverified-static-path",
                                   r["sink"], r["path"]))
+    graph_truncated = bool(graph.get("truncated"))
     return {"schema": 1, "method": "backwards-impact-review",
             "ranked": findings[:limit], "total_paths": len(findings),
-            "notice": "No entry or sink is asserted exploitable. Static code links and lexical impact labels are triage hints, never severity classifications."}
+            "graph_truncated": graph_truncated,
+            "graph_edge_counts": graph.get("edge_counts"),
+            "notice": "No entry or sink is asserted exploitable. Static code links and lexical impact "
+                      "labels are triage hints, never severity classifications."
+                      + (" The input graph hit its edge cap (truncated); some upstream paths are missing."
+                         if graph_truncated else "")}
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)

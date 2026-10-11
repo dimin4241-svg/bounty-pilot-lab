@@ -1,6 +1,20 @@
 // Solana PoC. Account substitution and PDA findings must be shown by constructing the instruction
 // with the substituted account and observing it succeed — prose does not establish this.
 //
+// CONVENTION (templates/README.md): both tests are expected to exit 0 (pass). The CANDIDATE
+// (`substituted_account_is_accepted`) passes IFF the vulnerability is demonstrated — here, the
+// malformed transaction SUCCEEDS and moves value. The CONTROL passes IFF the protection holds on
+// the intended path. The control deliberately fails (unimplemented!) until you fill it in.
+//
+// TARGET CRATE VERSIONS (pin these in the PoC crate's Cargo.toml; verify against the target's
+// own solana-sdk before running — no network was used to pick them):
+//   litesvm = "0.6"                 # LiteSVM::new / add_program_from_file / airdrop /
+//                                   # latest_blockhash / send_transaction / get_account
+//   solana-sdk = "2"                # or "1.18" to match an older target; APIs used here exist in both
+// `solana_sdk::pubkey!` and the instruction/transaction/signature types below are re-exported by
+// solana-sdk on both the 1.18 and 2.x lines. If the target builds on 2.x split crates, these still
+// resolve through solana-sdk's re-exports.
+//
 // Either harness works; litesvm is faster, solana-program-test is closer to the runtime:
 //   cargo test --test poc -- --nocapture
 //
