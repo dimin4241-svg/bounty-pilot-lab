@@ -36,12 +36,19 @@ Then establish what is deployed:
 
 ```sh
 python3 <skill-dir>/scripts/bounty.py verify-deployment --rpc <read-only-url> \
-    --address <in-scope address> --artifact <out/Name.sol/Name.json>
+    --address <in-scope address> --artifact <out/Name.sol/Name.json> --run <run>
 ```
 
-Record the result verbatim. A `partial` result is informative and must not be rounded up to `exact`:
-same-length bytecode that differs is consistent with immutables or a different compiler build, and
-it is not proof the logic matches. A `mismatch` means the repository is not what runs, and that is
+`--run` writes `<run>/deployments/<address>.json`; a finding claiming `deployment_status: exact`
+names that file in `deployment_evidence`, and the submission gate checks it. The RPC URL is never
+written to disk. Immutables and library links are masked when the artifact lists their offsets
+(`immutableReferences`, `linkReferences`), so an implementation with immutables can still match
+`exact`. A `partial` result is informative and must not be rounded up: same-length bytecode that
+differs without listed offsets is consistent with immutables or a different compiler build, and
+it is not proof the logic matches. Recognised proxies: EIP-1967 (and beacons), EIP-1822, EIP-1167,
+the legacy zeppelinos slot, Safe, Compound's Unitroller; an EIP-2535 diamond lists its facets and
+stays `partial` until each facet is compared. A small runtime that delegates but matches none of
+these is `partial` too: treat it as an unrecognised proxy. A `mismatch` means the repository is not what runs, and that is
 the single most common reason a bounty report is rejected — find the revision that is deployed
 before reading further.
 

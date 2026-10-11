@@ -9,6 +9,7 @@ import argparse
 import copy
 import importlib.util
 import json
+import time
 from collections import deque
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -17,6 +18,25 @@ OPS = {"eq", "ne", "le", "lt", "ge", "gt"}
 EFFECTS = {"set", "add", "sub", "append", "remove"}
 MAX_ACTIONS = 60
 MAX_ACTORS = 20
+MAX_SECONDS_CAP = 1800
+
+
+def _find_float(obj, trail="model"):
+    """Return the path of the first JSON float, or None. Floats cannot represent
+    on-chain integer amounts exactly, so the model must use ints or decimal strings."""
+    if isinstance(obj, float):
+        return trail
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            found = _find_float(value, trail + "." + str(key))
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for index, value in enumerate(obj):
+            found = _find_float(value, trail + "[" + str(index) + "]")
+            if found:
+                return found
+    return None
 
 def _load_invariants():
     p = Path(__file__).resolve().parent / "invariant_check.py"
@@ -132,11 +152,21 @@ def actions_for(model):
                              _substitute(rule, actor)))
     return sorted(expanded, key=lambda v: (v[0], v[1]))
 
-def explore(model, depth=4, max_states=3000):
+def explore(model, depth=4, max_states=3000, max_seconds=60):
     if not isinstance(depth, int) or not 1 <= depth <= 8:
         raise ValueError("depth must be 1..8")
     if not isinstance(max_states, int) or not 1 <= max_states <= 20000:
         raise ValueError("max_states must be 1..20000")
+    if isinstance(max_seconds, bool) or not isinstance(max_seconds, (int, float)) \
+            or not 0 < max_seconds <= MAX_SECONDS_CAP:
+        raise ValueError("max_seconds must be 1..%d" % MAX_SECONDS_CAP)
+    if not isinstance(model, dict):
+        raise ValueError("model must be a JSON object")
+    # Catch floats before invariant evaluation turns them into an opaque "unknown".
+    float_at = _find_float(model)
+    if float_at is not None:
+        raise ValueError("model contains a floating-point number at " + float_at +
+                         "; represent exact amounts as integers or decimal strings (e.g. \"1.5\")")
     initial = model.get("state")
     if not isinstance(initial, dict):
         raise ValueError("state must be an object")
@@ -151,7 +181,12 @@ def explore(model, depth=4, max_states=3000):
     attempts = 0
     counterexamples = []
     truncated = False
+    stopped = None
+    deadline = time.monotonic() + max_seconds
     while queue:
+        if time.monotonic() > deadline:
+            stopped = "time-budget"
+            break
         state, trace = queue.popleft()
         if len(trace) >= depth:
             continue
@@ -176,21 +211,24 @@ def explore(model, depth=4, max_states=3000):
                 return {"schema": 1, "status": "model-counterexample",
                         "counterexamples": counterexamples,
                         "visited_states": len(seen), "transitions_checked": attempts,
-                        "truncated": False, "native_target_test": "not-run",
+                        "truncated": False, "stopped": None, "native_target_test": "not-run",
                         "notice": "A model failure is not evidence of a deployed exploit."}
             key = json.dumps(next_state, sort_keys=True, default=str)
             if key not in seen:
                 if len(seen) >= max_states:
                     truncated = True
+                    stopped = stopped or "state-budget"
                     break
                 seen.add(key)
                 queue.append((next_state, new_trace))
         if truncated:
             break
-    return {"schema": 1, "status": "bounded-search-incomplete" if truncated else "no-model-counterexample-within-bounds",
+    incomplete = truncated or stopped is not None
+    return {"schema": 1,
+            "status": "bounded-search-incomplete" if incomplete else "no-model-counterexample-within-bounds",
             "counterexamples": [], "visited_states": len(seen),
             "transitions_checked": attempts, "truncated": truncated,
-            "native_target_test": "not-run",
+            "stopped": stopped, "native_target_test": "not-run",
             "notice": "No model counterexample within bounds does not prove real target safety."}
 
 def main(argv=None):
@@ -199,15 +237,17 @@ def main(argv=None):
     p.add_argument("--control", help="patched/non-exploitable model for comparative negative control")
     p.add_argument("--depth", type=int, default=4)
     p.add_argument("--max-states", type=int, default=3000)
+    p.add_argument("--max-seconds", type=float, default=60,
+                   help="wall-clock budget per model; search stops with stopped=time-budget when hit")
     p.add_argument("--out")
     a = p.parse_args(argv)
     try:
         model = json.loads(Path(a.model).read_text(encoding="utf-8"))
-        candidate = explore(model, a.depth, a.max_states)
+        candidate = explore(model, a.depth, a.max_states, a.max_seconds)
         result = {"candidate": candidate, "controlled": False}
         if a.control:
             control = json.loads(Path(a.control).read_text(encoding="utf-8"))
-            result["negative_control"] = explore(control, a.depth, a.max_states)
+            result["negative_control"] = explore(control, a.depth, a.max_states, a.max_seconds)
             result["controlled"] = True
             result["contrast"] = ("candidate-only-model-counterexample"
                 if candidate["status"] == "model-counterexample"

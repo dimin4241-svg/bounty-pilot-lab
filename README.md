@@ -25,7 +25,7 @@ Bounty Pilot gives a coding agent a repeatable workflow for **Solidity/EVM audit
 It has two halves, and both decide whether a hunt finds anything:
 
 - A **funnel** that settles where to look and what counts as evidence — which target is worth the week, which code the last audit never saw, which surfaces are already burned by published known issues, and whether the bytecode on chain is the code you are reading.
-- A **hunt** of eighteen aimed lenses, chosen by protocol shape and dispatched from assembled bundles over differentiated passes, where generation and refutation are deliberately separate steps: an agent that refutes itself while hunting finds less, and an agent that never refutes itself files reports that triage kills.
+- A **hunt** of nineteen aimed lenses, chosen by protocol shape and dispatched from assembled bundles over differentiated passes, where generation and refutation are deliberately separate steps: an agent that refutes itself while hunting finds less, and an agent that never refutes itself files reports that triage kills.
 - A **two-round objection exchange** after the hunt, in which a triage agent is told to reject each finding and must anchor every objection in quoted code, quoted specification, a named test or a live chain read — and the answers must be anchored too. Both sides carry the same burden, because a one-round review rejects almost everything and you never learn which rejection was wrong.
 
 **It is an agent skill, not a hosted scanner.** Your agent reads the instructions, inspects the target, runs available tools, and records evidence. The included Python helpers organize results, read live chain state and check structure; they do not discover or prove vulnerabilities by themselves.
@@ -41,6 +41,13 @@ Install https://github.com/dimin4241-svg/bounty-pilot
 and run Bounty Pilot on https://github.com/OWNER/TARGET.
 Read skills/bounty-pilot/SKILL.md and follow it.
 Keep findings private. Explain results in English.
+```
+
+Claude Code can install it as a plugin instead:
+
+```text
+/plugin marketplace add dimin4241-svg/bounty-pilot
+/plugin install bounty-pilot@bounty-pilot
 ```
 
 ### 2. Reuse it for the next project
@@ -175,6 +182,7 @@ The `recommended` bundle group ranks a limited set of lenses from manifest hints
 | `integration-auth` | **Boundaries** — which callback parameters the attacker controls |
 | `liveness` | **Persistence** — cheap, unprivileged, irreversible denial |
 | `anchor-account` | **Solana** — account substitution, PDA seeds, CPI authority |
+| `impact-first` | **Sinks first** — start at asset movement, debt, privilege and settlement, then walk back to who can reach them |
 | `seam` | **Combinations** — mechanisms no single lens can see, and refusals worth overturning |
 | `business-logic` | **Intent** — states violating the user's actual protocol promise |
 | `temporal-logic` | **Order** — multi-step traces, epochs and stale rights |
@@ -193,7 +201,7 @@ One bundle per lens, one agent per bundle, each in its own context. Recall is dr
 
 The default budget is **up to three stages**, roughly 18 readings plus triage. It stops at the budget, or after two consecutive passes yield neither a new mechanism nor new coverage. There is no infinite loop and no finding quota — zero verified findings after an honest run is a legitimate result.
 
-Eighteen lenses are not eighteen passes: [`passes.md`](skills/bounty-pilot/references/passes.md) has a selection table by protocol shape (lending, AMM, vault, bridge, router, staking, perps, governance, fork, upgradeable, Solana). Two run on nearly everything — `privileged-path`, because access control and initialization are the categories automated reviewers measurably miss most and the largest real losses came from them, and `coverage-gap`, because the tests record what the authors never checked.
+Nineteen lenses are not nineteen passes: [`passes.md`](skills/bounty-pilot/references/passes.md) has a selection table by protocol shape (lending, AMM, vault, bridge, router, staking, perps, governance, fork, upgradeable, Solana). Two run on nearly everything — `privileged-path`, because access control and initialization are the categories automated reviewers measurably miss most and the largest real losses came from them, and `coverage-gap`, because the tests record what the authors never checked.
 
 ### Severity is the payout
 
@@ -280,12 +288,13 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 ```sh
 S=skills/bounty-pilot/scripts/bounty.py
 
-# Prioritise a target from its code and its published program facts.
-python3 $S score-target --repo /path/to/target --program run/program.json
-
-# Use a new private directory outside both the target and the skill package.
+# Use a new private directory outside both the target and the skill package. init comes first:
+# it refuses an existing directory, and everything else writes into the run.
 python3 $S init --repo /path/to/target --out /path/to/private/new-run
 python3 $S history check --run /path/to/private/new-run
+
+# Prioritise a target from its code and its published program facts.
+python3 $S score-target --repo /path/to/target --program /path/to/private/new-run/program.json
 
 # Assemble one bundle per lens: SOP + rules + lens procedure + context + in-scope source.
 python3 $S bundle --repo /path/to/target --run run --lens attack --scope src/
@@ -293,7 +302,7 @@ python3 $S bundle --repo /path/to/target --run run --lens seam
 python3 $S bundle --repo /path/to/target --run run --lens triage
 
 # Rank non-test source changed since the exact commit the last audit covered.
-python3 $S delta --repo /path/to/target --since <audited-commit> --scope src/
+python3 $S delta --repo /path/to/target --since <audited-commit> --scope src/ > run/delta.json
 
 # Is the code on chain the code you are reading?
 python3 $S verify-deployment --rpc <read-only-rpc> --address 0x... \

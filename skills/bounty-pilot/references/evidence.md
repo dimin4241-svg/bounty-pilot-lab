@@ -19,7 +19,14 @@ cause together.
   cannot be rechecked after the target moves, and findings outlive the revision that produced them.
 - `scope_status`: `unknown` | `in-scope` | `out-of-scope`.
 - `deployment_status`: `unknown` | `exact` | `partial` | `mismatch` | `not-applicable`, as
-  `verify-deployment` reported it. Never set `exact` by hand.
+  `verify-deployment` reported it. Never set `exact` by hand: the submission gate accepts it only
+  with `deployment_evidence` (below).
+- `deployment_evidence`: the file(s) `verify-deployment --run <run>` wrote, as run-relative paths
+  such as `deployments/0xabc….json`. One per address the finding depends on (proxy and token
+  addresses alike).
+- `deployment_rationale`: required with `not-applicable` — why no deployed code is involved (an
+  off-chain service, an undeployed library). `not-applicable` is refused when any affected path is
+  `.sol` or `.vy` source.
 - `novelty.status`: `not-checked` | `no-public-match-found` | `matched-public-issue`, with
   `novelty.sources` listing URLs and the comparison you made at each.
 - `next_experiment`: required for `hypothesis` and `needs-evidence`; it must name a decisive
@@ -56,11 +63,17 @@ For `refuted`, `rejection_reason` cites a concrete protection, specification or 
 An `answered` or `sustained` objection carries an `anchor`. An `answered` one also carries `answer`
 and `answer_anchor` — the symmetry is the point: an answer defeats an objection only when it is
 anchored in code, specification, a test or a live read, exactly as the objection had to be. A
-`withdrawn` objection needs no anchor, because the absence of one is why it was withdrawn; record
-the claim and `withdrawn_because` so the same unanchored objection is not raised again.
+`withdrawn` objection is one with **no** anchor — the absence of one is why it was withdrawn;
+record the claim and `withdrawn_because` so the same unanchored objection is not raised again. An
+objection that carries an anchor cannot be `withdrawn`: answer it (`answer` + `answer_anchor`) or
+it is `sustained`.
 
-The submission gate refuses a finding with a `sustained` objection, and refuses one with no
-objections at all: a finding no agent attacked is a finding nobody has reviewed. The exchange is
+`concessions` records triage's `CONCEDED` blocks: each entry has a `gate` and a `reason` saying
+what triage tried to anchor and could not.
+
+The submission gate refuses a finding with a `sustained` objection, and refuses one with no triage
+exchange: at least one anchored objection or one concession. Withdrawn objections alone do not
+count — a finding no agent attacked is a finding nobody has reviewed. The exchange is
 also the raw material for the report's "existing protections" section, so recording it properly is
 drafting, not bookkeeping.
 
@@ -86,17 +99,25 @@ python3 <skill-dir>/scripts/bounty.py check --run <run> --submission  # readines
 ```
 
 The structural check verifies record completeness, the shape of the objection exchange, and that
-the artifacts exist. The submission gate additionally refuses what programs actually reject: a
-status other than `verified`, scope that is not established, a `deployment_status` other than
-`exact` or `not-applicable`, an unassessed severity, a severity with no rubric citation, fewer than
+the artifacts exist. The submission gate applies to the `verified` records — the ones that would be
+submitted — and fails when there are none; refuted and open records stay in the file and get the
+structural check only. For each verified record it additionally refuses what programs actually
+reject: scope that is not established, a `deployment_status` other than `exact` (backed by
+`deployment_evidence`) or `not-applicable` (with `deployment_rationale`), an unassessed severity, a severity with no rubric citation, fewer than
 two checked novelty sources, missing impact quantification, a run with no dup map built, no triage
 exchange, an unchecked personal history review, a missing or stale personal-history result, a
 detected personal match that is not accounted for, a same-mechanism history match, open leads without
 their next experiment, and any sustained objection.
 
-On `deployment_status`: only `verify-deployment` sets it. For a proxy, the **implementation** must
-match — a proxy whose own runtime matches the artifact is reported as `partial`, because the code
-that executes was never compared.
+On `deployment_status`: only `verify-deployment` sets it. Pass `--run <run>` and it saves its full
+result to `<run>/deployments/<address-lowercase>.json` (chain id, block, status, proxy kind,
+implementation address, artifact path and sha256, reasons). The gate accepts `exact` only when
+every file named in `deployment_evidence` sits directly in that folder, names its own address and
+reports `exact`, and the compared artifact has not changed since. For a proxy, the
+**implementation** must match — a proxy whose own runtime matches the artifact is reported as
+`partial`, because the code that executes was never compared. Immutables and linked libraries are
+masked only at the ranges the artifact's `immutableReferences`/`linkReferences` declare, and the
+on-chain values found there are listed in `masked_ranges`.
 
 **Neither checker establishes that a finding is real.** They cannot run your PoC, judge your
 severity, see a private duplicate, or read the program's mind. An empty findings file passes the

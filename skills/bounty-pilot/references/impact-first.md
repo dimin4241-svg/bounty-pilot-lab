@@ -1,4 +1,4 @@
-# High-impact workflow 0.9.0
+# High-impact workflow
 
 ## Threat-first discovery
 
@@ -49,7 +49,7 @@ percentages, guaranteed payouts, or manufactured benchmarks.
 
 ## Caveats
 
-No tool in 0.9.0 autonomously writes and executes trustworthy exploit code on
+No tool here autonomously writes and executes trustworthy exploit code on
 all supported languages. Compiler AST parsing covers Solidity, while Python
 uses stdlib AST; Rust, Move, Cairo and CosmWasm retain native-specific agent
 procedures, native testing suggestions and the earlier low-confidence

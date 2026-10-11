@@ -65,13 +65,23 @@ Record the exchange on the finding:
 
 An `answered` or `sustained` objection must carry an `anchor`. A `withdrawn` one must not be
 required to: it was withdrawn precisely because no anchor could be produced, so record the `claim`
-and say in `withdrawn_because` what triage searched for and did not find. Keep withdrawn objections
-in the record — an unrecorded bad objection gets raised again by the next reviewer, and by the
-program's own triage engineer.
+and say in `withdrawn_because` what triage searched for and did not find. The converse is enforced:
+an objection that **has** an anchor cannot be withdrawn — answer it with an anchor of your own, or
+it is sustained. Keep withdrawn objections in the record — an unrecorded bad objection gets raised
+again by the next reviewer, and by the program's own triage engineer.
 
-The checker validates the shape, and the submission gate refuses a finding with a `sustained`
-objection or with no objections at all — a finding nobody attacked is a finding nobody has
-reviewed.
+Triage's `CONCEDED` blocks go in `concessions[]` on the same record:
+
+```json
+"concessions": [
+  {"gate": "harm", "reason": "tried to anchor a cap on redeemFor(); none exists on that path"}
+]
+```
+
+The checker validates the shape. The submission gate refuses a finding with a `sustained`
+objection, and one whose exchange holds nothing but withdrawn objections: it needs at least one
+answered or sustained objection, or one concession — a finding nobody attacked is a finding nobody
+has reviewed.
 
 **The surviving exchange is not overhead; it is the report.** The answered objections, written out,
 are exactly the "Existing protections and known issues" section — the part that decides whether a

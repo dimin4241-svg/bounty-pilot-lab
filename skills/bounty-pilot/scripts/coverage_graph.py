@@ -5,8 +5,12 @@ import json
 from pathlib import Path
 
 def gaps(graph, reviewed):
+    if not isinstance(graph, dict):
+        raise ValueError("graph JSON must be an object produced by state_graph.py")
     symbols = graph.get("symbols", [])
     edges = graph.get("edges", [])
+    if not isinstance(symbols, list) or not isinstance(edges, list):
+        raise ValueError("graph JSON must have list 'symbols' and 'edges'")
     if graph.get("method") != "regex-lexical-heuristic":
         raise ValueError("expected state_graph heuristic inventory")
     weight = {}
@@ -37,11 +41,14 @@ def main(argv=None):
     parser.add_argument("--reviewed", help="JSON list of examined symbol IDs or repository-relative paths")
     parser.add_argument("--out")
     args = parser.parse_args(argv)
-    graph = json.loads(Path(args.graph).read_text(encoding="utf-8"))
-    reviewed = json.loads(Path(args.reviewed).read_text(encoding="utf-8")) if args.reviewed else []
-    if not isinstance(reviewed, list) or not all(isinstance(x, str) for x in reviewed):
-        parser.error("--reviewed must be a JSON string array")
-    result = gaps(graph, set(reviewed))
+    try:
+        graph = json.loads(Path(args.graph).read_text(encoding="utf-8"))
+        reviewed = json.loads(Path(args.reviewed).read_text(encoding="utf-8")) if args.reviewed else []
+        if not isinstance(reviewed, list) or not all(isinstance(x, str) for x in reviewed):
+            raise ValueError("--reviewed must be a JSON string array")
+        result = gaps(graph, set(reviewed))
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
     payload = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
     if args.out:
         Path(args.out).write_text(payload, encoding="utf-8")

@@ -67,6 +67,20 @@ The `attack` group is the six highest-yield mechanism lenses — `privileged-pat
 lens's procedure, the impact ladder, the precedent catalogue, the run context and all in-scope
 source.
 
+**Pick one base group, then add to it.** The base groups are alternatives, not layers:
+
+| Base | When |
+| --- | --- |
+| `attack` | The default for EVM targets. |
+| `high-impact` | A large value at risk and the goal is loss-of-funds class findings: `impact-first`, `privileged-path`, `business-logic`, `economics`, `composition`. |
+| `recommended` | Non-EVM or mixed repositories, where the `stack_route.py` shortlist fits the stacks better than the EVM-shaped `attack` group. |
+
+Then add only what the target's shape calls for: `config` when there are deployed addresses,
+`logic` when several actions change the same asset, privilege, reward or epoch, `cross-stack` when a
+keeper, relayer, signer, API or watcher shares a trust boundary with on-chain code, and
+`anchor-account` for Solana. Lenses named in the shape table but absent from your groups can be
+added individually with `--lens <name>`.
+
 **A pass that did not run `bundle` did not bundle its source**, and a lens reading files
 opportunistically covers less than a lens handed everything. The command is the mechanic, not a
 suggestion.
@@ -75,16 +89,21 @@ Dispatch one agent per bundle, each in its own context, up to four concurrent by
 agent only: read this bundle and follow it. Independent contexts are the point — agents sharing one
 context converge on the first idea and stop being independent reviewers.
 
-**Pass 1** runs the mechanism lenses on the ranked surfaces. **Pass 2** runs the same lenses again,
-with `known-hypotheses.md` now in the bundle, so each is explicitly hunting past its own earlier
-output, plus the `seam` lens over both passes' records.
+Three passes by default:
+
+- **Pass 1** runs the selected lenses on the ranked surfaces.
+- **Pass 2** runs the same lenses again with `known-hypotheses.md` now in the bundle, so each is
+  explicitly hunting past its own earlier output. Drop a lens from pass 2 if its pass-1 reading
+  added no mechanism and no coverage.
+- **Pass 3** is the `seam` pass (Stage C) over both passes' records, plus a targeted re-read of
+  every `open-needs-experiment` lead whose cheapest experiment has now run or been blocked.
 
 > **Where budget allows, dispatch a selected mechanism lens twice in pass 1, in separate
 > contexts.** Do this selectively: count distinct mechanisms and new covered paths, not just model
 > agreement. Repeated contexts cost real budget and may be correlated. State the readings that ran
 > and what unique coverage each added.
 
-## Impact-first scanning (0.9)
+## Impact-first scanning
 
 Use `bounty.py impact-plan --solc <compiler-output.json> --out <private-run>`
 to inspect compiler-resolved Solidity AST at the exact pinned revision.
@@ -177,7 +196,8 @@ Stop when any one is true:
 - The planned pass count is spent.
 - Two consecutive passes produce neither a new mechanism nor new coverage. More reading will not
   help; the open leads need experiments.
-- Every lens the shape table calls for has run, and `misses.md` is answered.
+- Every lens the shape table calls for has run, the seam pass has run, and `misses.md` is
+  answered.
 - Every remaining lead is blocked on the same missing capability — a toolchain, an RPC, program
   rules. Report the blocker rather than narrating around it.
 
@@ -198,8 +218,8 @@ paragraph, and each of them is a near-miss that was already paid for.
 
 ## Budget, honestly
 
-A 3-stage run with four mechanism lenses, doubled in pass 1, is roughly 18 agent readings plus
-triage. Each mechanism bundle contains the full in-scope source, so cost scales with the codebase —
+Three passes over the six `attack` lenses, with two of them doubled in pass 1, is about 15
+readings (8 + 6 + 1 seam), plus 3 aim readings and triage. Each mechanism bundle contains the full in-scope source, so cost scales with the codebase —
 `bundle` reports each bundle's size and warns past 400 KB, where narrowing `--scope` and trusting
 the ranking beats handing a lens more than it will read.
 
