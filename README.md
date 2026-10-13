@@ -343,7 +343,7 @@ python3 -m unittest discover -s tests -v
 
 `bundle` is the dispatch mechanic, not a convenience: a pass that skipped it handed its lenses less than they needed. Only the `coverage-gap` lens receives the test and mock files, because reading tests adversarially is its job and nobody else's.
 
-`check` does not verify exploit truth, severity, originality or payout eligibility, and an empty finding list passes its structural checks. `check --submission` also requires a current `history-matches.json` for the candidate mechanisms and every detected personal-history match to be reviewed. Rerun `history check` if a finding's id, status, class, affected paths or root cause changes. The duplicate side is gated the same way: a triaged `dup-harvest.json`, a `dup-matches.json` that matches the current findings **and** the current map, and a `dup_review` on each submitted record whose `entry_ids` cover every collision. A green gate still means "nothing obviously missing", never "this is valid".
+`check` does not verify exploit truth, severity, originality or payout eligibility, and an empty finding list passes its structural checks. `check --submission` also requires a current `history-matches.json` for the candidate mechanisms and every detected personal-history match to be reviewed. Rerun `history check` if a finding's id, status, class, affected paths or root cause changes. The duplicate side is gated the same way: a triaged `dup-harvest.json` that actually searched something, a `dup-matches.json` that matches the current findings **and** the current map, and a `dup_review` on each submitted record whose `entry_ids` cover every collision. A green gate still means "nothing obviously missing", never "this is valid".
 
 ## FAQ
 

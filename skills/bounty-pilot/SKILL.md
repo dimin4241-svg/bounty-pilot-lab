@@ -67,7 +67,9 @@ program rules. Before any pass reads code looking for bugs, produce these:
    trust boundaries, asset flows, units and rounding, and the deployment evidence below.
 2. **`dup-map.json`**: surfaces and bug classes already burned by the program's known-issues list,
    its audits, its contests and its closed issues (`references/dup-map.md`). Run `dup-harvest`
-   first and triage every closed issue it returns; an untriaged candidate blocks submission.
+   first and triage every closed issue it returns; an untriaged candidate blocks submission. Read
+   its `labels_skipped`, and if no label means *already judged*, resolve it with `--label`,
+   `--include-not-planned` or `--empty-reason` — a harvest that searched nothing blocks too.
 3. **Deployment evidence for each in-scope address.** Scope is pinned to **deployed** contracts,
    which are frequently not the repository's HEAD; establish the revision at the in-scope addresses
    before reading anything for bugs. For a proxy, the implementation is what must match.

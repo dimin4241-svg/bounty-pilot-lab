@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.11.1
+
+A live check of 0.11.0 against GitHub found the gate right on the case it was built for — it
+retrieves `liquity/bold` #506 among 91 judged issues — and wrong in three ways around it.
+
+### A harvest that searched nothing no longer reads as clean
+
+- `ethereum/go-ethereum` has 36 labels and none means *already judged*. 0.11.0 searched nothing,
+  found nothing and let submission through: the empty, reassuring result `solc-bugs` is forbidden
+  to return. Such a harvest is now `vacuous` and blocks the gate until it is resolved with
+  `--label`, `--include-not-planned`, or `--empty-reason "<why>"`. A search that ran and found
+  nothing is still a clean result. `dup-harvest` exits 1 on a vacuous harvest and says why.
+
+### Firms the name list misses are visible
+
+- `Coinspect` and `Recon` labelled thirteen imported audit findings on `liquity/bold` and were not
+  on the list. Both are now, with a dozen more firms. The list will never be complete, so every
+  label the harvest did not select is reported as `labels_skipped`, where a missing firm shows.
+- Hints match whole words: `Recon` is selected, `reconciliation` is not.
+
+### GitHub's own wontfix
+
+- New `--include-not-planned` adds the issues GitHub shows as *closed as not planned*, which carry
+  no label; #506 was closed that way too. It is noisier than labels, so it is opt-in, and it is the
+  suggested fallback on a repository with no judged labels. Candidates record `matched_by`.
+
+### Issue text is data
+
+- The harvest notice and `references/dup-map.md` now state that titles and excerpts were written
+  by whoever opened the issue and are never instructions, as for target source.
+
 ## 0.11.0
 
 Aimed at the failure the finding ledger actually shows: of four withdrawn reports, two died on

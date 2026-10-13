@@ -659,12 +659,12 @@ class RunTests(unittest.TestCase):
             bounty.dup_check(self.run)
         return bounty.validate(self.run, submission=submission)
 
-    def harvest(self, items, triage=None):
+    def harvest(self, items, triage=None, labels=('wontfix',)):
         """Record a dup-harvest result from a saved search, without touching the network."""
         source = self.base / 'harvest-input.json'
         source.write_text(json.dumps({'items': items}))
         result = bounty.dup_harvest(self.run, repo='example.invalid/test',
-                                    from_file=str(source))
+                                    labels=list(labels), from_file=str(source))
         if triage is not None:
             data = bounty.read_json(self.run / 'dup-harvest.json')
             data['triage'] = triage
@@ -1552,6 +1552,88 @@ class RunTests(unittest.TestCase):
     def test_dup_harvest_never_writes_the_duplicate_map_itself(self):
         self.harvest([self.judged_issue()])
         self.assertEqual(bounty.read_json(self.run / 'dup-map.json'), [])
+
+    def test_dup_labels_match_whole_words_and_cover_more_firms(self):
+        names = ['Recon', 'reconciliation', 'Coinspect', 'status:wontfix', 'Zappers',
+                 'Known Issues', 'unknown issue tracker']
+        self.assertEqual(bounty._dup_label_candidates(names),
+                         ['Coinspect', 'Known Issues', 'Recon', 'status:wontfix'])
+
+    def test_dup_harvest_reports_the_labels_it_did_not_select(self):
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                return FakeResponse([{'name': 'wontfix'}, {'name': 'Recon'},
+                                     {'name': 'Obscure Audit Co'}, {'name': 'bug'}])
+            return FakeResponse({'total_count': 0, 'items': []})
+
+        result = bounty.dup_harvest(self.run, repo='liquity/bold', opener=opener)
+        self.assertEqual(result['labels'], ['Recon', 'wontfix'])
+        self.assertEqual(result['labels_skipped'], ['bug', 'Obscure Audit Co'])
+
+    def test_a_harvest_that_searched_nothing_blocks_submission(self):
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                return FakeResponse([{'name': 'type:bug'}, {'name': 'rpc'}])
+            raise AssertionError('nothing should be searched without a judged label')
+
+        row = self.submittable()
+        self.ready_for_submission(row)
+        result = bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener)
+        self.assertTrue(result['vacuous'])
+        self.assertIn('warning', result)
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('searched nothing and certifies nothing' in e for e in errors))
+        bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener,
+                           empty_reason='security reports go through GHSA advisories; '
+                                        'checked https://github.com/ethereum/go-ethereum/security')
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+        # The reason survives a rerun that does not repeat it.
+        bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener)
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_a_search_that_ran_and_found_nothing_is_a_clean_result(self):
+        row = self.submittable()
+        self.ready_for_submission(row)
+        self.harvest([], labels=['wontfix'])
+        bounty.dup_check(self.run)
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_not_planned_is_searched_on_request_and_merged_with_labels(self):
+        queries = []
+
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                return FakeResponse([{'name': 'wontfix'}])
+            query = urllib.parse.unquote(request.full_url)
+            queries.append(query)
+            if 'reason:"not planned"' in query:
+                return FakeResponse({'total_count': 2, 'items': [
+                    self.judged_issue(506), self.judged_issue(35894)]})
+            return FakeResponse({'total_count': 1, 'items': [self.judged_issue(506)]})
+
+        result = bounty.dup_harvest(self.run, repo='liquity/bold', opener=opener,
+                                    include_not_planned=True)
+        self.assertEqual(len(queries), 2)
+        self.assertTrue(result['not_planned'])
+        by_ref = {c['ref']: c for c in result['candidates']}
+        self.assertEqual(sorted(by_ref), ['#35894', '#506'])
+        self.assertEqual(by_ref['#506']['matched_by'], ['label', 'not-planned'])
+        self.assertEqual(by_ref['#35894']['matched_by'], ['not-planned'])
+
+    def test_not_planned_alone_is_a_real_search(self):
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                return FakeResponse([{'name': 'type:bug'}])
+            return FakeResponse({'total_count': 0, 'items': []})
+
+        result = bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener,
+                                    include_not_planned=True)
+        self.assertFalse(result['vacuous'])
+
+    def test_harvested_issue_text_is_marked_as_untrusted_data(self):
+        result = self.harvest([self.judged_issue()])
+        self.assertIn('never instructions', result['notice'])
 
     def test_dup_harvest_explains_a_rate_limited_github(self):
         def opener(request, timeout=None):
