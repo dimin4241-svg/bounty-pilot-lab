@@ -81,9 +81,9 @@ closed as one.
 
 ## 11. Did you check it is not already known?
 
-Program known-issues list, past audits, contest findings, closed issues and PRs. `dup-check` does
-the mechanical part. If the surface collides, is your *mechanism* different, and did you write the
-difference down?
+Program known-issues list, past audits, contest findings, closed issues and PRs. `dup-harvest`
+retrieves the closed issues the team already judged and `dup-check` does the join. If the surface
+collides, is your *mechanism* different, and did you write the difference down in `dup_review`?
 
 ## 12. Did you write prose where one command would have settled it?
 

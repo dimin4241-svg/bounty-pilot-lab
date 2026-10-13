@@ -28,7 +28,9 @@ service.
    `score-target` and gate 5, and every field records where it came from.
 2. **`dup-map.json`** — the surfaces and bug classes already burned by the program's known-issues
    list, its audits, its contests and its closed issues. `dup-map.md` has the procedure. Building
-   this after the hunt wastes passes on ground the team has already published.
+   this after the hunt wastes passes on ground the team has already published. Start with
+   `dup-harvest`, which retrieves the closed issues and PRs the team already judged; triage every
+   candidate it returns, because the submission gate blocks while any is untriaged.
 3. **The delta baseline** — the exact commit of the last audit, written into `run.json` as
    `audited_revision`, so `bounty.py delta` can rank what nobody has reviewed.
 

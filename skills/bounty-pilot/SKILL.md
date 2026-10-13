@@ -66,7 +66,8 @@ program rules. Before any pass reads code looking for bugs, produce these:
 1. **`scope.md`**: included and excluded code justified by program rules, entry points, roles,
    trust boundaries, asset flows, units and rounding, and the deployment evidence below.
 2. **`dup-map.json`**: surfaces and bug classes already burned by the program's known-issues list,
-   its audits, its contests and its closed issues (`references/dup-map.md`).
+   its audits, its contests and its closed issues (`references/dup-map.md`). Run `dup-harvest`
+   first and triage every closed issue it returns; an untriaged candidate blocks submission.
 3. **Deployment evidence for each in-scope address.** Scope is pinned to **deployed** contracts,
    which are frequently not the repository's HEAD; establish the revision at the in-scope addresses
    before reading anything for bugs. For a proxy, the implementation is what must match.
@@ -78,6 +79,7 @@ python3 $S verify-deployment --rpc <url> --address <addr> --artifact <build-arti
 python3 $S solc-bugs --repo <checkout>
 python3 $S value --rpc <url> --address <each in-scope address> --token <main assets>
 python3 $S history check --run <run>
+python3 $S dup-harvest --run <run>
 ```
 
 `verify-deployment --run` writes `<run>/deployments/<address>.json`. A finding claiming
@@ -260,13 +262,17 @@ Search public audits, issues, releases, fixes and contest results for each serio
 exact sources and the mechanism comparison you made. Then:
 
 ```sh
+python3 $S dup-harvest --run <run>
 python3 $S dup-check --run <run>
 python3 $S history check --run <run>
 python3 $S check --run <run> --submission
 ```
 
-A dup collision is not an automatic drop; it is a demand to state how your mechanism differs. No
-public match never proves no private duplicate. Check program exclusions and the exact deployed
+A dup collision is not an automatic drop; it is a demand to state how your mechanism differs — set
+`dup_review.status` to `different-mechanism` or `different-consequence`, list the `entry_ids` you
+compared against, and write the comparison. `same-mechanism` and `unchecked` block submission, as
+does an untriaged harvested issue or a `dup-matches.json` older than the current map or findings.
+No public match never proves no private duplicate. Check program exclusions and the exact deployed
 configuration separately from everything else.
 
 Set `history_review.status` to `no-match`, `different-root-cause`, or `regression` and explain it.

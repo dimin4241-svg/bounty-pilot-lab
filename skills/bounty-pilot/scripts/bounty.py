@@ -92,6 +92,27 @@ HISTORY_REASONS = {'private-duplicate', 'public-known-issue', 'out-of-scope',
                    'unspecified'}
 HISTORY_REVIEW_STATUSES = {'unchecked', 'no-match', 'different-root-cause', 'regression',
                            'same-mechanism', 'unavailable'}
+# The three outcomes `references/dup-map.md` allows for a collision, plus the two states that
+# block: never reviewed, and the same mechanism the public record already holds.
+DUP_REVIEW_STATUSES = {'unchecked', 'no-match', 'different-mechanism', 'different-consequence',
+                       'same-mechanism'}
+# Labels a team puts on an issue it has already judged. A closed issue carrying one of these is
+# the cheapest duplicate evidence there is: "known issue" and "accepted risk" are two of the
+# three ways a report dies, and both are published under exactly these words.
+DUP_LABEL_HINTS = ('wontfix', "won't fix", 'wont fix', 'known issue', 'known-issue',
+                   'known issues', 'by design', 'bydesign', 'as designed', 'accepted risk',
+                   'acknowledged', 'not planned', 'no action', 'invalid', 'duplicate',
+                   'out of scope', 'out-of-scope')
+# Audit firms and contest platforms whose names teams use as issue labels when they import a
+# report. `ChainSecurity` on liquity/bold is one: the label, not the issue text, is what makes
+# an imported audit finding findable.
+AUDITOR_LABEL_HINTS = ('chainsecurity', 'trail of bits', 'trailofbits', 'openzeppelin',
+                       'spearbit', 'cantina', 'code4rena', 'sherlock', 'certora', 'consensys',
+                       'diligence', 'dedaub', 'zellic', 'halborn', 'quantstamp', 'cyfrin',
+                       'pashov', 'hexens', 'sigma prime', 'nethermind', 'statemind', 'veridise',
+                       'ackee', 'oak security', 'least authority', 'immunefi', 'hackenproof',
+                       'audit report')
+HARVEST_DISPOSITIONS = {'in-map', 'irrelevant'}
 REQUIRED = ('id', 'title', 'status', 'severity', 'bug_class', 'revision', 'root_cause',
             'affected_paths', 'attacker_capabilities', 'preconditions', 'impact',
             'scope_status', 'deployment_status', 'novelty', 'evidence', 'objections',
@@ -341,6 +362,7 @@ def template():
                                               'blocker': ''},
                 history_review={'status': 'unchecked', 'case_ids': [], 'rationale': '',
                                 'evidence': ''},
+                dup_review={'status': 'unchecked', 'entry_ids': [], 'rationale': ''},
                 escalation={'attempted': [], 'ceiling': '', 'ceiling_evidence': ''},
                 objections=[], concessions=[], rejection_reason='')
 
@@ -1094,6 +1116,19 @@ def _check_record(row, prefix, run, seen, errors):
                 errors.append(prefix + ': history_review.rationale must be a string')
             if not isinstance(history_review.get('evidence', ''), str):
                 errors.append(prefix + ': history_review.evidence must be a string')
+    dup_review = row.get('dup_review')
+    if dup_review is not None:
+        if not isinstance(dup_review, dict):
+            errors.append(prefix + ': dup_review must be an object')
+        else:
+            if not _is_one_of(dup_review.get('status'), DUP_REVIEW_STATUSES):
+                errors.append(prefix + ': invalid dup_review.status')
+            entry_ids = dup_review.get('entry_ids', [])
+            if not isinstance(entry_ids, list) or not all(has_text(x) for x in entry_ids):
+                errors.append(prefix + ': dup_review.entry_ids must be a string array of '
+                              'dup-map.json entry ids')
+            if not isinstance(dup_review.get('rationale', ''), str):
+                errors.append(prefix + ': dup_review.rationale must be a string')
     _check_escalation(row, prefix, errors)
     for key, allowed in (('status', STATUSES), ('severity', SEVERITIES),
                          ('scope_status', SCOPE_STATUSES),
@@ -1277,7 +1312,7 @@ def _check_escalation_submission(row, prefix, errors):
                       'each amplifier carries exactly one result')
 
 
-def _check_submission(row, prefix, run, errors, history_match_ids=None):
+def _check_submission(row, prefix, run, errors, history_match_ids=None, dup_match_ids=None):
     """Gates that encode why bounty reports actually get rejected."""
     if row['scope_status'] != 'in-scope':
         errors.append(prefix + ': submission requires scope_status in-scope (program rules read)')
@@ -1332,8 +1367,48 @@ def _check_submission(row, prefix, run, errors, history_match_ids=None):
                     errors.append(prefix + ': history case_ids must cover every match from history check')
             if status == 'regression' and not has_text(history.get('evidence')):
                 errors.append(prefix + ': regression requires evidence that the issue was reintroduced in the current deployment')
-    if not (run / 'dup-map.json').is_file():
-        errors.append(prefix + ': submission requires a built dup-map.json in the run')
+    dup = row.get('dup_review')
+    if not isinstance(dup, dict):
+        errors.append(prefix + ': submission requires a dup_review (the duplicate map is what '
+                      'the program will check first)')
+    else:
+        status = dup.get('status')
+        entry_ids = dup.get('entry_ids', [])
+        rationale = dup.get('rationale', '')
+        # Entries the mechanical join hit for this finding. An empty set covers both "no
+        # collision" and "the join itself failed": the failure is reported separately by
+        # _submission_dup_matches, so it is never silently read as a clean result.
+        detected = set(dup_match_ids.get(ident, set())) if dup_match_ids else set()
+        if status == 'unchecked':
+            errors.append(prefix + ': the duplicate map was not reviewed; run dup-check')
+        elif status == 'same-mechanism':
+            errors.append(prefix + ': the duplicate map already holds this mechanism; do not '
+                          'submit - mark the finding refuted with the dup source as '
+                          'rejection_reason and keep it as coverage')
+        elif status == 'no-match':
+            if entry_ids:
+                errors.append(prefix + ': dup_review no-match cannot list entry_ids')
+            if not has_text(rationale):
+                errors.append(prefix + ': dup_review no-match requires the dup-check result '
+                              'and the date the sources were read')
+            if detected:
+                errors.append(prefix + ': dup-check collided with ' + ', '.join(sorted(detected))
+                              + '; state how the mechanism differs instead of no-match')
+        elif status in ('different-mechanism', 'different-consequence'):
+            if not isinstance(entry_ids, list) or not entry_ids:
+                errors.append(prefix + ': a reviewed dup collision requires the entry_ids it was '
+                              'compared against')
+            if not has_text(rationale):
+                errors.append(prefix + ': a reviewed dup collision requires the mechanism '
+                              'comparison that justifies filing anyway')
+            if (isinstance(entry_ids, list) and
+                    all(isinstance(entry_id, str) for entry_id in entry_ids)):
+                # Coverage, not equality: comparing against an entry the surface join never hit
+                # is extra diligence and must not fail the gate.
+                missing = sorted(detected - set(entry_ids))
+                if missing:
+                    errors.append(prefix + ': dup_review.entry_ids must cover every dup-check '
+                                  'collision; missing ' + ', '.join(missing))
     objections = row['objections'] if isinstance(row['objections'], list) else []
     concessions = row.get('concessions') if isinstance(row.get('concessions'), list) else []
     # Withdrawn objections alone do not show review: they are what triage could not anchor. An
@@ -1401,6 +1476,8 @@ def validate(run, submission=False):
         return errors + ['findings.json must be an array']
     history_matches = (_submission_history_matches(run, meta, records, errors)
                        if submission else None)
+    dup_matches = (_submission_dup_matches(run, meta, records, errors)
+                   if submission else None)
     seen, targets = set(), 0
     for i, row in enumerate(records):
         prefix = f'finding[{i}]'
@@ -1413,7 +1490,7 @@ def validate(run, submission=False):
         if submission and row.get('status') == SUBMISSION_STATUS:
             targets += 1
             if complete:
-                _check_submission(row, prefix, run, errors, history_matches)
+                _check_submission(row, prefix, run, errors, history_matches, dup_matches)
     if submission and not targets:
         errors.append('findings.json: no verified records to submit')
     return errors
@@ -1438,13 +1515,21 @@ def check_dup_map(run):
     run = Path(run).resolve()
     entries = read_json(run / 'dup-map.json')
     records = read_json(run / 'findings.json')
-    errors, collisions = [], []
+    errors, collisions, seen_ids = [], [], set()
     if not isinstance(entries, list):
         return ['dup-map.json must be an array'], []
     for i, entry in enumerate(entries):
         if not isinstance(entry, dict):
             errors.append(f'dup-map[{i}]: must be an object')
             continue
+        # The id is what a finding's dup_review cites, so the gate can check that every
+        # collision was actually reviewed. Without it a collision has no stable name.
+        if not has_text(entry.get('id')):
+            errors.append(f'dup-map[{i}]: id is required (the name dup_review.entry_ids cites)')
+        elif entry['id'] in seen_ids:
+            errors.append(f'dup-map[{i}]: duplicate id {entry["id"]}')
+        else:
+            seen_ids.add(entry['id'])
         if not has_text(entry.get('source')):
             errors.append(f'dup-map[{i}]: source is required (URL or document reference)')
         if not _is_one_of(entry.get('kind'), DUP_KINDS):
@@ -1475,7 +1560,8 @@ def check_dup_map(run):
                 if classes and bug_class and bug_class not in classes:
                     continue
                 collisions.append({
-                    'finding': row.get('id'), 'bug_class': row.get('bug_class'),
+                    'finding': row.get('id'), 'entry': entry.get('id'),
+                    'bug_class': row.get('bug_class'),
                     'surface': surface, 'dup_kind': entry.get('kind'),
                     'source': entry.get('source'),
                     'confidence': 'class-match' if classes and bug_class in classes
@@ -1483,6 +1569,293 @@ def check_dup_map(run):
                     'note': entry.get('note', '')})
                 break
     return errors, collisions
+
+
+def _dup_map_digest(entries):
+    """Fingerprint the burned surfaces, so a map that grows invalidates an earlier join."""
+    rows = []
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict):
+            rows.append({key: entry.get(key)
+                         for key in ('id', 'kind', 'source', 'surfaces', 'bug_classes')})
+    rows.sort(key=lambda row: json.dumps(row, ensure_ascii=False, sort_keys=True))
+    payload = json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def _harvest_state(run, entries=None):
+    """What `dup-harvest` retrieved, and whether every candidate has been triaged."""
+    absent = lambda note: {'present': False, 'candidates': 0, 'untriaged': [],
+                           'truncated': False, 'note': note}
+    path = Path(run) / 'dup-harvest.json'
+    if not path.is_file():
+        return absent('the closed-issue harvest has not run in this run directory')
+    try:
+        data = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return absent('dup-harvest.json is not valid JSON written by dup-harvest')
+    if not isinstance(data, dict) or not isinstance(data.get('candidates'), list):
+        return absent('dup-harvest.json is not a dup-harvest result')
+    known = {entry.get('id') for entry in entries or [] if isinstance(entry, dict)}
+    triage = data['triage'] if isinstance(data.get('triage'), dict) else {}
+    untriaged = []
+    for candidate in data['candidates']:
+        if not isinstance(candidate, dict) or not has_text(candidate.get('ref')):
+            continue
+        row = triage.get(candidate['ref'])
+        if not isinstance(row, dict) or row.get('disposition') not in HARVEST_DISPOSITIONS:
+            untriaged.append(candidate['ref'])
+        elif row['disposition'] == 'in-map' and row.get('entry_id') not in known:
+            # Claiming the issue became a map entry is checkable: the id has to be in the map.
+            untriaged.append(candidate['ref'])
+        elif row['disposition'] == 'irrelevant' and not has_text(row.get('note')):
+            untriaged.append(candidate['ref'])
+    return {'present': True, 'candidates': len(data['candidates']),
+            'harvested_at': data.get('harvested_at', ''), 'repo': data.get('repo', ''),
+            'labels': data.get('labels', []), 'truncated': bool(data.get('truncated')),
+            'untriaged': sorted(set(untriaged))}
+
+
+def dup_check(run):
+    """Run the duplicate join and record it, bound to the findings and the map it read."""
+    run = Path(run).resolve()
+    errors, collisions = check_dup_map(run)
+    meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
+    entries = read_json(run / 'dup-map.json')
+    records = read_json(run / 'findings.json')
+    result = {
+        'run_id': meta.get('run_id'),
+        'checked_at': datetime.now(timezone.utc).isoformat(),
+        'map_entries': len(entries) if isinstance(entries, list) else 0,
+        'map_errors': errors,
+        'findings_sha256': (_history_input_digest(records)
+                            if isinstance(records, list) else ''),
+        'dup_map_sha256': _dup_map_digest(entries),
+        'collisions': collisions,
+        'harvest': _harvest_state(run, entries if isinstance(entries, list) else []),
+        'state': 'invalid-map' if errors else
+                 ('review-required' if collisions else 'no-dup-match-found'),
+        'notice': 'A collision means the surface and class were already public. Compare '
+                  'mechanisms before dropping or filing; record the outcome in the finding\'s '
+                  'dup_review. No public match never proves no private duplicate.',
+    }
+    # A result bound to a map that does not validate would certify nothing, so it is not written.
+    if not errors:
+        dump(run / 'dup-matches.json', result)
+    return result
+
+
+def _submission_dup_matches(run, meta, records, errors):
+    """Require a fresh duplicate join and return its collided entry ids by finding."""
+    if not (run / 'dup-map.json').is_file():
+        errors.append('dup-map.json: submission requires a built duplicate map in the run')
+        return None
+    entries = read_json(run / 'dup-map.json')
+    harvest = _harvest_state(run, entries if isinstance(entries, list) else [])
+    if not harvest['present']:
+        errors.append('dup-harvest.json: submission requires the closed-issue harvest '
+                      '(run dup-harvest): a team that already closed this as wontfix or a known '
+                      'issue is the most common way a correct finding is rejected')
+    else:
+        if harvest['truncated']:
+            errors.append('dup-harvest.json: the harvest stopped at --limit, so judged issues '
+                          'were not retrieved; raise the limit and rerun dup-harvest')
+        if harvest['untriaged']:
+            shown = ', '.join(harvest['untriaged'][:8])
+            more = '' if len(harvest['untriaged']) <= 8 else \
+                f" and {len(harvest['untriaged']) - 8} more"
+            errors.append('dup-harvest.json: harvested issues are untriaged: ' + shown + more
+                          + '. Each needs disposition in-map with the dup-map entry_id it '
+                            'became, or irrelevant with the reason')
+    path = run / 'dup-matches.json'
+    if not path.is_file():
+        errors.append('dup-matches.json: run dup-check before submission')
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        errors.append('dup-matches.json: must be valid JSON from dup-check')
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get('collisions'), list):
+        errors.append('dup-matches.json: invalid dup-check result')
+        return None
+    if data.get('run_id') != meta.get('run_id'):
+        errors.append('dup-matches.json: belongs to a different run; rerun dup-check')
+    if data.get('findings_sha256') != _history_input_digest(records):
+        errors.append('dup-matches.json: candidate mechanisms changed; rerun dup-check')
+    if data.get('dup_map_sha256') != _dup_map_digest(entries):
+        errors.append('dup-matches.json: the duplicate map changed after the join; rerun '
+                      'dup-check so the new entries are compared')
+    if data.get('map_errors'):
+        errors.append('dup-matches.json: dup-map.json did not validate; fix it and rerun dup-check')
+    by_finding = {}
+    for i, hit in enumerate(data['collisions']):
+        if not isinstance(hit, dict) or not has_text(hit.get('finding')) \
+                or not has_text(hit.get('entry')):
+            errors.append(f'dup-matches.json: collisions[{i}] is missing finding or entry')
+            continue
+        by_finding.setdefault(hit['finding'], set()).add(hit['entry'])
+    return by_finding
+
+
+# --------------------------------------------------------------------------- #
+# closed-issue harvest: what the team has already judged
+# --------------------------------------------------------------------------- #
+
+GITHUB_API = 'https://api.github.com'
+
+
+def _github_get(url, token=None, opener=None, timeout=30):
+    """One GitHub REST read. The token travels in a header and is never logged or stored."""
+    request = urllib.request.Request(url, headers={
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': f'bounty-pilot/{skill_version()} (+https://github.com/dimin4241-svg/bounty-pilot)',
+    })
+    if token:
+        request.add_header('Authorization', 'Bearer ' + token)
+    open_fn = opener or (lambda req, timeout: urllib.request.urlopen(req, timeout=timeout))
+    try:
+        with open_fn(request, timeout=timeout) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403, 429):
+            raise ValueError(
+                f'GitHub answered {exc.code}. Unauthenticated issue search allows only a few '
+                'queries a minute: export a read-only token and name it with --token-env, or '
+                'save the search JSON and pass --from-file.') from None
+        if exc.code == 404:
+            raise ValueError('GitHub answered 404: check the repository slug and whether the '
+                             'repository is private') from None
+        raise ValueError(f'GitHub answered {exc.code} for this query') from None
+
+
+def _harvest_slug(repo, meta, require_github=True):
+    """The owner/repo this harvest reads, from --repo, a local checkout, or the run."""
+    if repo and Path(repo).expanduser().is_dir():
+        key = project_for_repo(Path(repo).expanduser())
+    elif repo:
+        key = _explicit_project(repo)
+    else:
+        key = meta.get('project_key')
+        root = meta.get('target_root')
+        if not key and root and Path(root).is_dir():
+            key = project_for_repo(root)
+    if not key:
+        raise ValueError('No repository to harvest: pass --repo owner/repo')
+    if not require_github:
+        # A saved search is already retrieved, so the host it came from need not be GitHub.
+        return key
+    parts = key.split('/')
+    if len(parts) == 3:
+        host, owner, name = parts
+        if host not in ('github.com', 'www.github.com'):
+            raise ValueError(f'dup-harvest reads the GitHub API; for {host} save the closed-issue '
+                             'search as JSON and pass --from-file')
+        return owner + '/' + name
+    if len(parts) == 2 and '.' not in parts[0]:
+        return key
+    raise ValueError('--repo must be a GitHub owner/repo, a repository URL, or a local checkout')
+
+
+def _github_labels(slug, token=None, opener=None):
+    names = []
+    for page in range(1, 4):
+        batch = _github_get(f'{GITHUB_API}/repos/{slug}/labels?per_page=100&page={page}',
+                            token, opener)
+        if not isinstance(batch, list) or not batch:
+            break
+        names.extend(item.get('name', '') for item in batch if isinstance(item, dict))
+        if len(batch) < 100:
+            break
+    return [name for name in names if has_text(name)]
+
+
+def _dup_label_candidates(names, extra=None):
+    """The repository's own labels that say "already judged", plus any the user named."""
+    hints = DUP_LABEL_HINTS + AUDITOR_LABEL_HINTS
+    chosen = [name for name in names if any(hint in name.lower() for hint in hints)]
+    chosen.extend(name for name in extra or [] if has_text(name))
+    return sorted({name for name in chosen}, key=str.lower)
+
+
+def _github_search_closed(slug, labels, token=None, opener=None, limit=200):
+    """Closed issues and PRs carrying any of these labels, newest first."""
+    quoted = ','.join('"' + label.replace('"', '') + '"' for label in labels)
+    query = f'repo:{slug} is:closed label:{quoted}'
+    found, total = [], 0
+    for page in range(1, 11):
+        url = (f'{GITHUB_API}/search/issues?q=' + urllib.parse.quote(query, safe='')
+               + f'&per_page=100&page={page}')
+        body = _github_get(url, token, opener)
+        items = body.get('items') if isinstance(body, dict) else None
+        if isinstance(body, dict) and isinstance(body.get('total_count'), int):
+            total = body['total_count']
+        if not isinstance(items, list) or not items:
+            break
+        found.extend(items)
+        if len(found) >= limit or len(items) < 100:
+            break
+    kept = found[:limit]
+    return kept, max(total, len(found)) > len(kept)
+
+
+def _harvest_candidate(item):
+    labels = [label.get('name', '') for label in item.get('labels', [])
+              if isinstance(label, dict)] if isinstance(item.get('labels'), list) else []
+    body = item.get('body') or ''
+    return {'ref': '#' + str(item.get('number')), 'url': item.get('html_url', ''),
+            'title': ' '.join(str(item.get('title', '')).split())[:200],
+            'labels': [label for label in labels if label],
+            'closed_at': item.get('closed_at') or '',
+            'is_pull': bool(item.get('pull_request')),
+            'excerpt': _redact_context_secrets(' '.join(str(body).split()))[:400]}
+
+
+def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file=None,
+                limit=200, opener=None):
+    """Collect the closed issues and PRs the team has already judged, for the duplicate map.
+
+    It retrieves and records; it never writes dup-map.json. Mapping an issue to a surface and a
+    bug class is judgement, and a map entry invented from an issue title would burn a surface
+    that was never actually burned.
+    """
+    run = Path(run).resolve()
+    meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
+    slug = _harvest_slug(repo, meta, require_github=not from_file)
+    token = os.environ.get(token_env) if token_env else None
+    if from_file:
+        payload = read_json(Path(from_file).expanduser())
+        items = payload.get('items') if isinstance(payload, dict) else payload
+        if not isinstance(items, list):
+            raise ValueError('--from-file must hold a GitHub search result or an array of issues')
+        used, items, truncated = sorted(labels or []), items[:limit], False
+    else:
+        used = _dup_label_candidates(_github_labels(slug, token, opener), labels)
+        items, truncated = ((), False) if not used else \
+            _github_search_closed(slug, used, token, opener, limit)
+    candidates = [_harvest_candidate(item) for item in items
+                  if isinstance(item, dict) and item.get('number') is not None]
+    refs = {candidate['ref'] for candidate in candidates}
+    previous = read_json(run / 'dup-harvest.json') if (run / 'dup-harvest.json').is_file() else {}
+    kept = previous.get('triage') if isinstance(previous, dict) \
+        and isinstance(previous.get('triage'), dict) else {}
+    result = {
+        'repo': slug, 'source': 'from-file' if from_file else 'github-search',
+        'harvested_at': datetime.now(timezone.utc).isoformat(),
+        'labels': used, 'candidate_count': len(candidates), 'truncated': truncated,
+        'candidates': candidates,
+        # Triage recorded for issues that are still in this harvest survives a rerun.
+        'triage': {ref: row for ref, row in kept.items() if ref in refs},
+        'notice': 'These are issues and PRs the team already closed. Triage every one: '
+                  'disposition "in-map" with the dup-map entry_id it became, or "irrelevant" '
+                  'with the reason. The submission gate blocks while any is untriaged. Labels '
+                  'are a filter, not a guarantee: a judged issue carrying no label is not here.',
+    }
+    dump(run / 'dup-harvest.json', result)
+    state = _harvest_state(run, read_json(run / 'dup-map.json')
+                           if (run / 'dup-map.json').is_file() else [])
+    return dict(result, untriaged=state['untriaged'])
 
 
 # --------------------------------------------------------------------------- #
@@ -3603,6 +3976,22 @@ def build_parser():
     dup = sub.add_parser('dup-check', help='match findings against the built duplicate map')
     dup.add_argument('--run', required=True)
 
+    harvest = sub.add_parser('dup-harvest',
+                             help='collect closed issues and PRs the team already judged')
+    harvest.add_argument('--run', required=True)
+    harvest.add_argument('--repo', default=None,
+                         help='GitHub owner/repo, repository URL or local checkout; '
+                              'default: the run\'s target')
+    harvest.add_argument('--label', action='append', default=None, dest='labels',
+                         help='additional label to search, beyond the ones matched by name. '
+                              'Repeatable.')
+    harvest.add_argument('--token-env', default='GITHUB_TOKEN',
+                         help='environment variable holding a read-only GitHub token; the value '
+                              'is never printed or written')
+    harvest.add_argument('--from-file', default=None,
+                         help='saved GitHub search JSON, for a network-free environment')
+    harvest.add_argument('--limit', type=int, default=200)
+
     queue = sub.add_parser('queue', help='show every open lead and its required next experiment')
     queue.add_argument('--run', required=True)
 
@@ -3743,14 +4132,14 @@ def main(argv=None):
             print(json.dumps(report, indent=2))
             return 1 if errors else 0
         if args.action == 'dup-check':
-            errors, collisions = check_dup_map(args.run)
-            print(json.dumps({'map_errors': errors, 'collisions': collisions,
-                              'result': 'failed' if errors else
-                                        ('collisions' if collisions else 'clean'),
-                              'notice': 'A collision means the surface and class were already '
-                                        'public. Compare mechanisms before dropping or filing.'},
-                             indent=2))
-            return 1 if errors or collisions else 0
+            result = dup_check(args.run)
+            print(json.dumps(result, indent=2))
+            return 1 if result['map_errors'] or result['collisions'] else 0
+        if args.action == 'dup-harvest':
+            result = dup_harvest(args.run, args.repo, args.labels, args.token_env,
+                                 args.from_file, args.limit)
+            print(json.dumps(result, indent=2))
+            return 1 if result['untriaged'] else 0
         if args.action == 'queue':
             result = lead_queue(args.run)
             print(json.dumps(result, indent=2))

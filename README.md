@@ -238,7 +238,7 @@ But it audits a **repository**, while a bounty submission is a claim about a **d
 | --- | --- | --- |
 | Program rules, scope and exclusions | not modelled | stage 1, gate 5 |
 | The deployed code is the code you audited | not checked | `verify-deployment` |
-| Known issues burned before the hunt | not checked | `dup-check` |
+| Known issues burned before the hunt | not checked | `dup-harvest`, `dup-check` |
 | Priority on code the last audit never saw | all code equally | `delta` |
 | Constants checked against the chain | source only | `eth-call`, `live-reality` |
 | A runnable PoC with a negative control | reasoning trace | evidence gates, `templates/` |
@@ -331,7 +331,8 @@ python3 $S history check --run /path/to/private/new-run
 python3 $S history summary
 
 # Gates.
-python3 $S dup-check --run /path/to/private/new-run
+python3 $S dup-harvest --run /path/to/private/new-run
+python3 $S dup-check   --run /path/to/private/new-run
 python3 $S check     --run /path/to/private/new-run [--submission]
 
 # Run helper tests.
@@ -342,7 +343,7 @@ python3 -m unittest discover -s tests -v
 
 `bundle` is the dispatch mechanic, not a convenience: a pass that skipped it handed its lenses less than they needed. Only the `coverage-gap` lens receives the test and mock files, because reading tests adversarially is its job and nobody else's.
 
-`check` does not verify exploit truth, severity, originality or payout eligibility, and an empty finding list passes its structural checks. `check --submission` also requires a current `history-matches.json` for the candidate mechanisms and every detected personal-history match to be reviewed. Rerun `history check` if a finding's id, status, class, affected paths or root cause changes. A green gate still means "nothing obviously missing", never "this is valid".
+`check` does not verify exploit truth, severity, originality or payout eligibility, and an empty finding list passes its structural checks. `check --submission` also requires a current `history-matches.json` for the candidate mechanisms and every detected personal-history match to be reviewed. Rerun `history check` if a finding's id, status, class, affected paths or root cause changes. The duplicate side is gated the same way: a triaged `dup-harvest.json`, a `dup-matches.json` that matches the current findings **and** the current map, and a `dup_review` on each submitted record whose `entry_ids` cover every collision. A green gate still means "nothing obviously missing", never "this is valid".
 
 ## FAQ
 

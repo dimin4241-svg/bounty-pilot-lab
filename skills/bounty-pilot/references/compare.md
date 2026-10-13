@@ -30,7 +30,7 @@ It audits a repository. A bounty submission is a claim about a **deployed** syst
 | --- | --- | --- |
 | Program rules, scope and exclusions | not modelled | `intake.md`, `targets.md`, gate 5 |
 | Deployed code is the code you audited | not checked | `verify-deployment`, EIP-1967 resolution |
-| Known issues and public findings burned first | not checked | `dup-map.md`, `dup-check` |
+| Known issues and public findings burned first | not checked | `dup-map.md`, `dup-harvest`, `dup-check` |
 | Priority on code the last audit never saw | all code equally | `delta`, `delta-agent` |
 | Constants and config checked against the chain | source only | `live-reality-agent`, `eth-call` |
 | A runnable PoC with a negative control | reasoning trace | `evidence.md`, `templates/` |
@@ -59,7 +59,7 @@ confident candidates that a triage engineer kills in one reading.
    `findings.json` record with `status: hypothesis`, its `group_key` split into `surface` and
    `bug_class`, and `evidence` empty. Its confidence score is not evidence and does not transfer.
 5. **Adjudicate everything together** with `adjudicate.md`, then verify survivors with a real PoC,
-   then `dup-check`, then `check --submission`.
+   then `dup-harvest` and `dup-check`, then `check --submission`.
 
 Do not nest the two orchestrators — do not ask `solidity-auditor` to run Bounty Pilot's passes or
 the reverse. Both are multi-pass loops; nesting multiplies cost and makes coverage unreadable.

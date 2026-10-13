@@ -25,7 +25,45 @@ So the map is built **first**, and it burns surfaces before anyone reads code fo
 Record retrieval dates. A known-issues list is edited, and the version you read is the one you were
 judged against.
 
+## Harvest the closed issues first
+
+Source 5 is the one that is skipped, and it is the one that kills reports. A team that has already
+judged a mechanism says so on a closed issue, under a label: `wontfix`, `known issue`, `by design`,
+or the name of the firm whose report it imported. `liquity/bold` issue #506 carried `ChainSecurity`
+and `wontfix`, and the competition page linked the `label:wontfix` query as out of scope.
+
+```sh
+python3 <skill-dir>/scripts/bounty.py dup-harvest --run <run>
+# inside a network-free environment, or for a non-GitHub host:
+python3 <skill-dir>/scripts/bounty.py dup-harvest --run <run> --from-file <saved-search.json>
+```
+
+It reads the repository's own label list, keeps the labels that mean *already judged*, searches
+closed issues and PRs for them, and writes `dup-harvest.json`. It never writes `dup-map.json`:
+mapping an issue to a surface and a bug class is judgement, and an entry invented from an issue
+title burns a surface that was never burned.
+
+Then triage **every** candidate in `dup-harvest.json` under `triage`, keyed by its `ref`:
+
+```json
+"triage": {
+  "#506": {"disposition": "in-map", "entry_id": "KI-004"},
+  "#771": {"disposition": "irrelevant", "note": "frontend build flake, no contract surface"}
+}
+```
+
+`in-map` names the `dup-map.json` entry the issue became, and the gate checks that id exists.
+`irrelevant` needs a reason. The submission gate blocks while any candidate is untriaged, and
+while the harvest stopped at `--limit`. Labels are a filter, not a guarantee: a judged issue
+carrying no label is not in the harvest, so read the closed-issue list for your surfaces too.
+
+Unauthenticated GitHub search allows only a few queries a minute. Export a read-only token and
+name its variable with `--token-env`; the value is never printed or written to the run.
+
 ## Format — `dup-map.json` in the run directory
+
+`id` is required and unique: it is the name a finding's `dup_review.entry_ids` cites, and the
+gate uses it to check that every collision was actually reviewed.
 
 ```json
 [
@@ -54,14 +92,35 @@ That reports every finding whose surface and bug class were already burned, as `
 ## What a collision means
 
 A collision is **not** an automatic drop. It means: before this goes anywhere, state in the record
-how your mechanism differs from the published one. Three outcomes, and all three are legitimate:
+how your mechanism differs from the published one. Three outcomes, and all three are legitimate.
+Each one is a `dup_review.status` on the finding, with the `entry_ids` it was compared against and
+a `rationale`:
 
-- **Same mechanism** → mark the finding `refuted` for submission purposes with the dup source as
-  `rejection_reason`, and keep it in the file. It is coverage, not waste.
-- **Same surface, different mechanism** → keep it, and write the difference into the report. This is
-  common and valuable: teams burn a surface with one sentence and leave a second bug sitting there.
-- **Same mechanism, different consequence** → keep it only when the new consequence changes severity
-  materially, and lead the report with the consequence rather than the mechanism.
+- **Same mechanism** (`same-mechanism`) → mark the finding `refuted` for submission purposes with
+  the dup source as `rejection_reason`, and keep it in the file. It is coverage, not waste. The
+  gate refuses to submit it.
+- **Same surface, different mechanism** (`different-mechanism`) → keep it, and write the difference
+  into the report. This is common and valuable: teams burn a surface with one sentence and leave a
+  second bug sitting there.
+- **Same mechanism, different consequence** (`different-consequence`) → keep it only when the new
+  consequence changes severity materially, and lead the report with the consequence rather than the
+  mechanism.
+
+`no-match` is for a finding the join did not hit at all, and it carries no `entry_ids`. Claiming it
+over a collision fails the gate.
+
+## The gate
+
+`check --submission` blocks unless, for every submitted record:
+
+- `dup-harvest.json` exists, was not truncated, and every candidate is triaged;
+- `dup-matches.json` exists and is **fresh** — same `run_id`, same candidate mechanisms, same map.
+  A map that grows after the join invalidates it, because the new entry was never compared;
+- the record carries a `dup_review` that is not `unchecked` and not `same-mechanism`, and whose
+  `entry_ids` cover every collision `dup-check` reported for it.
+
+A join against a map that does not validate is never written, so a broken map cannot be certified
+by running the command.
 
 ## The limit of this map
 

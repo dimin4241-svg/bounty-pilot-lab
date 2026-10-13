@@ -131,7 +131,8 @@ Separate from everything above, and never merged with it.
 - Is the affected revision what is **deployed**? Run `verify-deployment`. For a proxy, the
   implementation is what must match — a matching proxy runtime establishes nothing.
 - Is the impact class excluded by the program?
-- Did `dup-check` collide, and is the mechanism difference written down?
+- Did `dup-harvest` return a closed issue that judged this already, and is every candidate triaged?
+- Did `dup-check` collide, and is the mechanism difference written down in `dup_review`?
 
 A finding can clear gates 1–4 and fail gate 5. That is a real result: technically valid, not
 submittable. Label it a source-review finding and record both judgments.
