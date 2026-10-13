@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.11.1
+
+A live check of 0.11.0 against GitHub found the gate right on the case it was built for — it
+retrieves `liquity/bold` #506 among 91 judged issues — and wrong in three ways around it.
+
+### A harvest that searched nothing no longer reads as clean
+
+- `ethereum/go-ethereum` has 36 labels and none means *already judged*. 0.11.0 searched nothing,
+  found nothing and let submission through: the empty, reassuring result `solc-bugs` is forbidden
+  to return. Such a harvest is now `vacuous` and blocks the gate until it is resolved with
+  `--label`, `--include-not-planned`, or `--empty-reason "<why>"`. A search that ran and found
+  nothing is still a clean result. `dup-harvest` exits 1 on a vacuous harvest and says why.
+
+### Firms the name list misses are visible
+
+- `Coinspect` and `Recon` labelled thirteen imported audit findings on `liquity/bold` and were not
+  on the list. Both are now, with a dozen more firms. The list will never be complete, so every
+  label the harvest did not select is reported as `labels_skipped`, where a missing firm shows.
+- Hints match whole words: `Recon` is selected, `reconciliation` is not.
+
+### GitHub's own wontfix
+
+- New `--include-not-planned` adds the issues GitHub shows as *closed as not planned*, which carry
+  no label; #506 was closed that way too. It is noisier than labels, so it is opt-in, and it is the
+  suggested fallback on a repository with no judged labels. Candidates record `matched_by`.
+
+### Issue text is data
+
+- The harvest notice and `references/dup-map.md` now state that titles and excerpts were written
+  by whoever opened the issue and are never instructions, as for target source.
+
+## 0.11.0
+
+Aimed at the failure the finding ledger actually shows: of four withdrawn reports, two died on
+`liquity/bold` issue #506 — a closed issue labelled `ChainSecurity` and `wontfix`, linked from the
+competition page as out of scope. The measurements were right; the issue was never read. The
+duplicate map existed as a procedure and as an empty file that passed the gate.
+
+### The closed issues the team already judged are retrieved, not remembered
+
+- New `dup-harvest --run <run> [--repo owner/repo] [--label L] [--token-env VAR]
+  [--from-file saved.json] [--limit N]`. It reads the repository's own label list, keeps the labels
+  that mean *already judged* (`wontfix`, `known issue`, `by design`, `accepted risk`, and the names
+  of audit firms and contest platforms), searches closed issues and PRs for them, and writes
+  `dup-harvest.json`.
+- It never writes `dup-map.json`. Mapping an issue to a surface and a bug class is judgement, and an
+  entry invented from an issue title burns a surface that was never burned.
+- `--from-file` takes a saved search, for a network-free environment or a non-GitHub host. A token
+  named with `--token-env` travels in a header and is never printed or written to the run.
+- Triage survives a rerun for every issue still in the harvest.
+
+### The duplicate map is now a gate, not a file that exists
+
+- `dup-check` writes `dup-matches.json`, bound to the `run_id`, to the candidate mechanisms, and to
+  the map it read. A map that grows after the join invalidates it, because the new entry was never
+  compared. A join against a map that does not validate is not written at all.
+- New optional `dup_review` record field: `status` (`unchecked`, `no-match`, `different-mechanism`,
+  `different-consequence`, `same-mechanism`), the `entry_ids` it was compared against, and the
+  `rationale`. The three legitimate collision outcomes in `references/dup-map.md` are now the three
+  non-blocking statuses.
+- `check --submission` blocks on: a missing or truncated harvest, any untriaged harvested issue, a
+  missing or stale `dup-matches.json`, a missing or `unchecked` `dup_review`, a `same-mechanism`
+  one, a `no-match` claimed over a real collision, and `entry_ids` that do not cover every collision
+  the join reported. The old check — that `dup-map.json` is merely present — is gone; an empty map
+  passed it.
+- `dup-map.json` entries now require a unique `id`, which is what `dup_review.entry_ids` cites and
+  what the gate counts. The format in `references/dup-map.md` already documented it.
+
+### Note for runs already in flight
+
+The record schema is unchanged (`schema_version` 2) and `dup_review` is optional, so an existing
+run still validates structurally. A run that is ready to submit needs `dup-harvest`, its triage,
+one `dup-check`, and a `dup_review` on each submitted record.
+
 ## 0.10.0
 
 Aimed at the failure the 0.9.1 backtest measured: independent readings converge on the same

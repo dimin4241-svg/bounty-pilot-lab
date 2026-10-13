@@ -100,6 +100,7 @@ point-in-time evidence about one block, not proof about every deployment state.
 
 ```sh
 python3 <skill-dir>/scripts/bounty.py check --run <run>               # structure and artifacts
+python3 <skill-dir>/scripts/bounty.py dup-harvest --run <run>         # issues already judged
 python3 <skill-dir>/scripts/bounty.py dup-check --run <run>           # burned surfaces
 python3 <skill-dir>/scripts/bounty.py history check --run <run>       # private prior reports
 python3 <skill-dir>/scripts/bounty.py queue --run <run>               # every open lead

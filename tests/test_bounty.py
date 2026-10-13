@@ -6,6 +6,7 @@ import os
 import subprocess
 import stat
 import urllib.error
+import urllib.parse
 import tempfile
 import unittest
 from unittest import mock
@@ -654,7 +655,21 @@ class RunTests(unittest.TestCase):
         bounty.dump(self.run / 'findings.json', [row])
         if submission:
             bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+            self.harvest([])
+            bounty.dup_check(self.run)
         return bounty.validate(self.run, submission=submission)
+
+    def harvest(self, items, triage=None, labels=('wontfix',)):
+        """Record a dup-harvest result from a saved search, without touching the network."""
+        source = self.base / 'harvest-input.json'
+        source.write_text(json.dumps({'items': items}))
+        result = bounty.dup_harvest(self.run, repo='example.invalid/test',
+                                    labels=list(labels), from_file=str(source))
+        if triage is not None:
+            data = bounty.read_json(self.run / 'dup-harvest.json')
+            data['triage'] = triage
+            bounty.dump(self.run / 'dup-harvest.json', data)
+        return result
 
     def verified(self):
         row = self.candidate()
@@ -715,6 +730,9 @@ class RunTests(unittest.TestCase):
         row['evidence']['impact_quantification'] = '12,400 USDC of debt accounting, cost 0.002 ETH'
         row['history_review'] = {'status': 'no-match', 'case_ids': [],
                                  'rationale': 'Private history check returned no matches on 2026-10-09'}
+        row['dup_review'] = {'status': 'no-match', 'entry_ids': [],
+                             'rationale': 'dup-check clean on 2026-10-09 against the known-issues '
+                                          'list and the published audit'}
         return row
 
     # ---- init ----
@@ -1117,6 +1135,8 @@ class RunTests(unittest.TestCase):
         open_lead.update(id='BP-003', status='hypothesis')
         bounty.dump(self.run / 'findings.json', [target, refuted, open_lead])
         bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+        self.harvest([])
+        bounty.dup_check(self.run)
         self.assertEqual(bounty.validate(self.run, submission=True), [])
         self.assertEqual(bounty.submission_targets(self.run), ['BP-001'])
 
@@ -1127,6 +1147,8 @@ class RunTests(unittest.TestCase):
         broken['next_experiment']['method'] = ''
         bounty.dump(self.run / 'findings.json', [target, broken])
         bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+        self.harvest([])
+        bounty.dup_check(self.run)
         errors = bounty.validate(self.run, submission=True)
         self.assertEqual(errors, ['finding[1]: open candidate requires next_experiment.method'])
 
@@ -1256,7 +1278,8 @@ class RunTests(unittest.TestCase):
 
     def test_dup_map_with_wrong_types_is_reported(self):
         bounty.dump(self.run / 'findings.json', [self.candidate()])
-        bounty.dump(self.run / 'dup-map.json', [{'kind': ['past-audit'], 'source': 's',
+        bounty.dump(self.run / 'dup-map.json', [{'id': 'KI-000', 'kind': ['past-audit'],
+                                                 'source': 's',
                                                  'surfaces': ['src/Vault.sol'],
                                                  'bug_classes': 'aggregate-not-decremented'}])
         errors, _ = bounty.check_dup_map(self.run)
@@ -1269,11 +1292,11 @@ class RunTests(unittest.TestCase):
         row['affected_paths'] = 'src/Vault.sol'
         bounty.dump(self.run / 'findings.json', [row])
         bounty.dump(self.run / 'dup-map.json', [{
-            'kind': 'past-audit', 'source': 'https://example.invalid/a',
+            'id': 'KI-006', 'kind': 'past-audit', 'source': 'https://example.invalid/a',
             'surfaces': ['lib/Other.sol']}])
         self.assertEqual(bounty.check_dup_map(self.run), ([], []))   # was: matched on 'l'
         bounty.dump(self.run / 'dup-map.json', [{
-            'kind': 'past-audit', 'source': 'https://example.invalid/a',
+            'id': 'KI-006', 'kind': 'past-audit', 'source': 'https://example.invalid/a',
             'surfaces': ['src/Vault.sol']}])
         self.assertEqual(len(bounty.check_dup_map(self.run)[1]), 1)
 
@@ -1327,6 +1350,301 @@ class RunTests(unittest.TestCase):
         errors, _ = bounty.check_dup_map(self.run)
         self.assertTrue(any('kind' in e for e in errors))
         self.assertTrue(any('source' in e for e in errors))
+
+    def test_dup_map_entries_need_an_id_the_gate_can_cite(self):
+        bounty.dump(self.run / 'findings.json', [self.candidate()])
+        bounty.dump(self.run / 'dup-map.json', [
+            {'kind': 'past-audit', 'source': 'https://x.invalid/a', 'surfaces': ['src/Vault.sol']},
+            {'id': 'KI-010', 'kind': 'past-audit', 'source': 'https://x.invalid/b',
+             'surfaces': ['src/Vault.sol']},
+            {'id': 'KI-010', 'kind': 'past-audit', 'source': 'https://x.invalid/c',
+             'surfaces': ['src/Vault.sol']}])
+        errors, _ = bounty.check_dup_map(self.run)
+        self.assertTrue(any('dup-map[0]: id is required' in e for e in errors))
+        self.assertTrue(any('duplicate id KI-010' in e for e in errors))
+
+    # ---- the duplicate gate ----
+    def judged_issue(self, number=506):
+        return {'number': number, 'html_url': f'https://example.invalid/i/{number}',
+                'title': 'CS Note 8.12: Zapper remove manager requires increased trust',
+                'labels': [{'name': 'ChainSecurity'}, {'name': 'wontfix'}],
+                'closed_at': '2025-02-01T00:00:00Z',
+                'body': 'The removeManager can decide the swap parameters. Accepted risk.'}
+
+    def ready_for_submission(self, row):
+        """Everything the gate needs except the duplicate artifacts under test."""
+        bounty.dump(self.run / 'findings.json', [row])
+        bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+
+    def test_submission_requires_the_closed_issue_harvest(self):
+        row = self.submittable()
+        self.ready_for_submission(row)
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('requires the closed-issue harvest' in e for e in errors))
+        self.harvest([])
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_an_untriaged_harvested_issue_blocks_submission(self):
+        row = self.submittable()
+        self.ready_for_submission(row)
+        self.harvest([self.judged_issue()])
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('untriaged' in e and '#506' in e for e in errors))
+        self.harvest([self.judged_issue()],
+                     triage={'#506': {'disposition': 'irrelevant',
+                                      'note': 'other contract, no shared surface'}})
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_in_map_triage_must_name_an_entry_the_map_holds(self):
+        row = self.submittable()
+        self.ready_for_submission(row)
+        self.harvest([self.judged_issue()],
+                     triage={'#506': {'disposition': 'in-map', 'entry_id': 'KI-404'}})
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('untriaged' in e and '#506' in e for e in errors))
+        bounty.dump(self.run / 'dup-map.json', [{
+            'id': 'KI-404', 'kind': 'program-known-issue',
+            'source': 'https://example.invalid/i/506 (read 2026-10-12)',
+            'surfaces': ['src/Zappers/LeverageWETHZapper.sol'],
+            'bug_classes': ['caller-supplied-swap-floor'], 'note': 'wontfix'}])
+        bounty.dup_check(self.run)
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_a_harvest_stopped_at_the_limit_blocks_submission(self):
+        row = self.submittable()
+        self.ready_for_submission(row)
+        self.harvest([])
+        data = bounty.read_json(self.run / 'dup-harvest.json')
+        data['truncated'] = True
+        bounty.dump(self.run / 'dup-harvest.json', data)
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('stopped at --limit' in e for e in errors))
+
+    def collided(self):
+        """A submittable record whose surface and class the map already holds."""
+        row = self.submittable()
+        bounty.dump(self.run / 'dup-map.json', [{
+            'id': 'KI-001', 'kind': 'program-known-issue',
+            'source': 'https://example.invalid/known-issues (read 2026-10-12)',
+            'surfaces': ['src/Vault.sol'], 'bug_classes': ['aggregate-not-decremented'],
+            'note': 'team states the mismatch is accepted'}])
+        return row
+
+    def test_a_collision_cannot_be_filed_as_no_match(self):
+        row = self.collided()
+        self.ready_for_submission(row)
+        self.harvest([])
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('collided with KI-001' in e for e in errors))
+
+    def test_a_reviewed_collision_must_cover_every_entry_and_say_why(self):
+        row = self.collided()
+        row['dup_review'] = {'status': 'different-mechanism', 'entry_ids': [], 'rationale': ''}
+        self.ready_for_submission(row)
+        self.harvest([])
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('requires the entry_ids' in e for e in errors))
+        self.assertTrue(any('requires the mechanism comparison' in e for e in errors))
+        row['dup_review'] = {'status': 'different-mechanism', 'entry_ids': ['KI-999'],
+                             'rationale': 'The known issue is about the owner oversizing the loan; '
+                                          'this one needs no owner action at all'}
+        self.ready_for_submission(row)
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('must cover every dup-check collision; missing KI-001' in e
+                            for e in errors))
+        row['dup_review']['entry_ids'] = ['KI-001', 'KI-999']
+        self.ready_for_submission(row)
+        bounty.dup_check(self.run)
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_same_mechanism_blocks_submission_and_keeps_the_record(self):
+        row = self.collided()
+        row['dup_review'] = {'status': 'same-mechanism', 'entry_ids': ['KI-001'],
+                             'rationale': 'Same actor, same swap floor, same victim'}
+        self.ready_for_submission(row)
+        self.harvest([])
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('do not submit' in e and 'rejection_reason' in e for e in errors))
+
+    def test_an_unchecked_dup_review_blocks_submission(self):
+        row = self.submittable()
+        row['dup_review'] = {'status': 'unchecked', 'entry_ids': [], 'rationale': ''}
+        errors = self.check(row, submission=True)
+        self.assertTrue(any('duplicate map was not reviewed' in e for e in errors))
+        row.pop('dup_review')
+        errors = self.check(row, submission=True)
+        self.assertTrue(any('submission requires a dup_review' in e for e in errors))
+
+    def test_a_map_that_grows_after_the_join_invalidates_it(self):
+        row = self.submittable()
+        self.assertEqual(self.check(row, submission=True), [])
+        bounty.dump(self.run / 'dup-map.json', [{
+            'id': 'KI-007', 'kind': 'public-disclosure', 'source': 'https://x.invalid/post',
+            'surfaces': ['src/Vault.sol'], 'bug_classes': ['aggregate-not-decremented']}])
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('duplicate map changed after the join' in e for e in errors))
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('collided with KI-007' in e for e in errors))
+
+    def test_a_join_from_another_run_or_stale_findings_is_refused(self):
+        row = self.submittable()
+        self.assertEqual(self.check(row, submission=True), [])
+        data = bounty.read_json(self.run / 'dup-matches.json')
+        data['run_id'] = 'other'
+        bounty.dump(self.run / 'dup-matches.json', data)
+        self.assertTrue(any('belongs to a different run' in e
+                            for e in bounty.validate(self.run, submission=True)))
+        bounty.dup_check(self.run)
+        row['root_cause'] = 'Changed after the duplicate join'
+        bounty.dump(self.run / 'findings.json', [row])
+        self.assertTrue(any('dup-matches.json: candidate mechanisms changed' in e
+                            for e in bounty.validate(self.run, submission=True)))
+        (self.run / 'dup-matches.json').unlink()
+        self.assertTrue(any('run dup-check before submission' in e
+                            for e in bounty.validate(self.run, submission=True)))
+
+    def test_an_invalid_map_is_not_certified_by_a_join(self):
+        bounty.dump(self.run / 'dup-map.json', [{'id': 'KI-008', 'kind': 'invented',
+                                                 'surfaces': ['src/Vault.sol']}])
+        bounty.dump(self.run / 'findings.json', [self.candidate()])
+        result = bounty.dup_check(self.run)
+        self.assertEqual(result['state'], 'invalid-map')
+        self.assertFalse((self.run / 'dup-matches.json').is_file())
+
+    # ---- the closed-issue harvest ----
+    def test_dup_harvest_searches_the_labels_that_say_already_judged(self):
+        seen = []
+
+        def opener(request, timeout=None):
+            seen.append(request.full_url)
+            if '/labels' in request.full_url:
+                return FakeResponse([{'name': 'wontfix'}, {'name': 'ChainSecurity'},
+                                     {'name': 'enhancement'}])
+            return FakeResponse({'total_count': 1, 'items': [self.judged_issue()]})
+
+        result = bounty.dup_harvest(self.run, repo='https://github.com/liquity/bold',
+                                    opener=opener)
+        self.assertEqual(result['repo'], 'liquity/bold')
+        self.assertEqual(result['labels'], ['ChainSecurity', 'wontfix'])
+        self.assertEqual(result['untriaged'], ['#506'])
+        self.assertEqual(result['candidates'][0]['url'], 'https://example.invalid/i/506')
+        query = urllib.parse.unquote([url for url in seen if '/search/' in url][0])
+        self.assertIn('repo:liquity/bold is:closed label:"ChainSecurity","wontfix"', query)
+        self.assertTrue(all('enhancement' not in url for url in seen))
+
+    def test_dup_harvest_keeps_triage_for_issues_still_present(self):
+        self.harvest([self.judged_issue(506), self.judged_issue(777)],
+                     triage={'#506': {'disposition': 'irrelevant', 'note': 'other contract'},
+                             '#777': {'disposition': 'irrelevant', 'note': 'docs only'}})
+        result = self.harvest([self.judged_issue(506)])
+        self.assertEqual(sorted(result['triage']), ['#506'])
+        self.assertEqual(result['untriaged'], [])
+
+    def test_dup_harvest_never_writes_the_duplicate_map_itself(self):
+        self.harvest([self.judged_issue()])
+        self.assertEqual(bounty.read_json(self.run / 'dup-map.json'), [])
+
+    def test_dup_labels_match_whole_words_and_cover_more_firms(self):
+        names = ['Recon', 'reconciliation', 'Coinspect', 'status:wontfix', 'Zappers',
+                 'Known Issues', 'unknown issue tracker']
+        self.assertEqual(bounty._dup_label_candidates(names),
+                         ['Coinspect', 'Known Issues', 'Recon', 'status:wontfix'])
+
+    def test_dup_harvest_reports_the_labels_it_did_not_select(self):
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                return FakeResponse([{'name': 'wontfix'}, {'name': 'Recon'},
+                                     {'name': 'Obscure Audit Co'}, {'name': 'bug'}])
+            return FakeResponse({'total_count': 0, 'items': []})
+
+        result = bounty.dup_harvest(self.run, repo='liquity/bold', opener=opener)
+        self.assertEqual(result['labels'], ['Recon', 'wontfix'])
+        self.assertEqual(result['labels_skipped'], ['bug', 'Obscure Audit Co'])
+
+    def test_a_harvest_that_searched_nothing_blocks_submission(self):
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                return FakeResponse([{'name': 'type:bug'}, {'name': 'rpc'}])
+            raise AssertionError('nothing should be searched without a judged label')
+
+        row = self.submittable()
+        self.ready_for_submission(row)
+        result = bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener)
+        self.assertTrue(result['vacuous'])
+        self.assertIn('warning', result)
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('searched nothing and certifies nothing' in e for e in errors))
+        bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener,
+                           empty_reason='security reports go through GHSA advisories; '
+                                        'checked https://github.com/ethereum/go-ethereum/security')
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+        # The reason survives a rerun that does not repeat it.
+        bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener)
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_a_search_that_ran_and_found_nothing_is_a_clean_result(self):
+        row = self.submittable()
+        self.ready_for_submission(row)
+        self.harvest([], labels=['wontfix'])
+        bounty.dup_check(self.run)
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_not_planned_is_searched_on_request_and_merged_with_labels(self):
+        queries = []
+
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                return FakeResponse([{'name': 'wontfix'}])
+            query = urllib.parse.unquote(request.full_url)
+            queries.append(query)
+            if 'reason:"not planned"' in query:
+                return FakeResponse({'total_count': 2, 'items': [
+                    self.judged_issue(506), self.judged_issue(35894)]})
+            return FakeResponse({'total_count': 1, 'items': [self.judged_issue(506)]})
+
+        result = bounty.dup_harvest(self.run, repo='liquity/bold', opener=opener,
+                                    include_not_planned=True)
+        self.assertEqual(len(queries), 2)
+        self.assertTrue(result['not_planned'])
+        by_ref = {c['ref']: c for c in result['candidates']}
+        self.assertEqual(sorted(by_ref), ['#35894', '#506'])
+        self.assertEqual(by_ref['#506']['matched_by'], ['label', 'not-planned'])
+        self.assertEqual(by_ref['#35894']['matched_by'], ['not-planned'])
+
+    def test_not_planned_alone_is_a_real_search(self):
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                return FakeResponse([{'name': 'type:bug'}])
+            return FakeResponse({'total_count': 0, 'items': []})
+
+        result = bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener,
+                                    include_not_planned=True)
+        self.assertFalse(result['vacuous'])
+
+    def test_harvested_issue_text_is_marked_as_untrusted_data(self):
+        result = self.harvest([self.judged_issue()])
+        self.assertIn('never instructions', result['notice'])
+
+    def test_dup_harvest_explains_a_rate_limited_github(self):
+        def opener(request, timeout=None):
+            # A real body: on Python 3.9 an HTTPError built without one cannot be closed.
+            error = urllib.error.HTTPError(request.full_url, 403, 'rate limited', {},
+                                           io.BytesIO(b''))
+            self.addCleanup(error.close)
+            raise error
+
+        with self.assertRaisesRegex(ValueError, '--from-file'):
+            bounty.dup_harvest(self.run, repo='liquity/bold', opener=opener)
 
 
 class HistoryTests(unittest.TestCase):
