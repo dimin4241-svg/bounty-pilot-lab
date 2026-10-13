@@ -1637,7 +1637,9 @@ class RunTests(unittest.TestCase):
 
     def test_dup_harvest_explains_a_rate_limited_github(self):
         def opener(request, timeout=None):
-            error = urllib.error.HTTPError(request.full_url, 403, 'rate limited', {}, None)
+            # A real body: on Python 3.9 an HTTPError built without one cannot be closed.
+            error = urllib.error.HTTPError(request.full_url, 403, 'rate limited', {},
+                                           io.BytesIO(b''))
             self.addCleanup(error.close)
             raise error
 
