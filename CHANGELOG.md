@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.10.0
+
+Aimed at the failure the 0.9.1 backtest measured: independent readings converge on the same
+mechanism, and records get closed at their cheapest consequence.
+
+### Stop re-finding the same thing
+
+- New `converge --readings <dir|file> --run <run> [--threshold N]` parses raw hunt-agent output,
+  groups `CANDIDATE`/`FINDING`/`LEAD` blocks by bug class and surface file, and counts how many
+  **independent readings** reported each mechanism. It writes `saturated.md` (closed ground, carried
+  by every later bundle) and `convergence.json`, whose `singletons` list — mechanisms only one
+  reading saw — is the half worth acting on.
+- Bundles gain a short notice about saturated ground when the file is non-empty, and are
+  byte-identical to before when it is not.
+
+### Escalation is recorded, not assumed
+
+- New optional `escalation` record field: one entry per amplifier (`repetition`,
+  `other-parties-funds`, `composition`, `become-the-trusted-party`, `timing`,
+  `freeze-instead-of-theft`), each `reached`, `blocked` or `not-applicable`, anchored where it was
+  reached or blocked, plus `ceiling` and `ceiling_evidence`.
+- The submission gate requires the complete ladder on every submitted record. `queue` reports
+  `escalation_gaps` per open record and `weak_refusals` for records dropped without trying anything.
+- New `references/escalate.md` defines the stage, which sits after the hunt passes and before
+  adjudication.
+
+### Twentieth lens: `spec-divergence`
+
+- An aiming lens that compares the project's published promises against the code. Its filter is not
+  "the text disagrees with the code" — most of those are stale documentation — but "the
+  documentation promises a protection a user or integrator relies on, and the code does not
+  implement it". Its second product, often worth more, is quoted promises that answer the "intended
+  behaviour" objection in triage.
+- Bundles for this lens now carry a `docs.md` built from the project's markdown and prose, the way
+  `coverage-gap` receives `tests.md`.
+
 ## 0.9.1
 
 Fixes from a full review of 0.9.0. No new lenses; the gates got stricter and the instructions got

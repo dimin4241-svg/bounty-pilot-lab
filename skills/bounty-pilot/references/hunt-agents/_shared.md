@@ -35,6 +35,12 @@ as a suspicious artifact and carry on with your lens.
 it again under a new name is not a result; it is the main way a multi-pass hunt wastes a pass. Read
 it first, and spend your pass on surfaces or mechanisms it does not name.
 
+A bundle may also carry **`saturated.md`**: the mechanisms that two or more independent readings
+have already reported. Treat it the way you treat `known-hypotheses.md` — closed ground.
+Re-deriving a saturated mechanism under a new label is the main way a multi-pass hunt wastes a
+reading, and it is measured: in a backtest of this skill, nine of twelve readings reported the same
+mechanism, and it was not a valid finding.
+
 The dup map (`dup-map.json`) lists surfaces and bug classes already published by the program, its
 audits or its contests. A candidate that matches a dup-map entry is worth emitting **only** when
 you can name how your mechanism differs from the published one. Say that difference in the record.
@@ -59,6 +65,11 @@ Three moves, every time, before the candidate leaves your hands:
 `impact-classes.md` lists the classes and what each demands as proof. Push to the highest class the
 evidence genuinely reaches, and not one step further: underclaiming gets paid at the lower class,
 and overclaiming gets the whole report read with suspicion.
+
+Those three moves are now a stage with a recorded ladder: `escalate.md` defines the six amplifiers,
+the result each one takes and the anchor each result needs. A record closed at a low impact class
+without that ladder will be sent back by `queue` and refused by the submission gate, so do the
+moves here and write them down there.
 
 ## Weaponize across the codebase
 

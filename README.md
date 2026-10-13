@@ -25,7 +25,7 @@ Bounty Pilot gives a coding agent a repeatable workflow for **Solidity/EVM audit
 It has two halves, and both decide whether a hunt finds anything:
 
 - A **funnel** that settles where to look and what counts as evidence — which target is worth the week, which code the last audit never saw, which surfaces are already burned by published known issues, and whether the bytecode on chain is the code you are reading.
-- A **hunt** of nineteen aimed lenses, chosen by protocol shape and dispatched from assembled bundles over differentiated passes, where generation and refutation are deliberately separate steps: an agent that refutes itself while hunting finds less, and an agent that never refutes itself files reports that triage kills.
+- A **hunt** of twenty aimed lenses, chosen by protocol shape and dispatched from assembled bundles over differentiated passes, where generation and refutation are deliberately separate steps: an agent that refutes itself while hunting finds less, and an agent that never refutes itself files reports that triage kills.
 - A **two-round objection exchange** after the hunt, in which a triage agent is told to reject each finding and must anchor every objection in quoted code, quoted specification, a named test or a live chain read — and the answers must be anchored too. Both sides carry the same burden, because a one-round review rejects almost everything and you never learn which rejection was wrong.
 
 **It is an agent skill, not a hosted scanner.** Your agent reads the instructions, inspects the target, runs available tools, and records evidence. The included Python helpers organize results, read live chain state and check structure; they do not discover or prove vulnerabilities by themselves.
@@ -85,7 +85,7 @@ Alternatively, copy `skills/bounty-pilot` into your agent's supported skills dir
 | **Duplicate map first** | Burns surfaces published in known-issue lists, past audits and contest findings *before* the first pass, then matches candidates against them mechanically |
 | **Deployed-code verification** | Compares on-chain runtime bytecode with a local build, resolves EIP-1967/1822 proxy slots, pins one block per run, and separates `exact` from `partial` honestly |
 | **Live-constant checks** | Reads a hardcoded index, address, decimal or feed id against live chain state, because a constant is a claim about the outside world |
-| **Nineteen aimed lenses** | Hunts time, lineage, observability, aggregates, parameter authorization, persistence, live truth and the Solana account model |
+| **Twenty aimed lenses** | Hunts time, lineage, observability, aggregates, parameter authorization, persistence, live truth and the Solana account model |
 | **Separated generation and refutation** | Hunt passes state claims at full strength; a later pass attacks each one against five triage gates plus a separate evidence check |
 | **Evidence requirements** | Verified findings need a reproducible PoC, negative control, impact numbers and source-integrity evidence; every open lead needs a decisive next experiment |
 | **Submission gate** | Checks deployment, scope, severity, novelty, impact, objections and a fresh personal-history comparison before a report is ready |
@@ -182,6 +182,7 @@ The `recommended` bundle group ranks a limited set of lenses from manifest hints
 | `integration-auth` | **Boundaries** — which callback parameters the attacker controls |
 | `liveness` | **Persistence** — cheap, unprivileged, irreversible denial |
 | `anchor-account` | **Solana** — account substitution, PDA seeds, CPI authority |
+| `spec-divergence` | **Promises** — what the documentation guarantees and the code does not enforce |
 | `impact-first` | **Sinks first** — start at asset movement, debt, privilege and settlement, then walk back to who can reach them |
 | `seam` | **Combinations** — mechanisms no single lens can see, and refusals worth overturning |
 | `business-logic` | **Intent** — states violating the user's actual protocol promise |
@@ -201,7 +202,7 @@ One bundle per lens, one agent per bundle, each in its own context. Recall is dr
 
 The default budget is **up to three stages**, roughly 18 readings plus triage. It stops at the budget, or after two consecutive passes yield neither a new mechanism nor new coverage. There is no infinite loop and no finding quota — zero verified findings after an honest run is a legitimate result.
 
-Nineteen lenses are not nineteen passes: [`passes.md`](skills/bounty-pilot/references/passes.md) has a selection table by protocol shape (lending, AMM, vault, bridge, router, staking, perps, governance, fork, upgradeable, Solana). Two run on nearly everything — `privileged-path`, because access control and initialization are the categories automated reviewers measurably miss most and the largest real losses came from them, and `coverage-gap`, because the tests record what the authors never checked.
+Twenty lenses are not twenty passes: [`passes.md`](skills/bounty-pilot/references/passes.md) has a selection table by protocol shape (lending, AMM, vault, bridge, router, staking, perps, governance, fork, upgradeable, Solana). Two run on nearly everything — `privileged-path`, because access control and initialization are the categories automated reviewers measurably miss most and the largest real losses came from them, and `coverage-gap`, because the tests record what the authors never checked.
 
 ### Severity is the payout
 

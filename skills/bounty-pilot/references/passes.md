@@ -12,8 +12,9 @@ extra passes earn their cost.
 
 ## Stage A — Aim (cheap, mechanical, not a hunt pass)
 
-Three lenses whose job is a ranked surface list, not findings. They read diffs, manifests and test
-files rather than hunting the whole codebase, so they are cheap and they run once.
+Four lenses whose job is a ranked surface list, not findings. They read diffs, manifests, published
+documentation and test files rather than hunting the whole codebase, so they are cheap and they run
+once.
 
 ```sh
 S=<skill-dir>/scripts/bounty.py
@@ -21,14 +22,19 @@ python3 $S delta --repo <checkout> --since <audited-commit> --scope src/ > <run>
 python3 $S bundle --repo <checkout> --run <run> --lens aim --scope src/ --include <run>/delta.json
 ```
 
-Dispatch `delta`, `upstream-diff` and `coverage-gap`, one agent each. Their combined product goes
-into `coverage.md` as a ranked reading order, and every later pass is given it. If `--since` has no
-evidenced baseline, say so and review in full — never call an arbitrary recent range the
-post-audit delta.
+Dispatch `delta`, `upstream-diff`, `coverage-gap` and `spec-divergence`, one agent each. Their
+combined product goes into `coverage.md` as a ranked reading order, and every later pass is given
+it. If `--since` has no evidenced baseline, say so and review in full — never call an arbitrary
+recent range the post-audit delta.
+
+`spec-divergence` contributes two things: a reading order of the surfaces where the published
+documentation promises a protection no code enforces, and the exact quotes behind that ranking,
+which later serve as specification anchors on the records and in round 2 of the objection
+exchange (`hunt-agents/spec-divergence-agent.md`).
 
 ## Choosing lenses — select by behavior and stack
 
-There are nineteen lenses. Running every one on every target wastes most of the budget on surfaces
+There are twenty lenses. Running every one on every target wastes most of the budget on surfaces
 the protocol does not have. Pick by shape, and say in `coverage.md` which you chose and why.
 
 | Target shape | Run first | Then |
@@ -42,6 +48,7 @@ the protocol does not have. Pick by shape, and say in `coverage.md` which you ch
 | Perps / options / structured | `economics`, `accounting`, `live-reality` | `liveness`, `coverage-gap` |
 | Governance / timelock / treasury | `privileged-path`, `upgrade` | `liveness`, `delta` |
 | Any fork of a known upstream | `upstream-diff`, `delta` | the shape's own row |
+| Any target with a public documentation site, integration guide or SDK | `spec-divergence` | the shape's own row |
 | Any upgradeable deployment | `upgrade`, `privileged-path` | the shape's own row |
 | Solana / Anchor program | `anchor-account`, `privileged-path`, `economics` | `business-logic`, `temporal-logic` |
 | Native Rust worker / keeper / bridge | `recovery-failure`, `semantic-mismatch`, `business-logic` | `temporal-logic`, `composition` |
@@ -146,6 +153,16 @@ and hunts only mechanisms that need two axes at once. This is also where refusal
 a lead demoted for "no impact" and one demoted for "unreachable" are often the same bug, each
 supplying what the other lacked.
 
+## Escalation — after the passes, before triage
+
+Between the hunt passes and Stage D, every record climbs the amplifier ladder in `escalate.md`:
+`repetition`, `other-parties-funds`, `composition`, `become-the-trusted-party`, `timing`,
+`freeze-instead-of-theft`. Each gets `reached`, `blocked` or `not-applicable`, and `reached` and
+`blocked` carry an anchor of the same four kinds triage uses. The stage is still the hunter's
+stance — it deepens the claim and refutes nothing — and a record closed at a low impact class with
+an empty ladder is an unfinished record, not a cheap one. `queue` reports the missing amplifiers
+and the submission gate refuses the record.
+
 ## Stage D — Triage, two rounds
 
 Findings now meet an agent whose job is to reject them. The full protocol, including the rule that
@@ -177,6 +194,18 @@ forgotten is a pass spent re-deriving it. Record what you did not reach too: fil
 untraced, dependencies unopened. That list is the honest answer to "what did this cover", and it is
 where the next pass aims.
 
+Then compute convergence over the pass's readings and write `saturated.md`: the mechanisms two or
+more independent readings reported.
+
+```sh
+python3 $S converge --run <run> --readings <dir of this pass's raw reading output>
+```
+
+That list goes into the next pass's bundles beside `known-hypotheses.md`, and `_shared.md` tells
+every lens to treat it as closed ground — a reading spent re-deriving a saturated mechanism under a
+new label is a reading spent on nothing. Convergence counts what was reported, not what is true: a
+mechanism every reading agreed on can still be invalid.
+
 Update `coverage.md` with which lenses actually ran, how many readings each got, and what each
 closed. A lens you could not dispatch is reported, never silently skipped. Then run:
 
@@ -191,7 +220,9 @@ reason to drop a lead, and a similar pattern in another repository is context, n
 
 ## Stop rules
 
-Stop when any one is true:
+A pass is not done while a record sits at a low impact class with an empty ladder: run `escalate.md`
+over those records first, because the cheapest finding left on the table is one that was already
+found. Then stop when any one is true:
 
 - The planned pass count is spent.
 - Two consecutive passes produce neither a new mechanism nor new coverage. More reading will not
@@ -219,7 +250,7 @@ paragraph, and each of them is a near-miss that was already paid for.
 ## Budget, honestly
 
 Three passes over the six `attack` lenses, with two of them doubled in pass 1, is about 15
-readings (8 + 6 + 1 seam), plus 3 aim readings and triage. Each mechanism bundle contains the full in-scope source, so cost scales with the codebase —
+readings (8 + 6 + 1 seam), plus 4 aim readings, the escalation pass and triage. Each mechanism bundle contains the full in-scope source, so cost scales with the codebase —
 `bundle` reports each bundle's size and warns past 400 KB, where narrowing `--scope` and trusting
 the ranking beats handing a lens more than it will read.
 

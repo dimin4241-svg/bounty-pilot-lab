@@ -140,8 +140,10 @@ Read `references/passes.md` first; it settles lens selection, dispatch mechanics
 and the stop rules. In outline:
 
 1. **Aim.** `bundle --lens aim --include <run>/delta.json`, then one agent each for `delta`,
-   `upstream-diff` and `coverage-gap`. Their product is a ranked reading order in `coverage.md`,
-   not findings.
+   `upstream-diff`, `coverage-gap` and `spec-divergence`. Their product is a ranked reading order
+   in `coverage.md`, not findings. `spec-divergence` also hands back quoted promises from the
+   project's own documentation, which later answer the "this is intended behaviour" objection
+   better than anything else you can bring to triage.
 2. **Pick one base group**: `attack` (EVM default), `high-impact` (large value at risk, loss-of-funds
    focus) or `recommended` (non-EVM or mixed, from `stack_route.py`). Then add only what the shape
    calls for: `config` for deployed addresses, `logic` when several actions share state,
@@ -167,15 +169,42 @@ stage 4, and it needs the claim at full strength.
 
 After every pass: append investigated mechanisms to `known-hypotheses.md`, including the ones you
 looked for and did not find; record in `coverage.md` which lenses ran and how many readings each
-got; run `queue --run <run>` and `history check --run <run>`; attempt or explicitly block the
-cheapest decisive experiments before spending another pass. A lens you could not dispatch is
-reported, never silently skipped.
+got; attempt or explicitly block the cheapest decisive experiments before spending another pass.
+A lens you could not dispatch is reported, never silently skipped. Then:
+
+```sh
+python3 $S converge --readings <dir of this pass's raw agent output> --run <run>
+python3 $S queue --run <run>
+python3 $S history check --run <run>
+```
+
+`converge` counts how many **independent readings** reported each mechanism and writes
+`saturated.md`, which every later bundle carries as closed ground. This is not bookkeeping: in a
+backtest of this skill, nine of twelve independent readings reported the same mechanism, and it was
+not a valid finding. The list of `singletons` in `convergence.json` is the more interesting half —
+a mechanism only one reading saw is the one still owed a second opinion. Convergence counts what
+was reported, never what is true: agreement among models is not evidence.
 
 For the classic Solidity bug-class sweep, delegate to `solidity-auditor` in loop mode when it is
 installed and spend your own passes on the aimed lenses (`references/compare.md`). Do not nest
 orchestrators. Stop at the pass budget, or after two consecutive passes produce neither a new
 mechanism nor new coverage. There is no finding quota; zero verified findings after an honest run
 is a result.
+
+## Escalate — before anything is adjudicated
+
+Read `references/escalate.md`. Hunters stop at the first consequence they notice, and programs pay
+by impact class, so a record reading "griefing only" is often an unfinished loss-of-funds record.
+Before triage sees anything, walk every record through the six amplifiers — `repetition`,
+`other-parties-funds`, `composition`, `become-the-trusted-party`, `timing` and
+`freeze-instead-of-theft` — and record each as `reached`, `blocked` or `not-applicable` with an
+anchor. An unanchored "blocked" is an assumption, not a result.
+
+This is still the hunting stance, not refutation: deepen the claim, do not argue it down. The
+submission gate refuses a record whose ladder is incomplete, and `queue --run` reports the missing
+amplifiers for every open record plus the refuted records that were dropped without trying any
+amplifier at all. Never manufacture impact by granting the attacker privileges, assuming a
+configuration nobody deployed, or chaining through out-of-scope components without saying so.
 
 ## Stage 4 — Adjudicate: two rounds, both sides carrying evidence
 
@@ -247,7 +276,8 @@ same-mechanism match; a regression needs evidence that the issue was reintroduce
 deployed version.
 
 The submission gate applies to records with status `verified`; other records stay in the run and
-need only be well formed. For a proxy, `verify-deployment` compares the **implementation**; a proxy
+need only be well formed. Each submitted record must carry the complete escalation ladder — every
+amplifier with a result, anchored where it was reached or blocked. For a proxy, `verify-deployment` compares the **implementation**; a proxy
 whose own runtime matches your artifact is `partial`, and `partial` does not pass the gate.
 
 ## Stage 7 — Deliver
