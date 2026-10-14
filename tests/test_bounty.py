@@ -1330,7 +1330,9 @@ class RunTests(unittest.TestCase):
             'id': 'KI-002', 'kind': 'past-audit', 'source': 'https://example.invalid/audit',
             'surfaces': ['src/Vault.sol'], 'bug_classes': ['oracle-staleness']}])
         errors, collisions = bounty.check_dup_map(self.run)
-        self.assertEqual((errors, collisions), ([], []))
+        self.assertEqual(errors, [])
+        self.assertEqual([(c['entry'], c['confidence']) for c in collisions],
+                         [('KI-002', 'surface-only')])
         bounty.dump(self.run / 'dup-map.json', [{
             'id': 'KI-003', 'kind': 'past-audit', 'source': 'https://example.invalid/audit',
             'surfaces': ['src/Vault.sol']}])
@@ -1441,6 +1443,26 @@ class RunTests(unittest.TestCase):
         bounty.dup_check(self.run)
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('collided with KI-001' in e for e in errors))
+
+    def test_a_surface_only_collision_must_be_reviewed_before_submission(self):
+        # Same surface, different consequence label: one root cause is often filed under another
+        # class, so the entry must still be compared rather than slip through as no-match.
+        row = self.submittable()
+        bounty.dump(self.run / 'dup-map.json', [{
+            'id': 'C4-QA-01', 'kind': 'contest-finding',
+            'source': 'https://example.invalid/report (read 2026-10-14)',
+            'surfaces': ['src/Vault.sol'], 'bug_classes': ['donation-inflates-measured-yield']}])
+        self.ready_for_submission(row)
+        self.harvest([])
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('collided with C4-QA-01' in e for e in errors))
+        row['dup_review'] = {'status': 'different-mechanism', 'entry_ids': ['C4-QA-01'],
+                             'rationale': 'The QA note reports the yield reading only; this one '
+                                          'moves funds between depositors'}
+        self.ready_for_submission(row)
+        bounty.dup_check(self.run)
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
 
     def test_a_reviewed_collision_must_cover_every_entry_and_say_why(self):
         row = self.collided()

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.11.2
+
+### A different bug class on a burned surface is reported, not skipped
+
+- `dup-check` dropped a map entry whenever both sides carried a bug class and the classes differed,
+  although `references/dup-map.md` promises those as `surface-only`. On a Morpheus run a candidate
+  labelled `donation-buys-emission-share` met a published QA finding labelled
+  `donation-inflates-measured-yield` on the same `DistributorV2.distributeRewards`: the same root
+  cause with a different consequence, and no collision was reported. Since the submission gate only
+  asks `dup_review.entry_ids` to cover reported collisions, a likely duplicate passed as `no-match`.
+- Every entry on the finding's surface is now a collision: `class-match` when the class is the same,
+  `surface-only` otherwise. A record that was clean only because its label differed now needs a
+  `dup_review` naming that entry before submission.
+
 ## 0.11.1
 
 A live check of 0.11.0 against GitHub found the gate right on the case it was built for — it

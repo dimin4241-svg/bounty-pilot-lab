@@ -1562,8 +1562,8 @@ def check_dup_map(run):
                 key = surface.lower()
                 if not any(key in p or p in key for p in paths):
                     continue
-                if classes and bug_class and bug_class not in classes:
-                    continue
+                # A different bug class on the same surface is still reported, as surface-only:
+                # the same root cause often carries a different consequence label.
                 collisions.append({
                     'finding': row.get('id'), 'entry': entry.get('id'),
                     'bug_class': row.get('bug_class'),
