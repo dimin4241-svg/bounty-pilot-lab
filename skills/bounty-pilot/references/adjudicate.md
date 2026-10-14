@@ -113,6 +113,9 @@ Walk the claimed path from the attacker's first call and read every guard on it.
 
 - Only a trusted role can fire it → **demote**. Admin acting against documented intent is not a
   finding; the access mechanism itself being broken is.
+- The "trusted role" is one any user can create or take — the admin of an instance they created
+  (a pool, market, vault or subnet), a self-assigned delegate, a role a deposit grants → it is not
+  trusted. Its holder is an unprivileged actor → **clears**. Name how a stranger obtains the role.
 - An unprivileged actor can → **clears**.
 
 ### Gate 4 — Material harm
@@ -135,7 +138,12 @@ Separate from everything above, and never merged with it.
 - Did `dup-check` collide, and is the mechanism difference written down in `dup_review`?
 
 A finding can clear gates 1–4 and fail gate 5. That is a real result: technically valid, not
-submittable. Label it a source-review finding and record both judgments.
+submittable. Record it as **`parked`**, never `refuted`: `park.reason` says why it cannot be filed
+(out of scope, an excluded impact, too small at current state, a risk the team accepted),
+`park.revive_if` names the condition that makes it fileable — a scope change, deposits above a
+figure, another program that covers it — and `park.evidence` says why the mechanism is real. A
+refuted record leaves the duplicate and history joins for good; a parked one stays, and `queue`
+lists it on every resume.
 
 ### Gate 6 — The evidence itself
 
@@ -153,6 +161,7 @@ theoretical maximum rather than the demonstrated one.
 | survived, experiment not yet run | `needs-evidence`, with the experiment named |
 | demoted | `needs-evidence` or `hypothesis`, with the missing capability named |
 | dead | `refuted`, `rejection_reason` quoting the sustained objection's anchor |
+| real, not fileable now (fails gate 5 only) | `parked`, with `park.reason`, `park.revive_if` and `park.evidence` |
 
 Nothing is deleted. A refuted record citing a specific protection is the cheapest asset a later
 scan has: if that protection is ever edited, the finding is alive again, and `passes.md` says to

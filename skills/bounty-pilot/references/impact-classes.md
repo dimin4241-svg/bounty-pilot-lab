@@ -65,5 +65,6 @@ Do not spend a pass on these unless the rules say otherwise: MEV and sandwiching
 accepts, price-movement economics that need a large market move, centralisation and admin-key risk
 with no mechanism, best-practice and gas-optimisation notes, missing events, compiler and linter
 output, DDoS on UI/API/RPC infrastructure, and anything reachable only by a trusted role acting
-against its own documented intent. Each of these is a real-sounding report that is rejected by rule,
+against its own documented intent. A role any user can create or take is not a trusted role, so
+this last exclusion does not cover it. Each of these is a real-sounding report that is rejected by rule,
 not by judgment.

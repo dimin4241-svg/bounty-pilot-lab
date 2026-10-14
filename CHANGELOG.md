@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.12.0
+
+An audit of every run so far asked one question: where do good findings and leads get lost? Not at
+triage — the anchor rule held, and the refusals on file are careful. They are lost earlier and more
+quietly, between files and inside one overloaded status.
+
+### Open leads cannot fall between the files
+
+- Leads lived in two places. `queue` and every gate read `findings.json`; the lenses were told that
+  everything in `known-hypotheses.md` is closed ground — although that file records open rows too.
+  Across the first runs, 25 of 30 open rows had no record. One of them, on Morpheus, was
+  `admin-retroactive-withdraw-lock-freeze`: it became the run's verified High only because the
+  orchestrator happened to pursue it. The USDai refinance lead exists only as such a row.
+- An open row now names its record (`BP-…`), and that record must be live. `check` fails on an open
+  row with no record, with a record it does not hold, or with a refuted one.
+- `_shared.md` now tells lenses that `closed…` rows are closed ground and `open…` rows are leads to
+  finish when their surface is reached.
+
+### A finding written up in prose must be a record
+
+- The first Morpheus run proved F-06 three times, judged it submittable and drafted the report —
+  in markdown only. With one record in `findings.json`, no queue or gate ever showed it, and two days
+  passed in a first-to-report program before a second run found it again and took it to High.
+- `check` fails on a `findings/**/*.md` or `SUBMISSION-DRAFT*.md` that cites no record's `BP-` id.
+  Against that run it reports 17 such documents.
+
+### `parked`: real, but not fileable now
+
+- `refuted` meant both "wrong" and "right but ineligible". Five of seventeen refuted records were real
+  mechanisms — "not on technical validity", "the mechanism is real, reproduced three times",
+  "unprofitable at current TVL" — and a refuted record leaves the duplicate and history joins for
+  good.
+- New status `parked`, requiring `park.reason` (`out-of-scope`, `excluded-impact`,
+  `uneconomic-now`, `accepted-risk`, `other`), `park.revive_if` and `park.evidence`. A parked record
+  stays in `dup-check` and in the history comparison, is never a submission target, and `queue`
+  lists it with its revive condition on every resume. Gate 5 in `adjudicate.md` now records a real
+  but ineligible finding as parked.
+- `queue` lists `possibly_parked`: refused records whose wording describes a real, ineligible
+  mechanism, for review. It flags BP-006/008 (Morpheus), BP-201/202/203 (Safe) and BP-302 (Besu) on
+  the existing runs. A prompt, never a gate.
+
+### Saturated ground must be recorded ground
+
+- `converge` declared a mechanism closed once two readings reported it, without asking whether
+  anyone had recorded it. Each saturated line now names its record, or reads
+  `UNRECORDED - record it before treating it as closed`, and the result lists
+  `saturated_unrecorded`. Lenses treat only recorded lines as closed.
+
+### Fewer silent drops at generation
+
+- Lenses no longer stay silent on a candidate that matches a dup-map entry unless they can name the
+  difference. They emit it as a LEAD naming the entry, and `dup_review` decides. 0.11's harvest made
+  the map much larger — 102 entries on `liquity/bold` — so this suppression would have grown with it.
+- A role any user can create or take — the admin of their own pool, market, vault or subnet, a
+  self-assigned delegate — is not a trusted role. `_shared.md`, Gate 3 and `impact-classes.md` now
+  say so; the Morpheus High turned on exactly this reading.
+
+### `queue` shows what would otherwise be lost
+
+New sections: `untracked_leads`, `unrecorded_documents`, `parked`, `possibly_parked`. The queue
+reports ledger problems instead of turning invalid on them, since showing them is its job.
+
+### Note for runs already in flight
+
+Existing runs now fail `check` until their open rows and write-ups are recorded: run `queue`, then
+record each untracked lead and document (any status), or close the row with its reason.
+
 ## 0.11.2
 
 ### A different bug class on a burned surface is reported, not skipped

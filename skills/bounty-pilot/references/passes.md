@@ -188,7 +188,11 @@ After every pass, append one line per investigated mechanism to `known-hypothese
 surface | bug-class | status | one line: why it is closed, or what is still open
 ```
 
-Status is `closed-refuted`, `closed-verified`, `open-needs-experiment` or `open-blocked`. Include
+Status is `closed-refuted`, `closed-verified`, `closed-parked`, `open-needs-experiment` or
+`open-blocked`. An `open-…` row names its record's `BP-` id, and that record must be live
+(`hypothesis`, `needs-evidence`, `verified` or `parked`); `check` fails on an open row without one.
+In the first runs 25 of 30 open rows had no record, so no queue showed them and every later pass
+was told the file is closed ground. Include
 the mechanisms you looked for and did **not** find — an absence recorded is coverage; an absence
 forgotten is a pass spent re-deriving it. Record what you did not reach too: files unread, branches
 untraced, dependencies unopened. That list is the honest answer to "what did this cover", and it is
@@ -202,7 +206,9 @@ python3 $S converge --run <run> --readings <dir of this pass's raw reading outpu
 ```
 
 That list goes into the next pass's bundles beside `known-hypotheses.md`, and `_shared.md` tells
-every lens to treat it as closed ground — a reading spent re-deriving a saturated mechanism under a
+every lens to treat its recorded lines as closed ground. A line marked UNRECORDED is a mechanism
+several readings found that has no record yet: record it before the next pass, or it is lost
+between the files — a reading spent re-deriving a saturated mechanism under a
 new label is a reading spent on nothing. Convergence counts what was reported, not what is true: a
 mechanism every reading agreed on can still be invalid.
 
@@ -265,4 +271,5 @@ Do not nest the two orchestrators.
 next one. On resume, compare the recorded commit with the current one: mechanisms on unchanged code
 stay closed, mechanisms on changed code reopen. A refuted record whose cited protection has since
 been edited is alive again — rechecking exactly those is one of the most productive things a second
-scan does.
+scan does. So are `parked` records: `queue` lists each with its `revive_if`, and a condition that
+now holds (deposits grew, scope widened, a program that covers it appeared) makes it fileable.
