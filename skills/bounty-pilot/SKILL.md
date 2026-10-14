@@ -183,7 +183,12 @@ python3 $S history check --run <run>
 ```
 
 `converge` counts how many **independent readings** reported each mechanism and writes
-`saturated.md`, which every later bundle carries as closed ground. This is not bookkeeping: in a
+`saturated.md`, which every later bundle carries as closed ground — except a line marked
+UNRECORDED, which has no record yet and must get one before the next pass. `queue` also lists
+`untracked_leads` (open rows of `known-hypotheses.md` with no live record),
+`unrecorded_documents`, `parked` records with their `revive_if`, and `possibly_parked` refusals
+whose wording describes a real but ineligible mechanism. A real mechanism the program will not pay
+for today is `parked`, never `refuted`. This is not bookkeeping: in a
 backtest of this skill, nine of twelve independent readings reported the same mechanism, and it was
 not a valid finding. The list of `singletons` in `convergence.json` is the more interesting half —
 a mechanism only one reading saw is the one still owed a second opinion. Convergence counts what

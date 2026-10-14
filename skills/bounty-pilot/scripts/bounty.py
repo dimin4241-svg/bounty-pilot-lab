@@ -67,7 +67,21 @@ RPC_PROVIDER_URL = re.compile(
 VERSIONED_KEY_PATH = re.compile(r'(?i)(/v[0-9]+/)([A-Za-z0-9_-]{20,})')
 OPAQUE_PATH_SEGMENT = re.compile(r'(?<=/)[A-Za-z0-9_-]{16,}(?=/|$|\?|#)')
 TARGET_FILE_MAX_BYTES = 2_000_000
-STATUSES = {'hypothesis', 'needs-evidence', 'verified', 'refuted'}
+STATUSES = {'hypothesis', 'needs-evidence', 'verified', 'refuted', 'parked'}
+# `refuted` means the mechanism is wrong. A real mechanism that cannot be submitted today - out of
+# scope, an impact the program excludes, too small at current state, a risk the team accepted - is
+# `parked`. Five of seventeen refuted records in the first runs were real mechanisms buried this
+# way, and a refuted record leaves the duplicate and history joins for good. A parked one stays in
+# them, and comes back when its revive_if holds.
+PARK_REASONS = {'out-of-scope', 'excluded-impact', 'uneconomic-now', 'accepted-risk', 'other'}
+OPEN_STATUSES = ('hypothesis', 'needs-evidence')
+RECORD_ID = re.compile(r'\bBP-[0-9]{3,}\b')
+# Refusal wording that describes an ineligible but real mechanism. `queue` lists such refuted
+# records for review; it is a prompt to re-file them as parked, never a gate.
+PARKED_WORDING = re.compile(
+    r'(ineligib|not on technical|technically (valid|correct|sound)|mechanism is real|'
+    r'out of scope|out-of-scope|\bOOS\b|as a bounty submission|at current (TVL|state|price|'
+    r'balance)|unprofitable|accepted risk|acknowledged risk|informational)', re.I)
 # Statuses that withdraw the claim. Records are never deleted, so these stay in findings.json,
 # but they must not count as submissions or as rediscoveries.
 NON_CLAIM_STATUSES = {'refuted'}
@@ -409,7 +423,10 @@ def initialize(repo, out):
     (out / 'known-hypotheses.md').write_text(
         '# Known hypotheses\n\nAppend one line per investigated mechanism after every pass:\n'
         '`surface | bug-class | status | why it is closed or still open`.\n'
-        'Later passes read this file and must hunt mechanisms absent from it.\n', encoding='utf-8')
+        'A status starting with `open` is a lead: the row names its findings.json record\n'
+        '(`BP-...`), and `check` fails on an open row without one. Closed rows are closed\n'
+        'ground for later passes; open rows are leads to finish, not ground to skip.\n',
+        encoding='utf-8')
     return {'run': str(out), 'run_id': read_json(out / 'run.json')['run_id'],
             'project_key': project_for_repo(root), 'commit': commit, 'dirty': dirty,
             'source_candidates': len(source), 'schema_version': SCHEMA_VERSION}
@@ -781,12 +798,21 @@ def history_summary(ledger=None):
 
 def lead_queue(run):
     run = Path(run).resolve()
-    errors = validate(run)
+    # The lead ledger is reported below rather than gated here: an untracked lead is exactly
+    # what this command exists to show, so it must not turn the queue into an error.
+    errors = validate(run, ledger=False)
     records = read_json(run / 'findings.json')
     if errors:
         return {'state': 'invalid', 'errors': errors, 'leads': []}
-    leads, weak_refusals = [], []
+    leads, weak_refusals, parked, possibly_parked = [], [], [], []
     for row in records:
+        if row['status'] == 'parked':
+            park = row.get('park') or {}
+            parked.append({'id': row['id'], 'bug_class': row['bug_class'],
+                           'reason': park.get('reason'), 'revive_if': park.get('revive_if')})
+        if row['status'] == 'refuted' and PARKED_WORDING.search(str(row['rejection_reason'])):
+            possibly_parked.append({'id': row['id'], 'bug_class': row['bug_class'],
+                                    'rejection_reason': row['rejection_reason']})
         if row['status'] == 'refuted' and not _escalation_attempted(row):
             # A mechanism dropped without one amplifier tried was refuted at its cheapest
             # consequence. This is a report, not a gate: only submission is gated.
@@ -803,13 +829,23 @@ def lead_queue(run):
     leads.sort(key=lambda row: (0 if row['status'] == 'needs-evidence' else 1,
                                 row['id']))
     weak_refusals.sort(key=lambda row: row['id'])
-    return {'state': 'open-leads' if leads else 'all-leads-closed',
+    untracked = _untracked_leads(run, records)
+    documents = _unrecorded_documents(run, records)
+    return {'state': 'open-leads' if leads or untracked or documents else 'all-leads-closed',
             'open_count': len(leads), 'leads': leads,
+            'untracked_leads': untracked, 'unrecorded_documents': documents,
+            'parked': sorted(parked, key=lambda row: row['id']),
+            'possibly_parked': sorted(possibly_parked, key=lambda row: row['id']),
             'weak_refusals': weak_refusals,
             'notice': 'Every open lead needs a decisive next experiment. A listed experiment is '
-                      'not evidence that it was run. escalation_gaps names the amplifiers this '
-                      'record has no result for; a weak refusal is a mechanism dropped without '
-                      'one amplifier tried.'}
+                      'not evidence that it was run. untracked_leads are open rows in '
+                      'known-hypotheses.md with no live record, and unrecorded_documents are '
+                      'write-ups with none: both are invisible to every gate until recorded. '
+                      'parked records are real mechanisms waiting for revive_if; recheck them on '
+                      'resume. possibly_parked are refusals whose wording describes an ineligible '
+                      'but real mechanism - re-file them as parked if so. escalation_gaps names '
+                      'the amplifiers a record has no result for; a weak refusal is a mechanism '
+                      'dropped without one amplifier tried.'}
 
 
 # --------------------------------------------------------------------------- #
@@ -913,13 +949,34 @@ SATURATED_DOC = """# Saturated ground
 Mechanisms that {threshold} or more independent readings already reported, written by
 `bounty.py converge` and grouped by bug class and surface file:
 
-`surface-path | bug-class | reported by N readings (C claims, L leads)`
+`surface-path | bug-class | reported by N readings (C claims, L leads) | record`
 
 A line here is covered ground, not a verdict - nothing below has been judged, and a mechanism
 many readings agreed on can still be invalid. Later passes read it to spend their pass on
-surfaces and mechanisms it does not name. `convergence.json` holds the full grouping and the
+surfaces and mechanisms it does not name. A line marked UNRECORDED is not closed: several
+readings found it and nobody has written it down. Record it in findings.json first; until then
+it is a lead, not ground to skip. `convergence.json` holds the full grouping and the
 singletons, the mechanisms one reading saw and nobody has confirmed.
 """
+
+
+def _record_for_group(group, records):
+    """The record that carries a converged mechanism: same surface file and bug class."""
+    surface = Path(group.get('surface_path') or '').name.lower()
+    classes = {c.lower() for c in group.get('bug_classes') or [] if c}
+    if group.get('bug_class'):
+        classes.add(group['bug_class'].lower())
+    hits = []
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        same_surface = bool(surface) and surface in _path_keys(row.get('affected_paths'))
+        same_class = str(row.get('bug_class', '')).lower() in classes
+        if same_surface and same_class:
+            hits.append(row)
+    # A live record is the better answer than a refuted one for the same mechanism.
+    hits.sort(key=lambda row: (row.get('status') == 'refuted', str(row.get('id'))))
+    return hits[0] if hits else None
 
 
 def converge(readings, run, threshold=2):
@@ -970,11 +1027,20 @@ def converge(readings, run, threshold=2):
     ordered = sorted(groups.values(), key=lambda g: (-g['readings'], g['key']))
     saturated = [g for g in ordered if g['readings'] >= threshold]
     singletons = [g for g in ordered if g['readings'] == 1]
+    records = read_json(run / 'findings.json') if (run / 'findings.json').is_file() else []
+    records = records if isinstance(records, list) else []
+    for g in saturated:
+        record = _record_for_group(g, records)
+        g['record'] = ({'id': record.get('id'), 'status': record.get('status')}
+                       if record else None)
+    unrecorded = [g for g in saturated if not g['record']]
 
     lines = [SATURATED_DOC.format(threshold=threshold)]
-    lines.extend('{0} | {1} | reported by {2} readings ({3} claims, {4} leads)'.format(
+    lines.extend('{0} | {1} | reported by {2} readings ({3} claims, {4} leads) | {5}'.format(
         g['surface_path'] or '(no surface)', g['bug_class'] or '(no bug_class)',
-        g['readings'], g['claims'], g['leads']) for g in saturated)
+        g['readings'], g['claims'], g['leads'],
+        'record {0} ({1})'.format(g['record']['id'], g['record']['status']) if g['record']
+        else 'UNRECORDED - record it before treating it as closed') for g in saturated)
     if not saturated:
         lines.append(f'No mechanism reached {threshold} independent readings yet.')
     (run / 'saturated.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
@@ -983,11 +1049,15 @@ def converge(readings, run, threshold=2):
         'generated_at': datetime.now(timezone.utc).isoformat(), 'threshold': threshold,
         'readings_parsed': len(parsed), 'blocks_parsed': len(blocks),
         'distinct_groups': len(groups), 'saturated_groups': len(saturated),
+        'saturated_unrecorded': len(unrecorded),
         'readings': parsed, 'unreadable': unreadable, 'skipped_blocks': skipped_blocks,
         'groups': ordered, 'saturated': saturated, 'singletons': singletons})
     return {'run': str(run), 'threshold': threshold, 'readings_parsed': len(parsed),
             'blocks_parsed': len(blocks), 'distinct_groups': len(groups),
             'saturated_groups': len(saturated), 'singletons': len(singletons),
+            'saturated_unrecorded': [{'surface_path': g['surface_path'],
+                                      'bug_class': g['bug_class'], 'readings': g['readings']}
+                                     for g in unrecorded],
             'blocks_skipped': len(skipped_blocks), 'unreadable_files': unreadable,
             'written': ['saturated.md', 'convergence.json'],
             'notice': 'This counts what was reported, not what is true. A mechanism many readings '
@@ -1210,6 +1280,20 @@ def _check_record(row, prefix, run, seen, errors):
         return False
     if row['status'] == 'refuted' and not has_text(row['rejection_reason']):
         errors.append(prefix + ': refutation requires an evidence-backed reason')
+    if row['status'] == 'parked':
+        park = row.get('park')
+        if not isinstance(park, dict):
+            errors.append(prefix + ': parked requires a park object: reason, revive_if, evidence')
+        else:
+            if not _is_one_of(park.get('reason'), PARK_REASONS):
+                errors.append(prefix + ': park.reason must be one of '
+                              + ', '.join(sorted(PARK_REASONS)))
+            if not has_text(park.get('revive_if')):
+                errors.append(prefix + ': parked requires park.revive_if, the condition that '
+                              'makes it submittable again')
+            if not has_text(park.get('evidence')):
+                errors.append(prefix + ': parked requires park.evidence, why the mechanism is '
+                              'real: a test, a measurement or a code anchor')
     if row['status'] == 'verified':
         for key in ('command', 'assertion', 'negative_control', 'source_integrity'):
             if not has_text(evidence.get(key)):
@@ -1463,7 +1547,88 @@ def _submission_history_matches(run, meta, records, errors):
     return by_finding
 
 
-def validate(run, submission=False):
+def _known_hypothesis_rows(run):
+    """The table rows of known-hypotheses.md, with their line numbers."""
+    path = Path(run) / 'known-hypotheses.md'
+    if not path.is_file():
+        return []
+    rows = []
+    for number, line in enumerate(path.read_text(encoding='utf-8', errors='replace')
+                                  .splitlines(), 1):
+        # The format line is quoted in backticks; table rules are dashes.
+        if line.count('|') < 3 or line.lstrip().startswith('`') or \
+                re.match(r'\s*\|?\s*:?-{3}', line):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip('|').split('|')]
+        if len(cells) >= 3:
+            rows.append({'line': number, 'surface': cells[0], 'bug_class': cells[1],
+                         'status': cells[2], 'text': line.strip()})
+    return rows
+
+
+def _untracked_leads(run, records):
+    """Open rows of known-hypotheses.md that no open, verified or parked record carries.
+
+    The first runs left 25 of 30 open leads here and nowhere else: `queue` reads only
+    findings.json, and the lenses were told this file is closed ground, so nobody worked them.
+    """
+    # A malformed id is reported by the record checks; here it simply names nothing.
+    by_id = {row['id']: row for row in records
+             if isinstance(row, dict) and isinstance(row.get('id'), str)}
+    untracked = []
+    for row in _known_hypothesis_rows(run):
+        if not row['status'].lower().startswith('open'):
+            continue
+        ids = RECORD_ID.findall(row['text'])
+        live = [by_id[i] for i in ids if i in by_id and by_id[i].get('status') != 'refuted']
+        if live:
+            continue
+        if not ids:
+            problem = 'names no findings.json record'
+        elif not any(i in by_id for i in ids):
+            problem = 'names ' + ', '.join(ids) + ', which findings.json does not hold'
+        else:
+            problem = 'is open, but its record ' + ', '.join(ids) + ' is refuted'
+        untracked.append({'line': row['line'], 'surface': row['surface'],
+                          'bug_class': row['bug_class'], 'status': row['status'],
+                          'problem': problem})
+    return untracked
+
+
+def _unrecorded_documents(run, records):
+    """Finding write-ups in the run that cite no record: invisible to every gate.
+
+    Morpheus F-06 lived like this: proven three times, judged submittable, drafted - and absent
+    from findings.json, so no queue or gate ever showed it. It became a High two days later.
+    """
+    ids = {row['id'] for row in records
+           if isinstance(row, dict) and isinstance(row.get('id'), str)}
+    docs = sorted(set(Path(run).glob('findings/**/*.md')) |
+                  set(Path(run).glob('SUBMISSION-DRAFT*.md')))
+    missing = []
+    for doc in docs:
+        try:
+            body = doc.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        if not set(RECORD_ID.findall(body)) & ids:
+            missing.append(str(doc.relative_to(Path(run))))
+    return missing
+
+
+def _check_lead_ledger(run, records, errors):
+    for lead in _untracked_leads(run, records):
+        errors.append(f"known-hypotheses.md:{lead['line']}: open lead "
+                      f"'{lead['surface'][:60]} | {lead['bug_class'][:40]}' {lead['problem']}. "
+                      'Record it (hypothesis or needs-evidence, with its next experiment) and '
+                      'put its BP- id in the row, or close the row with the reason')
+    for doc in _unrecorded_documents(run, records):
+        errors.append(f'{doc}: a finding written up with no record in findings.json. Record it '
+                      '(any status, parked or refuted included) and cite its BP- id in the '
+                      'document')
+
+
+def validate(run, submission=False, ledger=True):
     run = Path(run).resolve()
     errors = []
     meta_path = run / 'run.json'
@@ -1496,6 +1661,8 @@ def validate(run, submission=False):
             targets += 1
             if complete:
                 _check_submission(row, prefix, run, errors, history_matches, dup_matches)
+    if ledger:
+        _check_lead_ledger(run, [row for row in records if isinstance(row, dict)], errors)
     if submission and not targets:
         errors.append('findings.json: no verified records to submit')
     return errors

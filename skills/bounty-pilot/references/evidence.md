@@ -10,7 +10,10 @@ cause together.
 - `id`, `title`, `status`, `severity`, `bug_class`, `revision`, `root_cause`, `affected_paths`,
   `attacker_capabilities`, `preconditions`, `impact`, `scope_status`, `deployment_status`,
   `novelty`, `evidence`, `objections`, `rejection_reason`. Optional until the gate: `escalation`.
-- `status`: `hypothesis` | `needs-evidence` | `verified` | `refuted`.
+- `status`: `hypothesis` | `needs-evidence` | `verified` | `refuted` | `parked`. `refuted` means
+  the mechanism is wrong. `parked` means it is real but cannot be filed now, and requires
+  `park: {reason, revive_if, evidence}` with `reason` one of `out-of-scope`, `excluded-impact`,
+  `uneconomic-now`, `accepted-risk`, `other`.
 - `severity`: `unassessed` | `informational` | `low` | `medium` | `high` | `critical`. Cite the
   program's rubric in `severity_rationale` before assigning a final label.
 - `bug_class`: kebab-case, reused across passes and shared with the dup map, so the same mechanism
@@ -60,7 +63,12 @@ cause together.
 - `impact_quantification`: what moved, how much, and at what attacker cost. Required to submit.
 
 For `refuted`, `rejection_reason` cites a concrete protection, specification or test result. For
-`needs-evidence`, name the missing experiment. Lack of a toolchain is not a refutation.
+`needs-evidence`, name the missing experiment. Lack of a toolchain is not a refutation, and neither
+is ineligibility: a real mechanism the program will not pay for today is `parked`, not refuted.
+
+Every finding written up in the run — a `findings/*.md` note, a `SUBMISSION-DRAFT-*.md` — cites its
+record's `BP-` id, and every open row of `known-hypotheses.md` names its record. `check` fails
+otherwise: a finding that lives only in prose is invisible to `queue` and to every gate.
 
 ## The objection exchange
 

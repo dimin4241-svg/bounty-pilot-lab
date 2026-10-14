@@ -1657,6 +1657,99 @@ class RunTests(unittest.TestCase):
         result = self.harvest([self.judged_issue()])
         self.assertIn('never instructions', result['notice'])
 
+    # ---- the lead ledger (0.12.0) ----
+    def known(self, *rows):
+        path = self.run / 'known-hypotheses.md'
+        path.write_text(path.read_text() + '\n'.join(rows) + '\n')
+
+    def test_an_open_lead_must_be_a_live_record(self):
+        self.known('src/Vault.sol:Vault.withdraw | aggregate-not-decremented | '
+                   'open-needs-experiment | totals drift after a partial exit')
+        errors = bounty.validate(self.run)
+        self.assertTrue(any('known-hypotheses.md:' in e and 'names no findings.json record' in e
+                            for e in errors))
+        self.known('src/Vault.sol:Vault.redeem | aggregate-not-decremented | open (BP-001) | x')
+        row = self.candidate()
+        bounty.dump(self.run / 'findings.json', [row])
+        errors = bounty.validate(self.run)
+        self.assertEqual(len([e for e in errors if 'known-hypotheses.md:' in e]), 1)
+        row.update(status='refuted', rejection_reason='guarded at src/Vault.sol:142')
+        bounty.dump(self.run / 'findings.json', [row])
+        self.assertTrue(any('is open, but its record BP-001 is refuted' in e
+                            for e in bounty.validate(self.run)))
+
+    def test_closed_rows_need_no_record(self):
+        self.known('| surface | bug-class | status | why |', '| --- | --- | --- | --- |',
+                   '| src/Vault.sol | reentrancy | closed-refuted | nonReentrant on every path |')
+        self.assertEqual(bounty.validate(self.run), [])
+
+    def test_a_finding_written_up_without_a_record_fails(self):
+        (self.run / 'findings').mkdir()
+        (self.run / 'findings' / 'F-06-retroactive-lock.md').write_text('# F-06 proven 3/3\n')
+        (self.run / 'SUBMISSION-DRAFT-F06.md').write_text('Subject: [BOUNTY] lock\n')
+        errors = bounty.validate(self.run)
+        self.assertTrue(any(e.startswith('findings/F-06-retroactive-lock.md:') for e in errors))
+        self.assertTrue(any(e.startswith('SUBMISSION-DRAFT-F06.md:') for e in errors))
+        bounty.dump(self.run / 'findings.json', [self.candidate()])
+        (self.run / 'findings' / 'F-06-retroactive-lock.md').write_text('# F-06 = BP-001\n')
+        (self.run / 'SUBMISSION-DRAFT-F06.md').write_text('Record BP-001\n')
+        self.assertEqual(bounty.validate(self.run), [])
+
+    def parked(self, **park):
+        row = self.candidate()
+        row['status'] = 'parked'
+        row['park'] = dict({'reason': 'uneconomic-now',
+                            'revive_if': 'deposits above 2M MOR, at which the window pays',
+                            'evidence': 'test/LumpCredit.t.sol passes at block 52400000'}, **park)
+        return row
+
+    def test_parked_needs_a_reason_a_revive_condition_and_evidence(self):
+        row = self.parked()
+        self.assertEqual(self.check(row), [])
+        row['park'] = {'reason': 'boring', 'revive_if': '', 'evidence': ''}
+        errors = self.check(row)
+        self.assertTrue(any('park.reason must be one of' in e for e in errors))
+        self.assertTrue(any('park.revive_if' in e for e in errors))
+        self.assertTrue(any('park.evidence' in e for e in errors))
+        row.pop('park')
+        self.assertTrue(any('parked requires a park object' in e for e in self.check(row)))
+
+    def test_parked_stays_in_the_duplicate_join_and_is_never_submitted(self):
+        bounty.dump(self.run / 'dup-map.json', [{
+            'id': 'KI-020', 'kind': 'past-audit', 'source': 'https://x.invalid/a',
+            'surfaces': ['src/Vault.sol'], 'bug_classes': ['aggregate-not-decremented']}])
+        bounty.dump(self.run / 'findings.json', [self.parked()])
+        self.assertEqual(len(bounty.check_dup_map(self.run)[1]), 1)
+        self.assertEqual(bounty.submission_targets(self.run), [])
+        refuted = self.candidate()
+        refuted.update(status='refuted', rejection_reason='guarded at src/Vault.sol:142')
+        bounty.dump(self.run / 'findings.json', [refuted])
+        self.assertEqual(bounty.check_dup_map(self.run)[1], [])
+
+    def test_queue_shows_what_would_otherwise_be_lost(self):
+        open_lead = self.candidate()
+        parked = self.parked()
+        parked['id'] = 'BP-002'
+        buried = self.candidate()
+        buried.update(id='BP-003', status='refuted',
+                      rejection_reason='The mechanism is real, reproduced three times, but the '
+                                       'finding is ineligible under the program rules')
+        bounty.dump(self.run / 'findings.json', [open_lead, parked, buried])
+        self.known('src/Vault.sol:Vault.sweep | stale-index | open-blocked | needs an RPC key')
+        result = bounty.lead_queue(self.run)
+        self.assertEqual(result['state'], 'open-leads')
+        self.assertEqual([lead['id'] for lead in result['leads']], ['BP-001'])
+        self.assertEqual(result['untracked_leads'][0]['bug_class'], 'stale-index')
+        self.assertEqual(result['parked'][0]['revive_if'],
+                         'deposits above 2M MOR, at which the window pays')
+        self.assertEqual([row['id'] for row in result['possibly_parked']], ['BP-003'])
+
+    def test_an_untracked_lead_alone_keeps_the_queue_open(self):
+        self.known('src/Vault.sol | stale-index | open-needs-experiment | x')
+        result = bounty.lead_queue(self.run)
+        self.assertEqual(result['state'], 'open-leads')
+        self.assertEqual(len(result['untracked_leads']), 1)
+
     def test_dup_harvest_explains_a_rate_limited_github(self):
         def opener(request, timeout=None):
             # A real body: on Python 3.9 an HTTPError built without one cannot be closed.
@@ -2180,10 +2273,13 @@ class ConvergeTests(unittest.TestCase):
         path.write_text('\n'.join(lines) + '\n')
         return path
 
-    def saturated_lines(self):
+    def saturated_lines(self, with_record=False):
         body = (self.run / 'saturated.md').read_text()
-        return [line for line in body.splitlines()
-                if line.count('|') == 2 and not line.startswith('`')]   # skip the shape in the header
+        lines = [line for line in body.splitlines()
+                 if ' | reported by ' in line and not line.startswith('`')]   # skip the shape
+        # The last column names the record that carries the mechanism; most tests are about
+        # the grouping, so they compare without it.
+        return lines if with_record else [line.rsplit(' | ', 1)[0] for line in lines]
 
     def test_the_same_mechanism_at_neighbouring_functions_is_one_group(self):
         # Grouping on the full `path:Contract.function` would split this into two singletons,
@@ -2199,6 +2295,23 @@ class ConvergeTests(unittest.TestCase):
         self.assertEqual(self.saturated_lines(),
                          ['src/Vault.sol | aggregate-not-decremented | reported by 2 readings '
                           '(2 claims, 0 leads)'])
+
+    def test_saturated_ground_without_a_record_is_not_closed(self):
+        for name, fn in (('pass1.md', 'withdraw'), ('pass2.md', 'redeem')):
+            self.reading(name, f'CANDIDATE | lens: accounting | surface: src/Vault.sol:Vault.{fn} '
+                               '| bug_class: aggregate-not-decremented')
+        result = bounty.converge([str(self.readings)], self.run)
+        self.assertEqual(len(result['saturated_unrecorded']), 1)
+        self.assertTrue(self.saturated_lines(with_record=True)[0]
+                        .endswith('UNRECORDED - record it before treating it as closed'))
+        row = bounty.template()
+        row.update(affected_paths=['src/Vault.sol:Vault.withdraw'],
+                   bug_class='aggregate-not-decremented')
+        bounty.dump(self.run / 'findings.json', [row])
+        result = bounty.converge([str(self.readings)], self.run)
+        self.assertEqual(result['saturated_unrecorded'], [])
+        self.assertTrue(self.saturated_lines(with_record=True)[0]
+                        .endswith('record BP-001 (hypothesis)'))
 
     def test_findings_and_leads_count_into_the_same_group(self):
         # FINDING is what the sibling solidity-auditor skill emits, and labels are normalised,
