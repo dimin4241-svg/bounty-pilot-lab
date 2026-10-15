@@ -142,10 +142,28 @@ Avoid exploding the budget: after the initial ranked pass, choose the single mos
 hypothesis and attempt its cheapest decisive native test before duplicating readings.
 The lexical `state_graph.py` output can guide selection but is not a reachability graph.
 
+## Evidence-First checkpoint between broad passes
+
+After the first ranked reading pass, run up to three decisive native
+candidate/negative-control pairs, or record a genuine blocker plus an attempted
+alternative. See evidence-first.md and enforce:
+
+~~~sh
+python3 $S experiment-gate --run <run> --limit 3 --gate
+~~~
+
+Running another group of lenses with an untested top-ranked candidate is a
+workflow failure even if the written hypothesis is convincing. The experimental
+result informs Stage D adjudication; do not merge hunt and triage roles.
+
+Check scope-audit after every new bundle. If a Solidity-only scope prefix omits
+a tracked Rust relayer or keeper, resolve scope and either re-bundle or document
+its exclusion before claiming meaningful mixed-stack coverage.
+
 ## Stage C — Seams
 
 ```sh
-python3 $S bundle --repo <checkout> --run <run> --lens seam --scope src/
+python3 $S bundle --repo <checkout> --run <run> --lens seam
 ```
 
 The `seam` bundle carries the earlier passes' records, including the **demoted and refuted** ones,

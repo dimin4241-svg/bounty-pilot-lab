@@ -30,6 +30,16 @@ It has two halves, and both decide whether a hunt finds anything:
 
 **It is an agent skill, not a hosted scanner.** Your agent reads the instructions, inspects the target, runs available tools, and records evidence. The included Python helpers organize results, read live chain state and check structure; they do not discover or prove vulnerabilities by themselves.
 
+## Evidence-First execution (0.13)
+
+After the initial hunt pass, agents must execute decisive tests for the top
+open hypotheses (candidate plus negative control) **before** another broad
+reading pass. The new experiment-gate command checks actual local execution
+records; a scope-audit warns when a narrowed source bundle silently omits
+an entire tracked language stack, e.g. a Rust relayer beside Solidity contracts.
+A passed gate is not proof of an exploit or a payout. See
+[the workflow and examples](skills/bounty-pilot/references/evidence-first.md).
+
 ## Quick start
 
 ### 1. Give this to your coding agent

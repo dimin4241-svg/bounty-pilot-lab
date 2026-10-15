@@ -410,6 +410,7 @@ def initialize(repo, out):
         'inventory_kind': 'tracked-source-candidates-not-authorized-scope',
         'source_candidates': source})
     dump(out / 'findings.json', [])
+    dump(out / 'experiments.json', {'version': 1, 'experiments': []})
     dump(out / 'candidate-template.json', template())
     dump(out / 'dup-map.json', [])
     (out / '.gitignore').write_text('*\n', encoding='utf-8')
@@ -831,7 +832,11 @@ def lead_queue(run):
     weak_refusals.sort(key=lambda row: row['id'])
     untracked = _untracked_leads(run, records)
     documents = _unrecorded_documents(run, records)
-    return {'state': 'open-leads' if leads or untracked or documents else 'all-leads-closed',
+    experiment_gate = (load_impact_helper('experiment_gate').review(run)
+                       if (run / 'experiments.json').is_file() else
+                       {'result': 'not-recorded', 'notice': 'legacy run has no experiments.json'})
+    return {'experiment_gate': experiment_gate,
+            'state': 'open-leads' if leads or untracked or documents else 'all-leads-closed',
             'open_count': len(leads), 'leads': leads,
             'untracked_leads': untracked, 'unrecorded_documents': documents,
             'parked': sorted(parked, key=lambda row: row['id']),
@@ -2706,7 +2711,13 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
     if docs_skipped:
         notes.append(f'{len(docs_skipped)} documentation file(s) unreadable and omitted: '
                      + ', '.join(docs_skipped[:5]))
-    return {'target': str(root), 'commit': commit, 'run': str(run),
+    scope_audit = load_impact_helper('scope_coverage').audit(root, run, scope_prefixes)
+    if scope_audit['missing_stacks']:
+        notes.append('source bundle omits entire tracked stack(s): ' +
+                     ', '.join(scope_audit['missing_stacks']) +
+                     '; verify scope rules or broaden --scope before hunting')
+    return {'scope_audit': scope_audit,
+            'target': str(root), 'commit': commit, 'run': str(run),
             'detected_stacks_heuristic': [x['stack'] for x in routed['stacks']],
             'in_scope_files': len(in_scope), 'test_files_bundled_for_coverage_gap': len(test_paths),
             'test_files_omitted': len(tests_omitted),
@@ -4236,6 +4247,17 @@ def build_parser():
     queue = sub.add_parser('queue', help='show every open lead and its required next experiment')
     queue.add_argument('--run', required=True)
 
+    exp = sub.add_parser('experiment-gate', help='require paired execution on top queued leads before another hunt pass')
+    exp.add_argument('--run', required=True)
+    exp.add_argument('--limit', type=int, default=3)
+    exp.add_argument('--gate', action='store_true', help='fail when top leads remain untested or unblocked')
+
+    audit = sub.add_parser('scope-audit', help='check whether source bundles omitted an entire language stack')
+    audit.add_argument('--repo', required=True)
+    audit.add_argument('--run', required=True)
+    audit.add_argument('--scope', action='append', default=None)
+    audit.add_argument('--gate', action='store_true')
+
     conv = sub.add_parser('converge',
                           help='group what independent readings reported and mark saturated ground')
     conv.add_argument('--readings', action='append', required=True,
@@ -4387,6 +4409,14 @@ def main(argv=None):
             result = lead_queue(args.run)
             print(json.dumps(result, indent=2))
             return 1 if result['state'] == 'invalid' else 0
+        if args.action == 'experiment-gate':
+            result = load_impact_helper('experiment_gate').review(args.run, args.limit)
+            print(json.dumps(result, indent=2))
+            return 1 if args.gate and result['errors'] else 0
+        if args.action == 'scope-audit':
+            result = load_impact_helper('scope_coverage').audit(args.repo, args.run, args.scope)
+            print(json.dumps(result, indent=2))
+            return 1 if args.gate and (result['missing_stacks'] or result['state'] == 'not-bundled') else 0
         if args.action == 'converge':
             print(json.dumps(converge(args.readings, args.run, args.threshold), indent=2))
             return 0

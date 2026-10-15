@@ -1,0 +1,62 @@
+{
+  "cases": [
+    {
+      "id": "solidity-candidate",
+      "pair_id": "solidity",
+      "role": "candidate",
+      "cwd": "tests/fixtures/native/evm",
+      "argv": [
+        "forge",
+        "test",
+        "--match-test",
+        "^test_candidate_replay\\(",
+        "-vv"
+      ],
+      "timeout_sec": 180
+    },
+    {
+      "id": "solidity-control",
+      "pair_id": "solidity",
+      "role": "negative-control",
+      "cwd": "tests/fixtures/native/evm",
+      "argv": [
+        "forge",
+        "test",
+        "--match-test",
+        "^test_negative_control_consumes_credit\\(",
+        "-vv"
+      ],
+      "timeout_sec": 180
+    },
+    {
+      "id": "rust-candidate",
+      "pair_id": "rust",
+      "role": "candidate",
+      "cwd": "tests/fixtures/native/rust",
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "tests::test_candidate_replay",
+        "--",
+        "--exact"
+      ],
+      "timeout_sec": 180
+    },
+    {
+      "id": "rust-control",
+      "pair_id": "rust",
+      "role": "negative-control",
+      "cwd": "tests/fixtures/native/rust",
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "tests::test_negative_control",
+        "--",
+        "--exact"
+      ],
+      "timeout_sec": 180
+    }
+  ]
+}

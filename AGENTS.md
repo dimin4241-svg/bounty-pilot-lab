@@ -52,6 +52,18 @@ Preserve these invariants when editing:
 - **The submission gate trusts files, not typed fields.** `deployment_status: exact` must be backed
   by a `verify-deployment --run` file in the run; never relax that to a hand-written value.
 
+- **Evidence-First never asserts an exploit.** The separate experiments.json
+  execution gate reads actual paired runner output and explicitly separates
+  command execution from semantic correctness. Its blocker path requires a
+  concrete reason and a real alternative attempt. Never let a dry-run, zero-test
+  selector, or mismatched checkout revision satisfy the gate. Inspect source
+  integrity separately; a passing gate cannot detect tampered test assertions.
+- **Mixed-stack coverage is lexical, not security coverage.** A bundle must
+  report all tracked language stacks omitted by --scope; exclusions require
+  explicit scope justification. Rust relayers must not disappear behind an
+  EVM-centric src/ prefix. Toy native CI fixtures are tests of execution wiring,
+  not measured rediscovery of genuine exploits.
+
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.
 Bump `VERSION` and `skills/bounty-pilot/VERSION` together; `.claude-plugin/plugin.json` carries the

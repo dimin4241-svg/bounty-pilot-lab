@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.13.0
+
+- Evidence-First checkpoint: private experiments.json records paired native
+  candidate and negative-control execution, or an actual toolchain blocker
+  with an attempted alternative. New experiment-gate command refuses dry-run,
+  zero-test, timed-out, stale-revision and unpaired evidence.
+- queue includes the experiment checkpoint; existing run directories without
+  an experiment ledger are still readable.
+- scope-audit checks tracked language stacks against the actual source bundle.
+  bundle reports missing stacks; examples avoid blindly scoping to src/.
+- Added unit regression cases plus native Foundry/Rust smoke and end-to-end
+  runner/evidence-gate tests in CI. Runner records observed checkout Git SHA.
+- The CI fixture is intentionally flawed and proves toolchain integration,
+  not vulnerability discovery or payout uplift. Backtest protocol unchanged.
+
 ## 0.12.0
 
 An audit of every run so far asked one question: where do good findings and leads get lost? Not at

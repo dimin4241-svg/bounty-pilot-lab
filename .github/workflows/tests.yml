@@ -21,3 +21,24 @@ jobs:
         run: python3 -m compileall -q skills/bounty-pilot/scripts
       - name: Run the test suite
         run: python3 -m unittest discover -s tests -v
+
+  native-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Execute real Solidity candidate and control tests
+        run: forge test --root tests/fixtures/native/evm -vv
+      - name: Execute real Rust candidate and control tests
+        run: cargo test --manifest-path tests/fixtures/native/rust/Cargo.toml --offline
+      - name: Verify native tests through the paired runner and Evidence-First gate
+        run: |
+          python3 skills/bounty-pilot/scripts/bounty.py init --repo . --out "$RUNNER_TEMP/bp-fixture-run"
+          python3 skills/bounty-pilot/scripts/scenario_runner.py \
+            --plan tests/fixtures/native/paired-plan.json --repo . \
+            --allow-exec --out "$RUNNER_TEMP/bp-fixture-run/native-results.json"
+          python3 tests/verify_native_gate.py "$RUNNER_TEMP/bp-fixture-run"
+          python3 skills/bounty-pilot/scripts/bounty.py experiment-gate \
+            --run "$RUNNER_TEMP/bp-fixture-run" --gate

@@ -3,6 +3,15 @@
 Stage 5 helpers. Every one of them produces review material, never exploit evidence on its own: a
 claim is verified only by a reproducible test against unmodified production source.
 
+## Mandatory between-pass execution gate (new runs)
+
+Native execution is not optional for the highest-priority testable survivors.
+A private experiments.json row points to a scenario_runner.py --allow-exec
+result file (candidate and negative-control). Run bounty.py experiment-gate
+--run <run> --gate before the next broad reading pass. A genuine toolchain
+blocker with an attempted alternative may permit further reading without
+confirming any claim. See evidence-first.md.
+
 ## Bounded state-model counterexamples
 
 Author an evidence-backed, explicit finite JSON state model (integers and strings, no floats), and

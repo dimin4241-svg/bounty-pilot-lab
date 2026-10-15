@@ -216,6 +216,18 @@ def _run_case(command, cwd, timeout, env):
         return None, stdout, stderr, True
 
 
+def _checkout_identity(root):
+    """Observed local checkout SHA and status; untracked PoC files make it dirty."""
+    try:
+        rev = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=5, check=True).stdout.strip()
+        status = subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+                                capture_output=True, text=True, timeout=5, check=True).stdout
+        return rev, "dirty" if status.strip() else "clean"
+    except (OSError, subprocess.SubprocessError):
+        return None, "unavailable"
+
+
 def execute(plan, root, allow_exec=False, allow_dotenv=False):
     root = Path(root).resolve()
     if not root.is_dir():
@@ -277,7 +289,10 @@ def execute(plan, root, allow_exec=False, allow_dotenv=False):
     ok = allow_exec and all(r.get("matched_expected_exit") and not r.get("timed_out")
                             and r.get("status") not in ("no-tests-ran", "blocked-dotenv", "launch-error")
                             for r in results)
-    return {"schema": 1, "mode": "executed" if allow_exec else "dry-run",
+    source_revision, source_status = _checkout_identity(root)
+    return {"schema": 1, "source_revision": source_revision,
+            "source_status": source_status,
+            "mode": "executed" if allow_exec else "dry-run",
             "result": "experiments-conformed" if ok else ("not-executed" if not allow_exec else "incomplete"),
             "cases": results, "pairs": len({x["pair_id"] for x in results}),
             "notice": "Even passing paired experiments only show the named commands met exit expectations. "

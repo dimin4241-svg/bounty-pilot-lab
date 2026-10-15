@@ -1,4 +1,4 @@
 interface:
   display_name: "Bounty Pilot"
   short_description: "Web3 bounty hunts across contracts and mixed on/off-chain stacks"
-  default_prompt: "Use $bounty-pilot on this repository: route each component by stack, establish scope and deployment, build a duplicate map, run targeted hunt passes, preserve leads with next experiments, challenge candidates, reproduce survivors locally, and prepare a private English report."
+  default_prompt: "Use $bounty-pilot on this repository: route each component by stack, establish scope and deployment, build a duplicate map, run targeted hunt passes, execute top hypotheses with paired native candidate/control tests before more reading, audit mixed-stack bundle coverage, preserve leads with next experiments, challenge candidates, reproduce survivors locally, and prepare a private English report."

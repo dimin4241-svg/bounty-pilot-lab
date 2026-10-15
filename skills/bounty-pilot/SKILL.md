@@ -116,7 +116,7 @@ Write `model.md`: state transitions, external assumptions, operational dependenc
 with the source or specification that evidences each. Label inferred invariants as inferred.
 
 ```sh
-python3 $S delta --repo <checkout> --since <audited-commit> --scope src/ > <run>/delta.json
+python3 $S delta --repo <checkout> --since <audited-commit> > <run>/delta.json
 python3 <skill-dir>/scripts/stack_route.py --repo <checkout> --out <run>/stack-route.json
 python3 <skill-dir>/scripts/state_graph.py --repo <checkout> --out <run>/state-graph.json
 python3 <skill-dir>/scripts/coverage_graph.py --graph <run>/state-graph.json --out <run>/coverage-priority.json
@@ -158,7 +158,7 @@ and the stop rules. In outline:
    its bundle.
 
 ```sh
-python3 $S bundle --repo <checkout> --run <run> --lens attack --scope src/ --include <run>/delta.json
+python3 $S bundle --repo <checkout> --run <run> --lens attack --include <run>/delta.json
 ```
 
 Where budget allows, run a **selected** mechanism lens twice in pass 1, in independent contexts,
@@ -199,6 +199,38 @@ installed and spend your own passes on the aimed lenses (`references/compare.md`
 orchestrators. Stop at the pass budget, or after two consecutive passes produce neither a new
 mechanism nor new coverage. There is no finding quota; zero verified findings after an honest run
 is a result.
+
+## Evidence-First gate — after the first hunt pass, before another broad reading pass
+
+Read references/evidence-first.md. Every initial run creates private experiments.json.
+Run the cheapest decisive experiment for up to three highest-priority open records;
+record real native candidate/control execution evidence or a specific actual blocker
+with an alternative actually attempted. A queued experiment does not count as a run.
+Do not postpone a strong, reachable hypothesis merely because today's deployed
+balance or fee looks small: first check whether the precondition is realizable,
+then test and bound the impact.
+
+~~~sh
+python3 $S experiment-gate --run <run> --limit 3 --gate
+python3 $S queue --run <run>
+~~~
+
+The gate is mandatory before the next broad pass when open records exist.
+It checks recorded experiment execution, not whether the vulnerability is real;
+Stage 4 adjudication and Stage 5 PoC remain independent. A blocked experiment
+stays needs-evidence, never verified. If every experiment is genuinely blocked,
+record the reasons and continue reading on other surfaces without claiming proof.
+
+Before dispatching mixed-stack bundles, verify inventory coverage, including
+Rust relayers, keepers and web services outside a root src/ directory:
+
+~~~sh
+python3 $S scope-audit --repo <checkout> --run <run> --gate
+~~~
+
+If a detected stack is excluded by published program scope, document the exact
+rule in scope.md; do not silently treat missing code as reviewed. Use a scoped
+bundle only after checking which other process boundaries it omits.
 
 ## Escalate — before anything is adjudicated
 
