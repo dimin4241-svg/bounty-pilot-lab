@@ -3,6 +3,13 @@
 Purpose: stop a hunt from spending several reading passes on the same untested
 hypotheses. This changes the order of work, not the burden of proof.
 
+## Alongside the passes, not between them
+
+The experiments below are serial work the orchestrator does itself; the reading passes are
+parallel agents on other surfaces. Run them concurrently. This gate is mandatory before the run
+is reported, never before the next pass — a gate between passes delays the only step that finds
+bugs, and in a live run that cost eight assembled bundles that were never read.
+
 ## At the end of the first reading pass
 
 1. Record every candidate/lead in private findings.json. Set the actual pinned
@@ -10,7 +17,7 @@ hypotheses. This changes the order of work, not the burden of proof.
 2. Rank open records by plausible severity and experimental cost. The gate
    selects up to three records (Critical, High, unassessed, Medium, Low) and
    returns the others in "deferred". Do not silently discard deferred leads.
-3. Run the cheapest decisive experiment before another broad hunt pass:
+3. Run the cheapest decisive experiment while the next pass is already reading:
    read-only chain query, native test or pinned fork as appropriate. A read-only
    query does not satisfy the paired native-execution gate by itself.
 4. For executable behavior, run a candidate and negative control on unmodified

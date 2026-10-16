@@ -12,6 +12,11 @@ On Solidity targets this sweep is exactly what `solidity-auditor` does in parall
 prefer delegating it when installed (see `compare.md`) and spend your own passes on the aimed
 lenses it has no equivalent for.
 
+**Blind-spot lenses** are in `blind-spots.md`: controls that exist only as live configuration,
+derived constants nobody recomputes, the odd one out, the authoritative value that was available
+and unused, safety resting on a dependency detail, and state that only exists between versions.
+Reach for them on a heavily audited target where the lenses above came back empty.
+
 For every lens, produce: entry point, attacker capability, preconditions, state transition, broken
 property, consequence, experiment. Derive the property from the protocol's actual intent, read from
 its docs, specs and tests — not from a template.

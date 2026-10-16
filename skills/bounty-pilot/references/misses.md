@@ -138,3 +138,48 @@ with reasons, which leads are open with next steps, and what you could not reach
 Read it as the triage engineer: first three sentences, then the reproduction. Does it say who can do
 what, to whom, for how much, and how to see it happen? If the first thing it does is explain the
 code, rewrite it.
+
+## 21. Did you read the controls that have no source file?
+
+Peers and trusted remotes, the verifier set and thresholds, oracle feed registries, role holders,
+timelock delays, caps and rate limits, pause flags, the implementation behind each proxy. None of
+these appear in a diff, so no reviewer before you has read them. Enumerate **every** destination,
+market and chain and compare the configurations against each other — the bug is almost never a
+missing control, it is one corridor configured differently from its five siblings.
+`references/blind-spots.md` has the enumeration and how to record a clean result.
+
+## 22. Did you recompute the derived constants?
+
+Every literal that is the output of a formula — ERC-7201 namespace slots, domain separators and
+type hashes, selector constants, precomputed CREATE2 addresses, merkle roots — gets read as a name
+and never as a value. One `cast keccak` per constant settles it, including the trailing characters
+of the namespace string. Colliding namespaces alias two structs onto one storage slot.
+
+## 23. Did you look for the odd one out, or only for what is wrong?
+
+In a mature, heavily audited codebase the bug is the inconsistency, not the mistake. Tabulate the
+handlers in a dispatch, the implementations of an interface, the call sites of a helper, the same
+contract on each chain — then read the one that differs. See `references/blind-spots.md`.
+
+## 24. Did you verify the blocker, or inherit it?
+
+Every "cannot build", "no archive access", "tool unavailable" in the run record is load-bearing: later
+passes read it as closed ground and stop trying. So a wrong blocker deletes a surface silently, and it
+is the one claim nobody adversarially reviews. Reproduce each one yourself, paste the command and the
+output, and spend one minute on the hypothesis that the cause is your own setup — a package manager
+reaching the public registry for a sibling that only exists locally means you copied one subproject
+out of a monorepo, not that the project cannot be installed. When a blocker is lifted, record which
+pass wrote it and what the real cause was. A blocker survived three passes in one live run and cost
+every test against the highest-paying contracts in scope.
+
+## 25. Did you calibrate the number before you concluded from it?
+
+Any derived quantity — a price, a decimal-adjusted ratio, a threshold, a share — gets one
+known-answer check before it is allowed to support a conclusion. Price fields in particular come in
+reciprocal pairs (`token0Price` / `token1Price`), and nothing in the value says which direction you
+have. In a live run an inverted pair produced a clean-looking table naming three live pools as
+vulnerable; the error surfaced only when a reference pair whose true value is public was run through
+the same formula and came out as its own reciprocal. Pick the pair you already know the answer to,
+push it through the identical code path, and only then read the table. The same applies to units: wei
+versus whole tokens, and a `10**(dec1-dec0)` factor, are where a plausible figure becomes an
+impossible one.

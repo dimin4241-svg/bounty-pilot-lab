@@ -54,6 +54,53 @@ these is `partial` too: treat it as an unrecognised proxy. A `mismatch` means th
 the single most common reason a bounty report is rejected — find the revision that is deployed
 before reading further.
 
+### Before calling a size difference a divergence, sweep the compiler
+
+A `mismatch` whose only evidence is a length difference is not yet a result. Build the same source
+across the optimizer settings the project itself uses elsewhere — sibling packages in a monorepo
+routinely differ (`runs` of 200, 999, 2_000, 1_000_000 and "no optimizer block at all" are all
+common in one repository), and the spread in runtime size across that range can exceed 50%.
+Note the direction is not fixed: a high `runs` inlines aggressively and can make the runtime
+*larger* than an unoptimized build, so "deployed is bigger, therefore it is different code" is not
+sound on its own. Only after no setting reproduces the deployed length is divergence established.
+One free cross-check costs nothing: a factory or deployer must embed the **creation** code of what
+it deploys, so it can never be smaller than that contract's deployed runtime. If you measure a
+deployed instance larger than the deployer that supposedly produced it, more than one deployer
+generation has been used — which is a finding about the deployment, not an arithmetic error.
+
+### Enumerate what is deployed but absent from the repository
+
+Verifying the addresses the program hands you is necessary and not sufficient. Audits cover what is
+in the repository, so anything deployed-and-not-in-the-repository is reviewed by nobody and is
+invisible to every other hunter reading HEAD. Two checks, both cheap:
+
+1. **Diff the project's own deployment records against HEAD.** Collect every address from its
+   `deployments/*.json`, `script/config/*.json`, deploy scripts and docs, then ask of each: does a
+   contract by that name still exist in the in-scope source? In a live run a "fix" commit deleted a
+   helper contract *and* its mainnet address from three config files in the same change — the
+   contract is still live, still holds the flaw the commit was avoiding, and no longer appears at
+   HEAD for anyone to read. Also check the reverse: an address the repository records may no longer
+   be the one in use, so read the pointer from the contract that consumes it rather than the file.
+2. **Sample every live instance, not one.** Where a factory or deployer mints instances over time,
+   several generations can be live simultaneously. Enumerate the instances through the registry that
+   owns them and group them by `eth_getCode` length. In a live run 51 active farms resolved to two
+   distinct implementation sizes, and **neither** matched the in-scope source at any optimizer
+   setting — so a fuzz campaign built from that source was testing code that runs nowhere. Record
+   that as a limitation on every conclusion drawn from the source, not as a detail.
+
+If the deployed implementation is not in any in-scope repository, say so in `scope.md`: a defect
+there is probably not an in-scope asset, and the defensible framing is the in-scope seam — the
+audited contract that grants authority to the unpublished one.
+
+### Never infer configuration from bytecode
+
+Storage variables do not appear in runtime bytecode. An address absent from a contract's code may
+still be its live configuration, because it was set by a setter after deployment rather than fixed
+as an immutable. In a live run this produced a wrong conclusion in the project's favour — a module
+was recorded as "not wired" because its factory address was missing from the deployed bytecode, when
+in fact `stableSwapFactory` was a plain storage variable holding exactly the expected value. Read
+the getter, or the slot. Constants and immutables are the only configuration bytecode can answer for.
+
 ## Environment
 
 Choose a private output directory, outside the target checkout and outside the skill package. Do not

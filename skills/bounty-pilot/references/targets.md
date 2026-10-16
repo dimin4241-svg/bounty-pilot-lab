@@ -12,6 +12,16 @@ code returns something. Spend an hour here.
   how large the bounty.
 - **The custom part is the scope.** A fork's own deviation, the chain-specific adapters, the glue
   between two systems. Vanilla upstream code is audited, public and in every known-issues list.
+- **The rubric prices paths, not just severities.** Read the payout table for per-path structure
+  before allocating a single hour. Programs routinely split their scope into reward tiers — "Group 1"
+  for the core and long-lived contracts, "Group 2" for everything else — and the same severity can be
+  worth several times more in one tier than the other. In a live run the brief paid a critical a
+  **$50,000 minimum** in the tier covering the older AMM and farming contracts, against a **$100,000
+  cap** for the whole of the shiny new flagship system; the flagship also carried a second $1M bounty
+  on another platform with 248 findings already submitted, so it had both the lower ceiling and the
+  most competition. Map each tier to concrete repository paths in `scope.md`, and note that a minimum
+  which applies even when value-at-risk is near zero can make an undeployed-but-in-scope defect worth
+  more than a deployed one in the other tier.
 - **Few eyes per dollar.** A new chain, an unfashionable language, an off-hours program, a protocol
   whose contest ended before half its code was written.
 - **First-to-report.** Platforms that split or reject duplicates make your work contingent on
@@ -47,6 +57,10 @@ came from. Never infer a fact to make the score better.
   "deposit_required": false,
   "duplicate_policy": "first-to-report",
   "payout_max_usd": 100000,
+  "payout_groups": [
+    {"name": "Group 1", "paths": ["projects/v3-core/", "projects/masterchef-v3/"], "critical_min_usd": 50000, "critical_cap_usd": 1000000},
+    {"name": "Group 2", "paths": ["src/"], "critical_min_usd": 20000, "critical_cap_usd": 100000}
+  ],
   "severity_rubric_url": "https://example.com/bug-bounty#severity",
   "in_scope_paths": ["src/"],
   "excluded_impacts": ["DDoS on UI/API/RPC", "economic attacks requiring a large price move"],

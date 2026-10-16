@@ -94,7 +94,12 @@ suggestion.
 
 Dispatch one agent per bundle, each in its own context, up to four concurrent by default. Tell each
 agent only: read this bundle and follow it. Independent contexts are the point — agents sharing one
-context converge on the first idea and stop being independent reviewers.
+context converge on the first idea and stop being independent reviewers, and an orchestrator that
+reads eight bundles itself has performed one reading, not eight.
+
+`bundle` logs what it emitted to `bundles/manifest.json`. `queue` lists any lens assembled and
+never read as `unread_bundles`, and the submission gate refuses a run that still has one, because
+a lens that was never dispatched is a surface nobody covered.
 
 Three passes by default:
 
@@ -142,7 +147,7 @@ Avoid exploding the budget: after the initial ranked pass, choose the single mos
 hypothesis and attempt its cheapest decisive native test before duplicating readings.
 The lexical `state_graph.py` output can guide selection but is not a reachability graph.
 
-## Evidence-First checkpoint between broad passes
+## Evidence-First checkpoint — alongside the passes, not between them
 
 After the first ranked reading pass, run up to three decisive native
 candidate/negative-control pairs, or record a genuine blocker plus an attempted
@@ -152,9 +157,16 @@ alternative. See evidence-first.md and enforce:
 python3 $S experiment-gate --run <run> --limit 3 --gate
 ~~~
 
-Running another group of lenses with an untested top-ranked candidate is a
-workflow failure even if the written hypothesis is convincing. The experimental
-result informs Stage D adjudication; do not merge hunt and triage roles.
+**Start the next pass first, then run these experiments while it reads.** The experiments are
+serial work the orchestrator does itself; the pass is parallel agents on other surfaces, and
+`known-hypotheses.md` and `saturated.md` already stop it re-reading what is untested. The gate is
+mandatory before the run is reported, never before a reading. Placed between passes it delays the
+only step that finds bugs: in a live run eight bundles were assembled and `coverage.md` came back
+empty, because the budget went to the checkpoint and the readings never happened.
+
+Carrying an untested top-ranked candidate through the whole hunt is still a workflow failure, however
+convincing the written hypothesis. The experimental result informs Stage D adjudication; do not
+merge hunt and triage roles.
 
 Check scope-audit after every new bundle. If a Solidity-only scope prefix omits
 a tracked Rust relayer or keeper, resolve scope and either re-bundle or document

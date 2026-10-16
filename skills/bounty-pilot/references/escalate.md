@@ -71,6 +71,21 @@ blocked:* the recovery path, read and quoted — the sweep, the skip, the per-us
 the poisoned state. Do not assume a recovery exists because a protocol this size would surely have
 one.
 
+Two refinements, both learned from getting this amplifier wrong in a live run:
+
+*Recoverable by whom.* "The state can be undone" does not block this amplifier. The recovery must be
+available **to the party whose funds are stuck**, without their depending on an attacker's
+cooperation, a privileged call, or another user happening to act. Name that party in the anchor. A
+pool whose swap path is wedged but whose LPs can each burn their own position in one call is blocked;
+the same wedge where only the attacker holds the position that must be burned first is `reached`.
+
+*Executed, not argued.* The recovery path is the one claim in this ladder most often wrong on
+inspection, because it is read as an intention rather than run. In a live run the recovery mechanism
+named in the anchor — a bounded exact-output swap — turned out to be capped by an overflow guard two
+files away, so the state was in fact permanent; the amplifier was still correctly `blocked`, but by a
+completely different path (a per-position burn with no price scaling) found only by executing both.
+If the record's class turns on the recovery, run the recovery.
+
 ## The recording rule
 
 Every amplifier gets a result: `reached`, `blocked` or `not-applicable`. `reached` and `blocked`
@@ -102,6 +117,15 @@ paid at the lower class, and nobody argues you upward.
 - Do not chain through an out-of-scope component without saying so in the anchor; that is an
   eligibility problem to record now, not a surprise for triage.
 - Do not manufacture a victim. "Someone might deposit there" is not another party's funds.
+- **Do not escalate on top of an unverified precondition.** If a record's impact class rests on a
+  precondition ("if this value can be made to decrease", "if that state is reachable"), the
+  escalation may only be recorded once the precondition is **executed** or carries its own `blocker`.
+  Hand-tracing is not execution, and neither is agreement: in a live run two independent readings
+  hand-confirmed one such precondition and the orchestrator escalated the record from a freeze to a
+  full-balance drain on the strength of it, after which 65,536 executed calls per invariant showed the
+  precondition was an intentional upstream idiom and the whole line was void. The escalation was
+  arithmetically fine and worthless. Write the conditional class as a limitation under
+  `impact-classes.md` instead, and let the experiment decide.
 
 A blocked amplifier honestly recorded is worth more than a reached one that needs a fictional
 precondition: the first is coverage the next pass can trust, the second is what makes a triage

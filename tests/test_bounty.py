@@ -2437,6 +2437,184 @@ class ConvergeTests(unittest.TestCase):
         self.assertIn(bounty.SATURATED_NOTICE, text)
 
 
+class DispatchTests(unittest.TestCase):
+    """`bundle` writes the bundles; until now nothing checked that a reading came back.
+
+    runs/lifi-20261016 is the measured case: eight lens bundles on disk, coverage.md still the
+    empty template, no record from any of them - a hunt that never happened, and no gate said
+    so. Every other load-bearing rule in this skill became a gate with a script behind it.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.repo = self.base / 'repo'
+        (self.repo / 'src').mkdir(parents=True)
+        (self.repo / 'test').mkdir(parents=True)
+        git(self.repo, 'init', '-q')
+        (self.repo / 'src/Vault.sol').write_text('contract Vault { uint256 totalDebt; }\n')
+        (self.repo / 'test/Vault.t.sol').write_text('contract VaultTest { Vault v; }\n')
+        commit(self.repo, 'fixture')
+        self.run = self.base / 'run'
+        bounty.initialize(self.repo, self.run)
+
+    def meta(self, key):
+        return bounty.read_json(self.run / 'run.json')[key]
+
+    def unread(self):
+        return [row['lens'] for row in bounty._dispatch_state(self.run)['unread']]
+
+    def dispatch_errors(self, submission=False):
+        """Only the errors this gate raises; the fixture is not otherwise submittable."""
+        return [e for e in bounty.validate(self.run, submission=submission)
+                if e.startswith(bounty.BUNDLE_MANIFEST + ':')]
+
+    def readings(self, **files):
+        """Raw hunt-agent output, one file per reading; the keyword `pass1_md` is `pass1.md`."""
+        directory = self.base / 'readings'
+        directory.mkdir(exist_ok=True)
+        for name, body in files.items():
+            (directory / name.replace('_', '.')).write_text(body + '\n')
+        return str(directory)
+
+    # ---- 1. bundle records what it emitted ----
+    def test_the_manifest_is_a_log_and_not_a_snapshot(self):
+        # bundle legitimately runs several times per run (aim, attack, logic, seam, triage),
+        # so a later bundling must never erase a lens still waiting to be read.
+        bounty.bundle(self.repo, self.run, ['accounting'], scope_prefixes=['src/'])
+        bounty.bundle(self.repo, self.run, ['triage'])
+        data = bounty.read_json(self.run / 'bundles/manifest.json')
+        self.assertEqual(data['schema_version'], bounty.SCHEMA_VERSION)
+        self.assertEqual(data['run_id'], self.meta('run_id'))
+        self.assertEqual(len(data['dispatches']), 2)
+        self.assertEqual([d['commit'] for d in data['dispatches']],
+                         [self.meta('commit')] * 2)
+        self.assertEqual([d['scope_prefixes'] for d in data['dispatches']], [['src/'], []])
+        self.assertTrue(data['dispatches'][0]['generated_at'])
+        entry = data['dispatches'][0]['bundles'][0]
+        path = self.run / entry['bundle']
+        self.assertEqual(entry['lens'], 'accounting')
+        self.assertEqual(entry['bundle'], 'bundles/accounting-bundle.md')
+        self.assertEqual(entry['bytes'], path.stat().st_size)
+        self.assertEqual(entry['sha256'], bounty._sha256_file(path))
+        bounty.bundle(self.repo, self.run, ['accounting'])
+        self.assertEqual(bounty._dispatch_state(self.run)['manifested'],
+                         ['accounting', 'triage'])
+
+    def test_bundle_still_returns_what_it_did_and_names_the_manifest(self):
+        result = bounty.bundle(self.repo, self.run, ['accounting'])
+        self.assertEqual([b['lens'] for b in result['bundles']], ['accounting'])
+        self.assertEqual(result['manifest'], 'bundles/manifest.json')
+        self.assertTrue((self.run / result['manifest']).is_file())
+        self.assertIn('check --submission blocks', result['dispatch'])
+
+    # ---- 2. a bundle counts as read when a reading left a trace ----
+    def test_a_parsed_reading_clears_its_lens(self):
+        bounty.bundle(self.repo, self.run, ['accounting', 'liveness'])
+        self.assertEqual(self.unread(), ['accounting', 'liveness'])
+        directory = self.readings(pass1_md='CANDIDATE | lens: accounting | surface: '
+                                           'src/Vault.sol:Vault.withdraw | bug_class: '
+                                           'aggregate-not-decremented')
+        bounty.converge([directory], self.run)
+        self.assertEqual(self.unread(), ['liveness'])
+        # A lens that read its bundle and reported nothing names itself only in its file name.
+        self.readings(liveness_md='No mechanism survived this lens.')
+        bounty.converge([directory], self.run)
+        self.assertEqual(self.unread(), [])
+
+    def test_a_coverage_row_clears_its_lens(self):
+        bounty.bundle(self.repo, self.run, ['accounting', 'liveness'])
+        with (self.run / 'coverage.md').open('a', encoding='utf-8') as handle:
+            handle.write('| src/Vault.sol:Vault.withdraw | accounting | 2 | replayed the '
+                         'mismatch | totalDebt decremented, no gap |\n')
+        self.assertEqual(self.unread(), ['liveness'])
+        self.assertEqual(bounty._dispatch_state(self.run)['read'],
+                         [{'lens': 'accounting', 'evidence': ['coverage.md']}])
+
+    def test_a_record_carrying_the_lens_clears_it(self):
+        bounty.bundle(self.repo, self.run, ['accounting', 'liveness'])
+        row = bounty.template()
+        row['lens'] = 'liveness'
+        bounty.dump(self.run / 'findings.json', [row])
+        self.assertEqual(self.unread(), ['accounting'])
+
+    def test_triage_is_cleared_by_the_objections_it_produced(self):
+        # Triage is not a lens and never writes a coverage row or a record of its own: its
+        # product is objections on other agents' records, so that is what shows it read.
+        bounty.bundle(self.repo, self.run, ['triage'])
+        self.assertEqual(self.unread(), ['triage'])
+        row = bounty.template()
+        row['objections'] = [{'gate': 'reachability',
+                              'claim': 'no unprivileged path reaches the decrement',
+                              'anchor': 'code: src/Vault.sol:12 onlyOwner on withdraw()',
+                              'outcome': 'sustained'}]
+        bounty.dump(self.run / 'findings.json', [row])
+        self.assertEqual(bounty._dispatch_state(self.run)['read'],
+                         [{'lens': 'triage', 'evidence': ['objections']}])
+
+    # ---- 3 and 4. queue reports it, submission blocks on it ----
+    def test_a_run_shaped_like_the_lifi_hunt_is_reported_and_blocked(self):
+        lenses = ['business-logic', 'composition', 'coverage-gap', 'delta', 'economics',
+                  'impact-first', 'privileged-path', 'spec-divergence']
+        bounty.bundle(self.repo, self.run, lenses)
+        self.assertEqual((self.run / 'coverage.md').read_text().count('|'), 12)  # header only
+        self.assertEqual(bounty.read_json(self.run / 'findings.json'), [])
+        report = bounty.lead_queue(self.run)
+        self.assertEqual([row['lens'] for row in report['unread_bundles']], lenses)
+        self.assertEqual(report['unread_bundles'][0]['bundle'],
+                         'bundles/business-logic-bundle.md')
+        self.assertTrue(report['unread_bundles'][0]['built_at'])
+        # queue is a report: it still runs, and the state it would have had is unchanged.
+        self.assertEqual(report['state'], 'all-leads-closed')
+        self.assertIn('unread_bundles are lenses', report['notice'])
+        errors = self.dispatch_errors(submission=True)
+        self.assertEqual(len(errors), 1)
+        for lens in lenses:
+            self.assertIn(lens, errors[0])
+        self.assertIn('converge --readings', errors[0])
+        self.assertEqual(self.dispatch_errors(), [])   # structural check does not block
+
+    def test_a_run_with_no_manifest_is_blocked_by_nothing_here(self):
+        # An older run, or one that never bundled, claims nothing about what was read.
+        state = bounty._dispatch_state(self.run)
+        self.assertFalse(state['present'])
+        self.assertEqual(state['unread'], [])
+        self.assertEqual(bounty.lead_queue(self.run)['unread_bundles'], [])
+        self.assertEqual(self.dispatch_errors(submission=True), [])
+        self.assertEqual(self.dispatch_errors(), [])
+
+    def test_submission_clears_once_the_readings_are_converged(self):
+        bounty.bundle(self.repo, self.run, ['accounting', 'liveness'])
+        self.assertEqual(len(self.dispatch_errors(submission=True)), 1)
+        directory = self.readings(
+            accounting_md='LEAD | lens: accounting | surface: src/Vault.sol:Vault.withdraw | '
+                          'bug_class: aggregate-not-decremented',
+            liveness_md='LEAD | lens: liveness | surface: src/Vault.sol:Vault.pause | '
+                        'bug_class: pause-blocks-exit')
+        bounty.converge([directory], self.run)
+        self.assertEqual(self.dispatch_errors(submission=True), [])
+
+    # ---- the log is never a new way to fail ----
+    def test_an_unreadable_manifest_gates_nothing_and_is_rewritten(self):
+        (self.run / 'bundles').mkdir()
+        (self.run / 'bundles/manifest.json').write_text('not json at all\n')
+        self.assertEqual(self.dispatch_errors(submission=True), [])
+        self.assertEqual(bounty.lead_queue(self.run)['unread_bundles'], [])
+        result = bounty.bundle(self.repo, self.run, ['accounting'])
+        self.assertTrue(any('was not a dispatch log' in note for note in result['notes']))
+        self.assertEqual(self.unread(), ['accounting'])
+
+    def test_a_manifest_from_another_run_does_not_speak_for_this_one(self):
+        bounty.bundle(self.repo, self.run, ['accounting'])
+        meta = bounty.read_json(self.run / 'run.json')
+        meta['run_id'] = 'f' * 32
+        bounty.dump(self.run / 'run.json', meta)
+        result = bounty.bundle(self.repo, self.run, ['liveness'])
+        self.assertTrue(any('different run' in note for note in result['notes']))
+        self.assertEqual(self.unread(), ['liveness'])
+
+
 class CompilerBugTests(unittest.TestCase):
     BY_VERSION = {'0.6.12': {'released': '2020-06-03', 'bugs': ['BadBug', 'TinyBug']},
                   '0.8.19': {'released': '2023-02-22', 'bugs': ['TinyBug']}}
