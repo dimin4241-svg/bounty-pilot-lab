@@ -156,8 +156,15 @@ def load_impact_helper(name):
     return module
 
 
-def impact_plan(repo=None, solc=None, out=None):
-    """Create non-proving source graph and backwards risk queue for a pinned checkout."""
+def impact_plan(repo=None, solc=None, out=None, scope=None):
+    """Create non-proving source graph and backwards risk queue for a pinned checkout.
+
+    `scope` is an optional list of path prefixes. A Foundry or Hardhat build-info file
+    describes the dependencies and the test suite as well as the target, and those usually
+    outnumber the in-scope sources several to one; when the edge cap truncates the graph the
+    budget is spent on them and the ranked queue can come back with no in-scope sink at all.
+    Passing the in-scope prefixes keeps the queue aimed. Default stays unfiltered.
+    """
     if not repo and not solc:
         raise ValueError('impact-plan needs --repo and/or --solc')
     if not out:
@@ -180,14 +187,44 @@ def impact_plan(repo=None, solc=None, out=None):
         symbols.extend(parsed.solidity_symbols(parsed.load_solc(solc)))
     if repo:
         symbols.extend(parsed.py_symbols(repo))
+    dropped = 0
+    if scope:
+        prefixes = tuple(str(x) for x in scope if str(x))
+        if prefixes:
+            kept = [sym for sym in symbols
+                    if str(sym.get('path', '')).startswith(prefixes)]
+            dropped = len(symbols) - len(kept)
+            symbols = kept
     graph = parsed.build(symbols)
     paths = load_impact_helper('impact_paths').rank(graph)
     dump(target / 'semantic-graph.json', graph)
     dump(target / 'impact-paths.json', paths)
-    return {'graph': str(target / 'semantic-graph.json'),
-            'impact_paths': str(target / 'impact-paths.json'),
-            'symbols': len(graph['symbols']), 'paths': len(paths['ranked']),
-            'notice': 'Prioritization only: graph edges and impact labels do not prove an exploit.'}
+    by_id = {sym.get('id'): sym for sym in graph.get('symbols', [])}
+    in_scope_sinks = 0
+    for ranked in paths.get('ranked', []):
+        sym = by_id.get(ranked.get('sink'))
+        path_str = str(sym.get('path', '')) if sym else ''
+        if not scope:
+            if path_str and not path_str.startswith(('lib/', 'test/', 'script/', 'node_modules/')):
+                in_scope_sinks += 1
+        elif path_str.startswith(tuple(str(x) for x in scope if str(x))):
+            in_scope_sinks += 1
+    result = {'graph': str(target / 'semantic-graph.json'),
+              'impact_paths': str(target / 'impact-paths.json'),
+              'symbols': len(graph['symbols']), 'paths': len(paths['ranked']),
+              'scope_filter': list(scope) if scope else None,
+              'symbols_dropped_by_scope': dropped,
+              'graph_truncated': bool(graph.get('truncated')),
+              'ranked_sinks_in_scope': in_scope_sinks,
+              'notice': 'Prioritization only: graph edges and impact labels do not prove an exploit.'}
+    if in_scope_sinks == 0 and paths.get('ranked'):
+        result['warning'] = (
+            'No ranked sink is in the in-scope sources: this queue aims at dependencies or tests '
+            'and must not be read as having aimed the hunt. '
+            + ('The graph hit its edge cap and was truncated. ' if graph.get('truncated') else '')
+            + 'Re-run with --scope <in-scope prefix> (repeatable), or build the artifact from the '
+              'in-scope sources alone.')
+    return result
 
 
 def load_keccak():
@@ -4320,6 +4357,10 @@ def build_parser():
     impact_parser.add_argument('--repo', default=None, help='optional tracked Python checkout')
     impact_parser.add_argument('--solc', default=None, help='optional Solidity compiler AST/build-info JSON')
     impact_parser.add_argument('--out', required=True, help='private run directory for graph and ranked paths')
+    impact_parser.add_argument('--scope', action='append', default=None, dest='scope',
+                               help='keep only symbols whose path starts with this prefix, e.g. src/ . '
+                                    'Repeatable. Without it a build-info file drags in lib/ and test/ '
+                                    'and the truncated queue can hold no in-scope sink at all.')
 
     route_parser = sub.add_parser('route', help='recommend native adapters from tracked manifests (heuristic)')
     route_parser.add_argument('--repo', required=True)
@@ -4443,7 +4484,8 @@ def main(argv=None):
                                     args.include), indent=2))
             return 0
         if args.action == 'impact-plan':
-            print(json.dumps(impact_plan(args.repo, args.solc, args.out), indent=2))
+            print(json.dumps(impact_plan(args.repo, args.solc, args.out,
+                                         getattr(args, 'scope', None)), indent=2))
             return 0
         if args.action == 'route':
             print(json.dumps(load_stack_route().route(args.repo), indent=2))

@@ -16,6 +16,19 @@ rather than narrating around them. Never claim a command ran, a test passed, or 
 chain unless it happened. Keep every target-specific artifact in a private run directory, outside
 this skill and outside the target checkout.
 
+**A blocker is a claim and carries the same burden as a finding.** Before "cannot build", "no
+archive access" or "tool unavailable" enters the run record, reproduce it yourself and write down
+the exact command and output, then spend one minute on the likeliest cause being your own setup.
+Blockers propagate: once written down they are read as closed ground by every later pass, so a wrong
+one silently deletes coverage. In a live run a subagent reported that a monorepo's farming stack
+"cannot be installed — no root package.json, no workspaces", the orchestrator carried that into the
+record unverified, and three passes went by with no test ever executed against the highest-paying
+contracts in scope. The root `package.json` existed and declared the workspaces; the subagent had
+copied one subproject out of the monorepo, so the package manager correctly went to the public
+registry for a sibling that only exists locally. When a blocker is lifted, say which pass recorded
+it and what the real cause was — a blocker you inherited and never tested is the cheapest way to
+lose a surface.
+
 `<skill-dir>` below is the directory that contains this SKILL.md: the base directory the host
 reports when it loads the skill. Resolve it once, then `S=<skill-dir>/scripts/bounty.py`.
 
