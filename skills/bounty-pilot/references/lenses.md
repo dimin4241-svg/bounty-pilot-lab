@@ -14,7 +14,9 @@ lenses it has no equivalent for.
 
 **Blind-spot lenses** are in `blind-spots.md`: controls that exist only as live configuration,
 derived constants nobody recomputes, the odd one out, the authoritative value that was available
-and unused, safety resting on a dependency detail, and state that only exists between versions.
+and unused, safety resting on a dependency detail, state that only exists between versions, code
+that is deployed but absent from the repository, and the surface your own run closed with a
+blocker nobody reproduced.
 Reach for them on a heavily audited target where the lenses above came back empty.
 
 For every lens, produce: entry point, attacker capability, preconditions, state transition, broken

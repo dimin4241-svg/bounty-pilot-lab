@@ -819,6 +819,158 @@ class RunTests(unittest.TestCase):
         self.assertEqual(result['state'], 'invalid')
         self.assertTrue(any('next_experiment.method' in e for e in result['errors']))
 
+    # ---- blockers ----
+    def blocked(self, blocker, status='needs-evidence'):
+        row = self.candidate()
+        row['status'] = status
+        row['next_experiment']['blocker'] = blocker
+        bounty.dump(self.run / 'findings.json', [row])
+        return row
+
+    def reproduced_blocker(self, **overrides):
+        record = {'claim': 'forge build fails: unresolved import of a sibling workspace package',
+                  'command': 'forge build --build-info',
+                  'exit_code': 1,
+                  'output_excerpt': 'Error: failed to resolve import @royco/periphery',
+                  'recorded_at': '2026-10-16T09:14:00Z',
+                  'attempted_alternative': 'installed from the monorepo root instead of the '
+                                           'copied subproject'}
+        record.update(overrides)
+        return record
+
+    def test_a_bare_string_blocker_still_validates_and_is_reported_as_unverified(self):
+        # The wording that deleted three passes of coverage: a sentence nobody could check.
+        self.blocked('cannot be installed - no root package.json, no workspaces')
+        self.assertEqual(bounty.validate(self.run), [])
+        result = bounty.lead_queue(self.run)
+        self.assertEqual([row['id'] for row in result['unverified_blockers']], ['BP-001'])
+        self.assertEqual(result['unverified_blockers'][0]['surface'], 'src/Vault.sol')
+        self.assertIn('no root package.json', result['unverified_blockers'][0]['claim'])
+
+    def test_a_reproduced_blocker_is_not_reported(self):
+        self.blocked(self.reproduced_blocker())
+        self.assertEqual(bounty.validate(self.run), [])
+        self.assertEqual(bounty.lead_queue(self.run)['unverified_blockers'], [])
+        self.assertEqual(bounty.blocker_state(self.reproduced_blocker()), 'reproduced')
+
+    def test_an_object_blocker_without_its_output_is_only_unverified(self):
+        row = self.blocked(self.reproduced_blocker(output_excerpt=''))
+        self.assertEqual(bounty.validate(self.run), [])
+        self.assertEqual(bounty.blocker_state(row['next_experiment']['blocker']), 'unverified')
+        self.assertEqual([r['id'] for r in bounty.lead_queue(self.run)['unverified_blockers']],
+                         ['BP-001'])
+
+    def test_no_blocker_at_all_is_absent_not_unverified(self):
+        self.blocked('')
+        self.assertEqual(bounty.lead_queue(self.run)['unverified_blockers'], [])
+        self.assertEqual(bounty.blocker_state({}), 'absent')
+        self.assertEqual(bounty.blocker_state(None), 'absent')
+
+    def test_a_malformed_blocker_object_is_an_error_and_never_a_crash(self):
+        row = self.blocked({'command': 'forge build'})
+        self.assertTrue(any('blocker.claim is required' in e
+                            for e in bounty.validate(self.run)))
+        row = self.blocked(self.reproduced_blocker(exit_code='1', command=['forge', 'build']))
+        errors = bounty.validate(self.run)
+        self.assertTrue(any('blocker.exit_code must be an integer' in e for e in errors))
+        self.assertTrue(any('blocker.command must be a string' in e for e in errors))
+        for wrong in ([], 17, True, None):
+            self.blocked(wrong)
+            self.assertTrue(any('blocker must be a string, or an object' in e
+                                for e in bounty.validate(self.run)), wrong)
+        # A record whose blocker cannot be read is an invalid queue, not a traceback.
+        self.assertEqual(bounty.lead_queue(self.run)['state'], 'invalid')
+        self.assertEqual(row['id'], 'BP-001')
+
+    def test_a_blocker_on_a_terminal_record_is_left_alone(self):
+        row = self.candidate()
+        row.update(status='refuted', rejection_reason='The caller is checked against the owner.')
+        row['next_experiment']['blocker'] = 'no archive RPC'
+        bounty.dump(self.run / 'findings.json', [row])
+        self.assertEqual(bounty.validate(self.run), [])
+        self.assertEqual(bounty.lead_queue(self.run)['unverified_blockers'], [])
+
+    def test_submission_is_blocked_while_a_needed_experiment_rests_on_an_unproven_blocker(self):
+        blocked = self.candidate()
+        blocked.update(id='BP-002', status='needs-evidence')
+        blocked['next_experiment']['blocker'] = 'cannot be installed - no root package.json'
+        bounty.dump(self.run / 'findings.json', [self.submittable(), blocked])
+        bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+        self.harvest([])
+        bounty.dup_check(self.run)
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any('unverified blocker' in e for e in errors), errors)
+
+    def test_a_reproduced_blocker_does_not_block_submission(self):
+        blocked = self.candidate()
+        blocked.update(id='BP-002', status='needs-evidence')
+        blocked['next_experiment']['blocker'] = self.reproduced_blocker()
+        bounty.dump(self.run / 'findings.json', [self.submittable(), blocked])
+        bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+        self.harvest([])
+        bounty.dup_check(self.run)
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_a_hypothesis_is_not_held_to_the_blocker_gate(self):
+        # A hypothesis has not yet claimed its experiment is the one that must run.
+        blocked = self.candidate()
+        blocked.update(id='BP-002', status='hypothesis')
+        blocked['next_experiment']['blocker'] = 'needs a paid archive key'
+        bounty.dump(self.run / 'findings.json', [self.submittable(), blocked])
+        bounty.history_check(self.run, self.ledger, project='example.invalid/test')
+        self.harvest([])
+        bounty.dup_check(self.run)
+        self.assertEqual(bounty.validate(self.run, submission=True), [])
+
+    def test_queue_flags_a_blocker_the_probe_contradicts(self):
+        self.capabilities({'source-build': {'state': 'available',
+                                            'reason': '`forge build` exited 0 in this checkout'}})
+        self.blocked('the project cannot be built: no root manifest resolves the imports')
+        result = bounty.lead_queue(self.run)
+        self.assertEqual([row['capability'] for row in result['contradicted_blockers']],
+                         ['source-build'])
+        self.assertEqual(result['contradicted_blockers'][0]['id'], 'BP-001')
+        self.assertIn('exited 0', result['contradicted_blockers'][0]['probe_reason'])
+
+    def test_a_capability_the_probe_could_not_measure_never_accuses_a_blocker(self):
+        self.capabilities({'source-build': {'state': 'unknown',
+                                            'reason': 'the build was NOT executed'}})
+        self.blocked('the project cannot be built: no root manifest resolves the imports')
+        self.assertEqual(bounty.lead_queue(self.run)['contradicted_blockers'], [])
+
+    def test_an_unrelated_blocker_is_not_accused_by_an_available_build(self):
+        self.capabilities({'source-build': {'state': 'available', 'reason': 'exited 0'}})
+        self.blocked('the owner key is held by a multisig we cannot impersonate')
+        self.assertEqual(bounty.lead_queue(self.run)['contradicted_blockers'], [])
+
+    def test_queue_reports_the_coverage_floor_once_it_was_measured(self):
+        self.assertIsNone(bounty.lead_queue(self.run)['coverage_floor'])
+        bounty.dump(self.run / 'coverage-floor.json',
+                    {'state': 'below-floor', 'files_in_scope': 40, 'files_examined': 8,
+                     'examined_fraction': 0.2, 'min_fraction': 0.8, 'unexamined_count': 32})
+        floor = bounty.lead_queue(self.run)['coverage_floor']
+        self.assertEqual(floor['examined_fraction'], 0.2)
+        self.assertEqual(floor['unexamined_count'], 32)
+
+    def capabilities(self, evidence):
+        bounty.dump(self.run / 'capabilities.json', {'evidence': evidence})
+
+    def test_unreadable_probe_or_floor_output_leaves_the_queue_working(self):
+        (self.run / 'capabilities.json').write_text('{not json', encoding='utf-8')
+        (self.run / 'coverage-floor.json').write_text('[]', encoding='utf-8')
+        self.blocked('the project cannot be built')
+        result = bounty.lead_queue(self.run)
+        self.assertEqual(result['state'], 'open-leads')
+        self.assertEqual(result['contradicted_blockers'], [])
+        self.assertIsNone(result['coverage_floor'])
+        self.assertEqual([row['id'] for row in result['unverified_blockers']], ['BP-001'])
+
+    def test_a_blocker_is_classified_only_as_one_of_the_declared_states(self):
+        # Downstream code compares these strings; a typo would silently mean nothing.
+        for blocker in ('', 'a sentence', {}, {'claim': 'x'}, self.reproduced_blocker(),
+                        None, [], 7):
+            self.assertIn(bounty.blocker_state(blocker), bounty.BLOCKER_STATES, blocker)
+
     def test_terminal_candidate_does_not_need_a_next_experiment(self):
         row = self.candidate()
         row['next_experiment'] = {}
@@ -3193,12 +3345,354 @@ class TemplateTests(unittest.TestCase):
             self.assertIn('control', text.lower(), name)
 
 
+class CapabilityProbeTests(unittest.TestCase):
+    """A probe that measures its own reach: toolchains, build surface, and how far an RPC sees."""
+
+    # Deterministic stand-ins for the real probe tables: one tool that is always present, one
+    # that never is, and a build/test pair that costs milliseconds instead of a compile.
+    PROBES = (('python3', ('python3', '--version')),
+              ('nosuchtool', ('bounty-pilot-nosuchtool-xyz', '--version')))
+    BUILD = (('foundry.toml', ('python3', '-c', 'print("built")'), 'python3'),)
+    TEST = (('foundry.toml', ('python3', '-c', 'print("tested")'), 'python3'),)
+    RPC = 'https://eth-mainnet.g.alchemy.com/v2/Kx7SECRETKEY9012345678901234'
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.repo = self.base / 'repo'
+        (self.repo / 'src').mkdir(parents=True)
+        (self.repo / 'test').mkdir()
+        git(self.repo, 'init', '-q')
+        (self.repo / 'src/Vault.sol').write_text('contract Vault {}\n')
+        (self.repo / 'test/Vault.t.sol').write_text('contract VaultTest {}\n')
+        (self.repo / 'foundry.toml').write_text('[profile.default]\nsrc = "src"\n')
+        commit(self.repo, 'fixture')
+        self.run = self.base / 'run'
+        bounty.initialize(self.repo, self.run)
+
+    def probe(self, **kwargs):
+        with mock.patch.object(bounty, 'TOOLCHAIN_PROBES', self.PROBES), \
+                mock.patch.object(bounty, 'BUILD_COMMANDS', self.BUILD), \
+                mock.patch.object(bounty, 'TEST_COMMANDS', self.TEST):
+            return bounty.capability_probe(self.repo, self.run, **kwargs)
+
+    def node(self, head=0x200000):
+        return FakeNode({'eth_chainId': '0x1', 'eth_blockNumber': hex(head),
+                         'eth_getBalance': '0x0', 'eth_getLogs': []})
+
+    def test_a_missing_toolchain_is_recorded_rather_than_raised(self):
+        result = self.probe()
+        self.assertFalse(result['toolchains']['nosuchtool']['present'])
+        self.assertEqual(result['toolchains']['nosuchtool']['reason'], 'not on PATH')
+        self.assertTrue(result['toolchains']['python3']['present'])
+        self.assertRegex(result['toolchains']['python3']['version'], r'\d+\.\d+')
+
+    def test_without_deep_the_build_is_reported_as_not_executed(self):
+        result = self.probe()
+        self.assertIsNone(result['deep_build'])
+        self.assertIsNone(result['deep_test'])
+        for kind in ('source-build', 'native-test-execution'):
+            self.assertEqual(result['evidence'][kind]['state'], 'unknown')
+            self.assertIn('NOT executed', result['evidence'][kind]['reason'])
+        self.assertIn('build was NOT executed', result['notice'])
+
+    def test_deep_executes_the_build_and_the_tests_and_records_both(self):
+        result = self.probe(deep=True)
+        self.assertEqual(result['deep_build']['exit_code'], 0)
+        self.assertIn('built', result['deep_build']['output_excerpt'])
+        self.assertIn('tested', result['deep_test']['output_excerpt'])
+        self.assertEqual(result['evidence']['source-build']['state'], 'available')
+        self.assertEqual(result['evidence']['native-test-execution']['state'], 'available')
+
+    def test_a_failing_deep_build_is_unavailable_with_what_it_printed(self):
+        failing = (('foundry.toml', ('python3', '-c', 'raise SystemExit("boom")'), 'python3'),)
+        with mock.patch.object(bounty, 'TOOLCHAIN_PROBES', self.PROBES), \
+                mock.patch.object(bounty, 'BUILD_COMMANDS', failing), \
+                mock.patch.object(bounty, 'TEST_COMMANDS', self.TEST):
+            result = bounty.capability_probe(self.repo, self.run, deep=True)
+        self.assertEqual(result['evidence']['source-build']['state'], 'unavailable')
+        self.assertIn('boom', result['evidence']['source-build']['reason'])
+
+    def test_a_missing_build_toolchain_is_unavailable_not_unknown(self):
+        with mock.patch.object(bounty, 'TOOLCHAIN_PROBES', self.PROBES[1:]), \
+                mock.patch.object(bounty, 'BUILD_COMMANDS', self.BUILD), \
+                mock.patch.object(bounty, 'TEST_COMMANDS', self.TEST):
+            result = bounty.capability_probe(self.repo, self.run)
+        self.assertEqual(result['evidence']['source-build']['state'], 'unavailable')
+        self.assertIn('not on PATH', result['evidence']['source-build']['reason'])
+
+    def test_the_rpc_url_is_never_printed_or_written(self):
+        node = self.node()
+        result = self.probe(rpc=self.RPC, opener=node)
+        written = (self.run / 'capabilities.json').read_text(encoding='utf-8')
+        for haystack in (json.dumps(result), written):
+            self.assertNotIn(self.RPC, haystack)
+            self.assertNotIn('Kx7SECRETKEY', haystack)
+            self.assertNotIn('alchemy.com', haystack)
+        self.assertEqual(result['rpc']['endpoint'], 'not recorded')
+        self.assertEqual(result['rpc']['chain_id'], 1)
+        self.assertEqual(result['rpc']['head_block'], 0x200000)
+
+    def test_the_archive_probe_records_the_oldest_block_that_answered(self):
+        head = 0x200000
+        shallow = {'eth_chainId': '0x1', 'eth_blockNumber': hex(head), 'eth_getLogs': [],
+                   'eth_getBalance': lambda params: (
+                       '0x0' if int(params[1], 16) >= head - 128 else None)}
+
+        def opener(request, timeout=None):
+            body = json.loads(request.data.decode('utf-8'))
+            value = shallow[body['method']]
+            value = value(body['params']) if callable(value) else value
+            if value is None:
+                return FakeResponse({'jsonrpc': '2.0', 'id': body['id'],
+                                     'error': {'code': -32000,
+                                               'message': 'missing trie node'}})
+            return FakeResponse({'jsonrpc': '2.0', 'id': body['id'], 'result': value})
+
+        result = self.probe(rpc=self.RPC, opener=opener)
+        self.assertEqual(result['rpc']['archive_depth_blocks'], 128)
+        self.assertEqual(result['rpc']['oldest_answering_block'], head - 128)
+        self.assertEqual(result['evidence']['archive-state']['state'], 'unavailable')
+        self.assertIn('128 blocks behind the head',
+                      result['evidence']['archive-state']['reason'])
+
+    def test_a_deep_endpoint_makes_archive_state_available(self):
+        result = self.probe(rpc=self.RPC, opener=self.node())
+        self.assertEqual(result['rpc']['archive_depth_blocks'], 1_000_000)
+        self.assertEqual(result['evidence']['archive-state']['state'], 'available')
+        self.assertEqual(result['evidence']['historical-logs']['state'], 'available')
+
+    def test_an_unreachable_endpoint_does_not_leak_its_url_in_the_reason(self):
+        def opener(request, timeout=None):
+            raise urllib.error.URLError('connection refused to ' + self.RPC)
+
+        result = self.probe(rpc=self.RPC, opener=opener)
+        written = (self.run / 'capabilities.json').read_text(encoding='utf-8')
+        self.assertFalse(result['rpc']['reachable'])
+        self.assertNotIn('Kx7SECRETKEY', json.dumps(result))
+        self.assertNotIn('alchemy.com', written)
+        self.assertEqual(result['evidence']['mainnet-fork']['state'], 'unavailable')
+
+    def test_no_rpc_leaves_every_on_chain_capability_unknown(self):
+        result = self.probe()
+        for kind in ('mainnet-fork', 'archive-state', 'historical-logs', 'bytecode-comparison'):
+            self.assertEqual(result['evidence'][kind]['state'], 'unknown')
+            self.assertIn('no --rpc', result['evidence'][kind]['reason'])
+
+    def test_a_root_package_json_workspace_declaration_is_read_not_assumed(self):
+        (self.repo / 'package.json').write_text(
+            json.dumps({'name': 'monorepo', 'workspaces': ['packages/*'],
+                        'scripts': {'build': 'turbo build'}}))
+        commit(self.repo, 'workspaces')
+        declares = self.probe()['build_surface']['manifests']['package.json']['declares']
+        self.assertTrue(declares['declares_workspaces'])
+        self.assertEqual(declares['workspaces'], ['packages/*'])
+
+    def test_a_subproject_copied_out_of_its_monorepo_is_visible(self):
+        # The mistake itself: the manifest the blocker said did not exist lives one level up.
+        (self.repo / 'packages/app').mkdir(parents=True)
+        (self.repo / 'packages/app/package.json').write_text('{"name": "app"}')
+        commit(self.repo, 'nested only')
+        surface = self.probe()['build_surface']
+        self.assertEqual(surface['nested_manifests_without_a_root_one'], ['package.json'])
+        self.assertFalse(surface['manifests']['package.json']['at_root'])
+        self.assertEqual(surface['manifests']['package.json']['elsewhere'],
+                         ['packages/app/package.json'])
+        self.assertIn('copied out of its monorepo', surface['note'])
+
+    def test_a_cargo_workspace_root_is_detected_with_its_members(self):
+        (self.repo / 'Cargo.toml').write_text(
+            '[workspace]\nmembers = ["programs/vault", "crates/common"]\nresolver = "2"\n')
+        commit(self.repo, 'cargo workspace')
+        declares = self.probe()['build_surface']['manifests']['Cargo.toml']['declares']
+        self.assertTrue(declares['workspace_root'])
+        self.assertEqual(declares['workspace_members'], ['programs/vault', 'crates/common'])
+
+    def test_every_evidence_kind_reports_one_of_the_declared_states(self):
+        # `contradicted_blockers` compares against `available`; a stray spelling would read as
+        # "not measured" and the contradiction would never be reported.
+        for result in (self.probe(), self.probe(rpc=self.RPC, opener=self.node())):
+            self.assertEqual(sorted(result['evidence']),
+                             ['archive-state', 'bytecode-comparison', 'historical-logs',
+                              'mainnet-fork', 'native-test-execution', 'source-build'])
+            for kind, entry in result['evidence'].items():
+                self.assertIn(entry['state'], bounty.EVIDENCE_STATES, kind)
+                self.assertTrue(entry['reason'].strip(), kind)
+
+    def test_the_test_surface_names_the_files_and_the_command(self):
+        tests = self.probe()['test_surface']
+        self.assertEqual(tests['test_files'], 1)
+        self.assertEqual(tests['examples'], ['test/Vault.t.sol'])
+        self.assertEqual(tests['command']['from_manifest'], 'foundry.toml')
+
+    def test_the_probe_refuses_a_run_directory_init_never_made(self):
+        with self.assertRaises(ValueError):
+            bounty.capability_probe(self.repo, self.base / 'not-a-run')
+
+    def test_the_probe_refuses_to_write_inside_the_target(self):
+        inside = self.repo / 'run'
+        inside.mkdir()
+        (inside / 'run.json').write_text('{}')
+        with self.assertRaises(ValueError):
+            bounty.capability_probe(self.repo, inside)
+
+
+class CoverageFloorTests(unittest.TestCase):
+    """What the word `exhausted` has to answer to: recorded rows against the in-scope list."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.repo = self.base / 'repo'
+        (self.repo / 'src').mkdir(parents=True)
+        git(self.repo, 'init', '-q')
+        for name in ('Vault.sol', 'Pool.sol', 'Oracle.sol', 'Router.sol'):
+            (self.repo / 'src' / name).write_text('contract C {}\n')
+        commit(self.repo, 'fixture')
+        self.run = self.base / 'run'
+        bounty.initialize(self.repo, self.run)
+
+    def coverage(self, *rows):
+        body = ('# Coverage\n\n| Surface / invariant | Lens | Pass | Experiment | Result |\n'
+                '| --- | --- | --- | --- | --- |\n')
+        for row in rows:
+            body += '| ' + row + ' | accounting | 1 | ran | nothing |\n'
+        (self.run / 'coverage.md').write_text(body, encoding='utf-8')
+
+    def known(self, *rows):
+        body = '# Known hypotheses\n\n'
+        for row in rows:
+            body += row + '\n'
+        (self.run / 'known-hypotheses.md').write_text(body, encoding='utf-8')
+
+    def records(self, *paths):
+        rows = []
+        for i, path in enumerate(paths, 1):
+            row = bounty.template()
+            row.update(id='BP-%03d' % i, affected_paths=[path])
+            rows.append(row)
+        bounty.dump(self.run / 'findings.json', rows)
+
+    def floor(self, **kwargs):
+        kwargs.setdefault('scope_prefixes', ['src'])
+        return bounty.coverage_floor(self.repo, self.run, **kwargs)
+
+    def test_coverage_md_alone_marks_a_file_examined(self):
+        self.coverage('src/Vault.sol:Vault.withdraw')
+        result = self.floor()
+        self.assertEqual(result['files_in_scope'], 4)
+        self.assertEqual(result['examined_by_source'],
+                         {'coverage.md': 1, 'known-hypotheses.md': 0, 'findings.json': 0})
+        self.assertEqual(result['unexamined'],
+                         ['src/Oracle.sol', 'src/Pool.sol', 'src/Router.sol'])
+        self.assertEqual(result['examined_fraction'], 0.25)
+
+    def test_known_hypotheses_alone_marks_a_file_examined(self):
+        self.known('| src/Pool.sol:Pool.swap | stale-index | closed | guarded |')
+        result = self.floor()
+        self.assertEqual(result['examined_by_source'],
+                         {'coverage.md': 0, 'known-hypotheses.md': 1, 'findings.json': 0})
+
+    def test_affected_paths_alone_marks_a_file_examined(self):
+        self.records('src/Oracle.sol')
+        result = self.floor()
+        self.assertEqual(result['examined_by_source'],
+                         {'coverage.md': 0, 'known-hypotheses.md': 0, 'findings.json': 1})
+
+    def test_the_three_sources_add_up_without_double_counting(self):
+        self.coverage('src/Vault.sol:Vault.withdraw', 'src/Pool.sol')
+        self.known('| src/Pool.sol | stale-index | closed | guarded |')
+        self.records('src/Oracle.sol')
+        result = self.floor()
+        self.assertEqual(result['files_examined'], 3)
+        self.assertEqual(result['examined_fraction'], 0.75)
+        self.assertEqual(result['unexamined'], ['src/Router.sol'])
+
+    def test_a_surface_matches_whole_path_segments_only(self):
+        (self.repo / 'src-legacy').mkdir()
+        (self.repo / 'src-legacy/Vault.sol').write_text('contract C {}\n')
+        commit(self.repo, 'legacy')
+        self.coverage('src/')
+        # `src/` is a directory of the in-scope tree, so it covers all four; `src-legacy` is a
+        # different directory and was never in scope to begin with.
+        result = self.floor()
+        self.assertEqual(result['files_examined'], 4)
+        self.assertNotIn('src-legacy/Vault.sol', result['unexamined'])
+        # A bare directory name with no separator is not credited: one such row would mark a
+        # whole tree examined, and it reads the same as an invariant name.
+        self.coverage('src')
+        self.assertEqual(self.floor()['files_examined'], 0)
+
+    def test_a_bare_file_name_matches_by_whole_name_never_by_substring(self):
+        self.coverage('Vault.sol')
+        self.assertEqual(self.floor()['files_examined'], 1)
+        self.coverage('ault.sol')
+        self.assertEqual(self.floor()['files_examined'], 0)
+
+    def test_tests_and_vendored_trees_are_excluded_and_counted(self):
+        (self.repo / 'src/test').mkdir()
+        (self.repo / 'src/test/Vault.t.sol').write_text('contract T {}\n')
+        (self.repo / 'src/lib').mkdir()
+        (self.repo / 'src/lib/ERC20.sol').write_text('contract E {}\n')
+        commit(self.repo, 'noise')
+        result = self.floor()
+        self.assertEqual(result['files_in_scope'], 4)
+        self.assertEqual(result['excluded_vendored'], ['src/lib/ERC20.sol'])
+        self.assertNotIn('src/test/Vault.t.sol', result['unexamined'])
+
+    def test_the_full_unexamined_list_is_in_the_file_and_capped_in_the_summary(self):
+        with mock.patch.object(bounty, 'UNEXAMINED_SHOWN', 2):
+            result = self.floor()
+        written = bounty.read_json(self.run / 'coverage-floor.json')
+        self.assertEqual(len(result['unexamined']), 2)
+        self.assertTrue(result['unexamined_truncated'])
+        self.assertEqual(len(written['unexamined']), 4)
+        self.assertEqual(result['unexamined_count'], 4)
+
+    def test_the_gate_fails_below_the_floor_and_passes_at_or_above_it(self):
+        self.coverage('src/Vault.sol')
+        argv = ['coverage-floor', '--repo', str(self.repo), '--run', str(self.run),
+                '--scope', 'src', '--gate']
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(bounty.main(argv), 1)
+        self.assertEqual(json.loads(out.getvalue())['state'], 'below-floor')
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(bounty.main(argv + ['--min-fraction', '0.25']), 0)
+        self.coverage('src/')
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(bounty.main(argv), 0)
+
+    def test_an_empty_in_scope_list_measures_nothing_and_never_passes(self):
+        result = self.floor(scope_prefixes=['does/not/exist'])
+        self.assertEqual(result['state'], 'no-files-in-scope')
+        self.assertEqual(result['examined_fraction'], 0.0)
+
+    def test_a_nonsense_min_fraction_is_an_error_not_a_pass(self):
+        with self.assertRaises(ValueError):
+            self.floor(min_fraction=1.5)
+
+    def test_the_default_floor_is_declared_once_and_used_by_the_cli(self):
+        self.assertEqual(bounty.COVERAGE_FLOOR_DEFAULT, 0.8)
+        args = bounty.build_parser().parse_args(
+            ['coverage-floor', '--repo', 'r', '--run', 'x'])
+        self.assertEqual(args.min_fraction, bounty.COVERAGE_FLOOR_DEFAULT)
+
+
 class CliTests(unittest.TestCase):
     def test_subcommands_are_wired(self):
         parser = bounty.build_parser()
         for argv in (['init', '--repo', '.', '--out', 'x'], ['check', '--run', 'x'],
                      ['check', '--run', 'x', '--submission'], ['dup-check', '--run', 'x'],
                      ['queue', '--run', 'x'],
+                     ['capability-probe', '--repo', '.', '--run', 'x'],
+                     ['capability-probe', '--repo', '.', '--run', 'x', '--rpc', 'u',
+                      '--deep', '--timeout', '120'],
+                     ['coverage-floor', '--repo', '.', '--run', 'x'],
+                     ['coverage-floor', '--repo', '.', '--run', 'x', '--scope', 'src',
+                      '--gate', '--min-fraction', '0.6'],
                      ['converge', '--readings', 'readings', '--run', 'x'],
                      ['converge', '--readings', 'a', '--readings', 'b', '--run', 'x',
                       '--threshold', '3'],

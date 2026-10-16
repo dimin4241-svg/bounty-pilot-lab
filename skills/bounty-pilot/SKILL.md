@@ -16,18 +16,11 @@ rather than narrating around them. Never claim a command ran, a test passed, or 
 chain unless it happened. Keep every target-specific artifact in a private run directory, outside
 this skill and outside the target checkout.
 
-**A blocker is a claim and carries the same burden as a finding.** Before "cannot build", "no
-archive access" or "tool unavailable" enters the run record, reproduce it yourself and write down
-the exact command and output, then spend one minute on the likeliest cause being your own setup.
-Blockers propagate: once written down they are read as closed ground by every later pass, so a wrong
-one silently deletes coverage. In a live run a subagent reported that a monorepo's farming stack
-"cannot be installed — no root package.json, no workspaces", the orchestrator carried that into the
-record unverified, and three passes went by with no test ever executed against the highest-paying
-contracts in scope. The root `package.json` existed and declared the workspaces; the subagent had
-copied one subproject out of the monorepo, so the package manager correctly went to the public
-registry for a sibling that only exists locally. When a blocker is lifted, say which pass recorded
-it and what the real cause was — a blocker you inherited and never tested is the cheapest way to
-lose a surface.
+**A blocker is a claim and carries the same burden as a finding.** "Cannot build", "no archive
+access" and "tool unavailable" are read as closed ground by every later pass, so a wrong one
+silently deletes coverage — this has already cost three passes over the highest-paying contracts in
+a scope. Record the command and its output, not the conclusion; `queue` lists anything less under
+`unverified_blockers`. The case that set the rule is in `references/blind-spots.md`.
 
 `<skill-dir>` below is the directory that contains this SKILL.md: the base directory the host
 reports when it loads the skill. Resolve it once, then `S=<skill-dir>/scripts/bounty.py`.
@@ -236,16 +229,12 @@ python3 $S experiment-gate --run <run> --limit 3 --gate
 python3 $S queue --run <run>
 ~~~
 
-**This gate does not hold up the next pass.** Its purpose is that a later pass does not
-re-read an untested hypothesis, and `known-hypotheses.md` plus `saturated.md` already carry that
-information into the bundles. Running the experiments is serial work you do yourself; the passes
-are parallel readings by other agents on other surfaces. Start the next pass, and run the
-experiments alongside it. The gate is mandatory before you report, not between readings.
-
-A gate placed between passes costs more than it saves: in a live run eight bundles were assembled
-and `coverage.md` came back empty, because the budget went to the gate and the readings never
-happened. Dispatch is the only thing in this workflow that finds bugs — nothing may be allowed to
-queue in front of it.
+**This gate does not hold up the next pass.** The experiments are serial work you do yourself;
+the passes are parallel readings by other agents on other surfaces. Start the next pass, then run
+the experiments alongside it. The gate is mandatory before you report, never between readings:
+placed between them it once cost eight assembled bundles that were never read. Its purpose — that a
+later pass not re-read an untested hypothesis — is already served by `known-hypotheses.md` and
+`saturated.md` travelling in the bundles.
 
 The gate checks recorded experiment execution, not whether the vulnerability is real;
 Stage 4 adjudication and Stage 5 PoC remain independent. A blocked experiment
@@ -352,13 +341,17 @@ same-mechanism match; a regression needs evidence that the issue was reintroduce
 deployed version.
 
 The submission gate applies to records with status `verified`; other records stay in the run and
-need only be well formed. Each submitted record must carry the complete escalation ladder — every
+need only be well formed — with one exception that can fail a run which used to pass: a
+`needs-evidence` record whose only obstacle is a blocker must carry a **reproduced** one, with the
+command and its output. Reproduce it, drop the blocker, or re-file the record as a hypothesis. One
+unproven blocker holding up a proven finding is the intended cost: a blocker nobody ran has already
+cost three passes over the highest-paying contracts in a scope. Each submitted record must carry the complete escalation ladder — every
 amplifier with a result, anchored where it was reached or blocked. For a proxy, `verify-deployment` compares the **implementation**; a proxy
 whose own runtime matches your artifact is `partial`, and `partial` does not pass the gate.
 
 ## Stage 7 — Deliver
 
-**First, answer `references/misses.md` against your own output**: twenty ways a hunt stops short,
+**First, answer `references/misses.md` against your own output**: twenty-six ways a hunt stops short,
 each with a cheap fix. Do this on a run that found nothing too: a zero-finding result is legitimate
 only when it says which surfaces are closed and on what evidence.
 

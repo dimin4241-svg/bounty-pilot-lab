@@ -94,7 +94,9 @@ then analysis. Agents routinely reason for pages about a question that one `eth-
 ## 13. Did a toolchain failure become a narrative?
 
 If the build or test runner failed, say so plainly and switch to a cheaper decisive experiment. Do
-not describe what a test would have shown. Do not claim an exit code you did not observe.
+not describe what a test would have shown. Do not claim an exit code you did not observe. Write the
+failure as a `blocker` object with the `command` and the `output_excerpt` that produced it, not as a
+sentence — see item 24.
 
 ## 14. Did you drop anything silently?
 
@@ -107,6 +109,13 @@ in your reasoning is lost work, and the next pass will pay to rediscover it.
 List what you did **not** read: files, branches, dependencies, configurations. An audit that reports
 honest partial coverage is more useful than one that implies completeness; and the unread list is
 where the next pass aims. Which lenses did you actually dispatch, and how many readings each?
+
+Do not answer this from memory. `coverage-floor --repo <checkout> --run <run>` writes
+`coverage-floor.json`: the in-scope files against the ones your `coverage.md`, `known-hypotheses.md`
+and `findings.json` actually name, with the examined fraction and the unexamined list. A run may not
+call itself exhausted over an unread majority — on one target a hunt was closed after eight
+contracts and nothing compared that against the file list. The unexamined list is the answer to this
+item; paste it.
 
 ## 16. Did you let an unanchored objection kill a finding?
 
@@ -163,14 +172,16 @@ contract on each chain — then read the one that differs. See `references/blind
 
 ## 24. Did you verify the blocker, or inherit it?
 
-Every "cannot build", "no archive access", "tool unavailable" in the run record is load-bearing: later
-passes read it as closed ground and stop trying. So a wrong blocker deletes a surface silently, and it
-is the one claim nobody adversarially reviews. Reproduce each one yourself, paste the command and the
-output, and spend one minute on the hypothesis that the cause is your own setup — a package manager
-reaching the public registry for a sibling that only exists locally means you copied one subproject
-out of a monorepo, not that the project cannot be installed. When a blocker is lifted, record which
-pass wrote it and what the real cause was. A blocker survived three passes in one live run and cost
-every test against the highest-paying contracts in scope.
+Every "cannot build", "no archive access", "tool unavailable" in the run record is load-bearing:
+later passes read it as closed ground and stop trying, and it is the one claim nobody adversarially
+reviews. So check them as claims. Does each `blocker` carry a `command` and an `output_excerpt`, or
+only a `claim`? Run `queue --run <run>` and treat everything under `unverified_blockers` as an open
+surface rather than a closed one: reproduce it, or drop it and read the code. Then read it against
+`capabilities.json` — a probe that found the toolchain, the root manifest and its workspaces, or an
+archive deeper than the blocker assumed, settles the question in one command. When a blocker is
+lifted, record which pass wrote it and what the real cause was. `references/blind-spots.md` §8 has
+the case that cost three passes over the highest-paying contracts in a scope, and `evidence.md` has
+the field shapes.
 
 ## 25. Did you calibrate the number before you concluded from it?
 
@@ -183,3 +194,22 @@ the same formula and came out as its own reciprocal. Pick the pair you already k
 push it through the identical code path, and only then read the table. The same applies to units: wei
 versus whole tokens, and a `10**(dec1-dec0)` factor, are where a plausible figure becomes an
 impossible one.
+
+## 26. Did you confirm the address *is* the contract before believing what it holds?
+
+Severity is argued from balances, so a wrong address invents or deletes impact. In one run a
+balance sweep reported **120,381 USDC and 62 WETH** on what it had labelled `ERC20Proxy` — a
+contract whose own balance should always be zero. That read as a half-million-dollar finding. The
+address was a **Uniswap V3 pool**, typed from recall rather than read from
+`deployments/mainnet.json`. The tell cost ten seconds: `cast code` returned 23KB where a 60-line
+proxy should return 2.5KB, and the selectors decoded to `fee()` and `ticks()`.
+
+Rules that follow:
+- Every in-scope address comes from the project's own deployment artifacts or the program's scope
+  page. Never from memory, and never from an earlier message in the same session.
+- Before quoting a balance or an allowance as impact, prove identity on the same chain you read the
+  value on: a function only that contract has (`owner()`, `authorizedCallers(address)`), or code
+  size plus two decoded selectors. A revert on the identity call means the label is wrong, not that
+  the node is flaky.
+- A balance that contradicts the contract's design — a pass-through proxy holding funds, a vault
+  holding nothing — is first evidence of a misidentified address, and only second evidence of a bug.

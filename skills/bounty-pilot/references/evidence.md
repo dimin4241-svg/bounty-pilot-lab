@@ -35,6 +35,16 @@ cause together.
 - `next_experiment`: required for `hypothesis` and `needs-evidence`; it must name a decisive
   `question`, a reproducible `method`, and the `expected_evidence`. Add `blocker` when the test
   cannot run yet. `queue --run` lists these leads; a queued experiment is not an attempted test.
+- `next_experiment.blocker`: a plain string, or an object with `claim` (required, non-empty) and
+  any of `command`, `exit_code`, `output_excerpt`, `recorded_at`, `attempted_alternative`. A
+  blocker counts as **reproduced** only when it carries both a `command` and an `output_excerpt`;
+  anything less is **unverified**, and `queue --run` lists it under `unverified_blockers`. Write
+  what the shell printed, not your conclusion about it, and put in `attempted_alternative` the
+  cheaper route you tried before giving up — another endpoint, another package manager, the
+  monorepo root rather than the subdirectory you copied out of it. **A blocker is a claim and
+  carries the same burden as a finding**: every later pass reads it as closed ground, so a wrong
+  one deletes a surface, and nothing in the triage exchange ever attacks it. Check it against
+  `capabilities.json` before you write it (`intake.md`); `blind-spots.md` §8 has the case.
 - `escalation`: the amplifier ladder from `escalate.md`, recorded rather than assumed.
   `escalation.attempted` holds one entry per amplifier — `repetition`, `other-parties-funds`,
   `composition`, `become-the-trusted-party`, `timing`, `freeze-instead-of-theft` — each with a

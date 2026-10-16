@@ -1,8 +1,9 @@
 # Blind spots — where review does not look at all
 
 `misses.md` audits the work you did. This file is about work nobody does, on either side: the
-surfaces a reviewer never opens because there is no file to open, and the shapes an automated
-reviewer cannot see because it reads for intent rather than for difference.
+surfaces a reviewer never opens because there is no file to open, the shapes an automated reviewer
+cannot see because it reads for intent rather than for difference, and the surface your own run
+closed with a blocker nobody reproduced (§8).
 
 Use it when a target is already heavily audited and the ordinary lenses came back empty. A clean
 result from this file is still worth writing down: it closes a surface nobody else has closed.
@@ -155,6 +156,43 @@ Where the deployed implementation is in no in-scope repository, a defect in it i
 in-scope asset. Record that in `scope.md` and frame any record on the in-scope seam instead — the
 audited contract that grants authority to the unpublished one. Raising the discrepancy itself with
 the project is worth doing regardless of payout.
+
+## 8. A surface closed by a blocker nobody reproduced
+
+The cheapest way to lose a surface is to write one sentence about it. "Cannot build", "no archive
+access", "tool unavailable" are read by every later pass as closed ground, and nothing in this
+workflow attacks them — triage is pointed at findings, not at blockers. So a wrong blocker deletes
+coverage silently, and the deletion compounds with every pass that inherits it.
+
+The case that set the rule: a subagent reported that a monorepo's farming stack "cannot be
+installed — no root package.json, no workspaces". The orchestrator carried that into the run record
+unverified, and three passes went by with no test ever executed against the highest-paying
+contracts in scope. The root `package.json` existed and declared the workspaces; the subagent had
+copied one subproject out of the monorepo, so the package manager correctly went to the public
+registry for a sibling that only exists locally. The claim was true of the directory it was run in
+and false of the project, and no later pass was in a position to notice the difference.
+
+Three mechanisms carry this now, and none of them is expensive:
+
+- **Record the output, not the conclusion.** `next_experiment.blocker` takes an object:
+  `blocker.claim`, plus `blocker.command` and `blocker.output_excerpt` — what the shell actually
+  printed — and `blocker.attempted_alternative`, the cheaper route you tried before giving up. With
+  a command and an excerpt the blocker is reproduced; without them it is unverified, and
+  `queue --run` lists it under `unverified_blockers`. `evidence.md` has the field shapes.
+- **Probe before the hunt, not after.** `capability-probe` writes `capabilities.json` at Stage 1:
+  the toolchains and versions this run has, the build and test files the checkout really contains,
+  whether a root manifest exists and what workspaces it declares, and how deep the RPC's archive
+  goes. A genuine constraint found there is a boundary the hunt is aimed inside; found later it is
+  a parked candidate. It is also what refutes a blocker like the one above on the spot
+  (`intake.md`).
+- **Count the floor before saying "exhausted".** `coverage-floor` compares the in-scope file list
+  against what the run recorded, so a surface a blocker deleted reappears as an unexamined path
+  instead of as silence (`passes.md`).
+
+Spend one minute on the hypothesis that the cause is your own setup — the wrong directory, a
+missing lockfile, a public registry asked for a local sibling, an endpoint that is simply not an
+archive node — before the blocker enters the record at all. When one is lifted, say which pass
+recorded it and what the real cause was.
 
 ## Recording a clean result
 
