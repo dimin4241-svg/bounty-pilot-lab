@@ -64,6 +64,14 @@ Preserve these invariants when editing:
   EVM-centric src/ prefix. Toy native CI fixtures are tests of execution wiring,
   not measured rediscovery of genuine exploits.
 
+- **A blocker carries its own evidence.** `next_experiment.blocker` is a claim read by every later
+  pass as closed ground, so it is recorded as an object with the command and its output, and
+  `queue` reports anything less under `unverified_blockers`. Never relax this to a sentence: a
+  blocker nobody reproduced has already cost three passes over a scope's highest-paying contracts.
+- **`capability-probe` never records the endpoint.** The RPC URL is an argument only; the probe
+  writes `"endpoint": "not recorded"` and scrubs the URL and its bare hostname out of every error
+  string it reports.
+
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.
 Bump `VERSION` and `skills/bounty-pilot/VERSION` together; `.claude-plugin/plugin.json` carries the

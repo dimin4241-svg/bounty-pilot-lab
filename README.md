@@ -284,7 +284,7 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [Triage agent](skills/bounty-pilot/references/triage.md) | The agent paid to reject, and the anchors it must produce |
 | [Impact classes](skills/bounty-pilot/references/impact-classes.md) | What the payout is for, and where hunters leave money |
 | [Hack patterns](skills/bounty-pilot/references/hack-patterns.md) | Root causes that took real money, with the shape to grep for |
-| [Where hunts stop short](skills/bounty-pilot/references/misses.md) | Twenty near-misses to check against your own output before reporting |
+| [Where hunts stop short](skills/bounty-pilot/references/misses.md) | Twenty-six near-misses to check against your own output before reporting |
 | [Backtesting](skills/bounty-pilot/references/backtest.md) | The blind protocol for measuring rediscovery against published findings |
 | [Duplicate map](skills/bounty-pilot/references/dup-map.md) | Sources, format and what a collision means |
 | [Audit lenses](skills/bounty-pilot/references/lenses.md) | Classic bug-class checklists per stack |

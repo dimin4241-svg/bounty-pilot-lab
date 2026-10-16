@@ -76,6 +76,14 @@ STATUSES = {'hypothesis', 'needs-evidence', 'verified', 'refuted', 'parked'}
 PARK_REASONS = {'out-of-scope', 'excluded-impact', 'uneconomic-now', 'accepted-risk', 'other'}
 OPEN_STATUSES = ('hypothesis', 'needs-evidence')
 RECORD_ID = re.compile(r'\bBP-[0-9]{3,}\b')
+# A blocker says why an experiment did not run, and every later pass reads it as closed ground.
+# One wrong blocker - "cannot be installed - no root package.json, no workspaces", written from
+# inside a subproject someone had copied out of the monorepo that did declare them - deleted
+# three passes of coverage over the highest-paying contracts in scope. So a blocker may carry
+# its own evidence: the command that failed, what it printed, and what was tried instead. The
+# bare string stays valid; it is simply reported as unverified until it is reproduced.
+BLOCKER_STRING_FIELDS = ('command', 'output_excerpt', 'recorded_at', 'attempted_alternative')
+BLOCKER_STATES = ('reproduced', 'unverified', 'absent')
 # Refusal wording that describes an ineligible but real mechanism. `queue` lists such refuted
 # records for review; it is a prompt to re-file them as parked, never a gate.
 PARKED_WORDING = re.compile(
@@ -844,8 +852,10 @@ def lead_queue(run):
     unread_bundles = _dispatch_state(run)['unread']
     if errors:
         return {'state': 'invalid', 'errors': errors, 'leads': [],
-                'unread_bundles': unread_bundles}
+                'unread_bundles': unread_bundles, 'unverified_blockers': [],
+                'contradicted_blockers': [], 'coverage_floor': None}
     leads, weak_refusals, parked, possibly_parked = [], [], [], []
+    unverified_blockers = []
     for row in records:
         if row['status'] == 'parked':
             park = row.get('park') or {}
@@ -861,6 +871,11 @@ def lead_queue(run):
                                   'rejection_reason': row['rejection_reason']})
         if row['status'] not in ('hypothesis', 'needs-evidence'):
             continue
+        blocker = row['next_experiment'].get('blocker') \
+            if isinstance(row.get('next_experiment'), dict) else None
+        if blocker_state(blocker) == 'unverified':
+            unverified_blockers.append({'id': row['id'], 'surface': _record_surface(row),
+                                        'claim': blocker_claim(blocker)[:300]})
         leads.append({
             'id': row['id'], 'status': row['status'], 'severity': row['severity'],
             'bug_class': row['bug_class'], 'root_cause': row['root_cause'],
@@ -882,6 +897,9 @@ def lead_queue(run):
             'parked': sorted(parked, key=lambda row: row['id']),
             'possibly_parked': sorted(possibly_parked, key=lambda row: row['id']),
             'weak_refusals': weak_refusals, 'unread_bundles': unread_bundles,
+            'unverified_blockers': sorted(unverified_blockers, key=lambda row: row['id']),
+            'contradicted_blockers': contradicted_blockers(run, records),
+            'coverage_floor': read_coverage_floor(run),
             'notice': 'Every open lead needs a decisive next experiment. A listed experiment is '
                       'not evidence that it was run. untracked_leads are open rows in '
                       'known-hypotheses.md with no live record, and unrecorded_documents are '
@@ -893,7 +911,649 @@ def lead_queue(run):
                       'dropped without one amplifier tried. unread_bundles are lenses bundle '
                       'assembled with no evidence that any reading came back - no parsed '
                       'reading, no coverage.md row, no record carrying the lens - so the bundle '
-                      'was built and never dispatched, and submission is blocked until it is.'}
+                      'was built and never dispatched, and submission is blocked until it is. '
+                      'unverified_blockers are open records whose blocker is a bare sentence, '
+                      'or an object with no command and output_excerpt: nobody can tell whether '
+                      'the obstacle is real, and every later pass reads it as closed ground, so '
+                      'a wrong one silently deletes that surface. Reproduce each one - record '
+                      'blocker as an object with claim, command and output_excerpt - or drop it. '
+                      'contradicted_blockers are blockers whose wording claims the opposite of '
+                      'something capability-probe measured as available; the probe is right '
+                      'about what it ran, so read the claim again. coverage_floor is the last '
+                      'coverage-floor measurement, present only once that command has run: it '
+                      'is what the word exhausted has to answer to.'}
+
+
+# --------------------------------------------------------------------------- #
+# capability probe
+# --------------------------------------------------------------------------- #
+
+PROBE_TIMEOUT = 60
+PROBE_EXCERPT_CHARS = 400
+# Version probes, in the order the summary lists them. Each is a fixed argv: nothing from the
+# target reaches the command line, and nothing runs through a shell.
+TOOLCHAIN_PROBES = (('forge', ('forge', '--version')), ('cast', ('cast', '--version')),
+                    ('cargo', ('cargo', '--version')), ('anchor', ('anchor', '--version')),
+                    ('go', ('go', 'version')), ('python3', ('python3', '--version')),
+                    ('node', ('node', '--version')), ('npm', ('npm', '--version')),
+                    ('yarn', ('yarn', '--version')), ('pnpm', ('pnpm', '--version')),
+                    ('solc', ('solc', '--version')))
+# Manifests whose presence at the checkout root decides what can be built at all. The root is
+# the point: a copy of one subproject has the sibling manifests and not the root one, which is
+# what made a blocker claim a monorepo "has no workspaces" when its root declared them.
+BUILD_MANIFESTS = ('foundry.toml', 'hardhat.config.js', 'hardhat.config.ts',
+                   'hardhat.config.cjs', 'hardhat.config.mjs', 'truffle-config.js',
+                   'Cargo.toml', 'Anchor.toml', 'Move.toml', 'Scarb.toml', 'go.mod',
+                   'package.json', 'pyproject.toml', 'remappings.txt')
+LOCKFILES = ('package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb', 'Cargo.lock',
+             'go.sum', 'poetry.lock', 'uv.lock')
+# Build and test commands by root manifest, first match winning. These are what the run would
+# type; the probe runs them only under --deep.
+BUILD_COMMANDS = (('foundry.toml', ('forge', 'build'), 'forge'),
+                  ('Anchor.toml', ('anchor', 'build'), 'anchor'),
+                  ('Cargo.toml', ('cargo', 'build'), 'cargo'),
+                  ('go.mod', ('go', 'build', './...'), 'go'),
+                  ('hardhat.config.ts', ('npx', 'hardhat', 'compile'), 'npx'),
+                  ('hardhat.config.js', ('npx', 'hardhat', 'compile'), 'npx'))
+TEST_COMMANDS = (('foundry.toml', ('forge', 'test'), 'forge'),
+                 ('Anchor.toml', ('anchor', 'test'), 'anchor'),
+                 ('Cargo.toml', ('cargo', 'test'), 'cargo'),
+                 ('go.mod', ('go', 'test', './...'), 'go'),
+                 ('hardhat.config.ts', ('npx', 'hardhat', 'test'), 'npx'),
+                 ('hardhat.config.js', ('npx', 'hardhat', 'test'), 'npx'),
+                 ('pyproject.toml', ('python3', '-m', 'pytest'), 'python3'))
+# Lexical, because the standard library of the oldest supported Python has no TOML reader and
+# one section name is not worth a dependency. Both patterns are exercised by the tests.
+CARGO_WORKSPACE = re.compile(r'(?m)^\s*\[workspace\]\s*$')
+CARGO_MEMBERS = re.compile(r'(?ms)^\s*members\s*=\s*\[(.*?)\]')
+# Offsets behind the head at which a state read is attempted. The deepest one that answers is
+# how far back this endpoint can prove anything; every hunt so far discovered this by hand,
+# after a candidate already needed it.
+ARCHIVE_OFFSETS = (0, 128, 1024, 8192, 65536, 250_000, 1_000_000)
+# Depth at which an endpoint stops being a tip-only node for hunting purposes. Under 1024
+# blocks - about three hours of mainnet - there is no historical state worth aiming an
+# experiment at, so the capability is reported unavailable with the depth that was measured.
+ARCHIVE_MIN_DEPTH = 1024
+PROBE_ZERO_ADDRESS = '0x' + '00' * 20
+EVIDENCE_STATES = ('available', 'unavailable', 'unknown')
+
+
+def _probe_excerpt(text):
+    """Truncated, secret-free output. Build logs quote the environment, keys included."""
+    cleaned = _redact_context_secrets(text).strip()
+    return cleaned if len(cleaned) <= PROBE_EXCERPT_CHARS else (
+        cleaned[:PROBE_EXCERPT_CHARS] + ' ...[truncated]')
+
+
+def _scrub_endpoint(text, url):
+    """Remove an endpoint the caller passed from anything that will be written or printed.
+
+    `_redact_context_secrets` catches the shapes it knows; this catches the one URL this
+    command was handed, whatever it looks like, including the bare host.
+    """
+    if not isinstance(text, str):
+        return ''
+    if isinstance(url, str) and url.strip():
+        text = text.replace(url.strip(), '<endpoint>')
+        host = urllib.parse.urlsplit(url.strip()).hostname
+        if host:
+            text = re.sub(re.escape(host), '<endpoint>', text, flags=re.I)
+    return _redact_context_secrets(text)
+
+
+def _probe_command(argv, cwd=None, timeout=PROBE_TIMEOUT):
+    """Run one command with no shell and a hard timeout, and report what happened.
+
+    A missing tool, a timeout and a failure are three different facts and are recorded as
+    three different reasons; none of them is an error for the probe itself.
+    """
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_PAGER='cat', NO_COLOR='1')
+    try:
+        done = subprocess.run(list(argv), cwd=str(cwd) if cwd else None, check=False,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              timeout=timeout, env=env)
+    except FileNotFoundError:
+        return {'command': ' '.join(argv), 'ran': False, 'reason': 'not on PATH'}
+    except subprocess.TimeoutExpired:
+        return {'command': ' '.join(argv), 'ran': False,
+                'reason': f'timed out after {timeout}s; rerun with a larger --timeout'}
+    except OSError as exc:
+        return {'command': ' '.join(argv), 'ran': False, 'reason': f'could not run: {exc}'}
+    return {'command': ' '.join(argv), 'ran': True, 'exit_code': done.returncode,
+            'output_excerpt': _probe_excerpt(done.stdout.decode('utf-8', 'replace'))}
+
+
+def _probe_toolchains(timeout):
+    found = {}
+    for name, argv in TOOLCHAIN_PROBES:
+        result = _probe_command(argv, timeout=timeout)
+        if not result['ran']:
+            found[name] = {'present': False, 'reason': result['reason']}
+        elif result['exit_code'] != 0:
+            found[name] = {'present': False,
+                           'reason': f"exit {result['exit_code']}: "
+                                     + result['output_excerpt'][:120]}
+        else:
+            # `solc --version` leads with a banner line and puts the number on the next one.
+            lines = [line.strip() for line in result['output_excerpt'].splitlines()
+                     if line.strip()]
+            numbered = [line for line in lines if re.search(r'\d+\.\d+', line)]
+            found[name] = {'present': True,
+                           'version': (numbered or lines or [''])[0]}
+    return found
+
+
+def _cargo_declares(text):
+    members = CARGO_MEMBERS.search(text or '')
+    names = re.findall(r'["\']([^"\']+)["\']', members.group(1)) if members else []
+    return {'workspace_root': bool(CARGO_WORKSPACE.search(text or '')),
+            'workspace_members': names}
+
+
+def _package_declares(text):
+    try:
+        data = json.loads(text or '')
+    except (json.JSONDecodeError, TypeError):
+        return {'declares_workspaces': False, 'workspaces': [],
+                'parse_error': 'package.json is not valid JSON'}
+    if not isinstance(data, dict):
+        return {'declares_workspaces': False, 'workspaces': [],
+                'parse_error': 'package.json is not an object'}
+    raw = data.get('workspaces')
+    globs = raw if isinstance(raw, list) else (
+        raw.get('packages') if isinstance(raw, dict) and isinstance(raw.get('packages'), list)
+        else [])
+    scripts = data.get('scripts') if isinstance(data.get('scripts'), dict) else {}
+    return {'declares_workspaces': bool(globs),
+            'workspaces': [g for g in globs if isinstance(g, str)],
+            'scripts': sorted(k for k in scripts if isinstance(k, str))[:20]}
+
+
+def _build_surface(root, tracked, skipped):
+    """What the checkout can be built from, and whether the root manifest is the one in hand."""
+    at_root = set()
+    manifests = {}
+    for name in BUILD_MANIFESTS:
+        root_present = name in tracked
+        elsewhere = sorted(p for p in tracked if p != name and Path(p).name == name)
+        if not root_present and not elsewhere:
+            continue
+        if root_present:
+            at_root.add(name)
+        entry = {'at_root': root_present, 'elsewhere_count': len(elsewhere),
+                 'elsewhere': elsewhere[:20]}
+        if root_present and name == 'Cargo.toml':
+            entry['declares'] = _cargo_declares(read_target_file(root, name, skipped) or '')
+        if root_present and name == 'package.json':
+            entry['declares'] = _package_declares(read_target_file(root, name, skipped) or '')
+        manifests[name] = entry
+    nested_only = sorted(name for name, entry in manifests.items()
+                         if not entry['at_root'] and entry['elsewhere_count'])
+    return {'root_manifests': sorted(at_root), 'manifests': manifests,
+            'lockfiles': sorted(name for name in LOCKFILES if name in tracked),
+            'nested_manifests_without_a_root_one': nested_only,
+            'note': 'A manifest that exists only below the root is the shape of a subproject '
+                    'copied out of its monorepo: the build it needs is declared one level up, '
+                    'and a blocker written from inside it is wrong about the whole repository.'
+                    if nested_only else
+                    'Root manifests were read from the checkout, not assumed.'}
+
+
+def _command_for(root_manifests, toolchains, table):
+    for manifest, argv, tool in table:
+        if manifest not in root_manifests:
+            continue
+        entry = toolchains.get(tool) or {}
+        # `npx` ships with node; the manifest names the runner, node is what must exist.
+        available = entry.get('present') if tool != 'npx' else bool(
+            (toolchains.get('node') or {}).get('present'))
+        return {'command': ' '.join(argv), 'argv': list(argv), 'toolchain': tool,
+                'toolchain_present': bool(available), 'from_manifest': manifest}
+    return None
+
+
+def _test_surface(root, tracked, root_manifests, toolchains):
+    tests = [p for p in tracked if Path(p).suffix in SOURCE_SUFFIXES and _is_test_path(p)]
+    directories = sorted({str(Path(p).parent) for p in tests})
+    return {'test_files': len(tests), 'examples': tests[:20],
+            'directories': directories[:20],
+            'command': _command_for(root_manifests, toolchains, TEST_COMMANDS)}
+
+
+def _archive_probe(rpc, head, opener, timeout):
+    """Oldest block at which this endpoint still answers a state read, and whether logs survive.
+
+    Read-only: eth_getBalance of the zero address and a one-block eth_getLogs. Nothing here
+    writes, and the endpoint itself is never recorded.
+    """
+    probes, deepest = [], None
+    for offset in ARCHIVE_OFFSETS:
+        number = head - offset
+        if number < 0:
+            continue
+        try:
+            rpc_call(rpc, 'eth_getBalance', [PROBE_ZERO_ADDRESS, hex(number)], opener, timeout)
+        except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            probes.append({'offset': offset, 'block': number, 'answered': False,
+                           'reason': _scrub_endpoint(str(exc), rpc)[:200]})
+            continue
+        probes.append({'offset': offset, 'block': number, 'answered': True})
+        deepest = {'offset': offset, 'block': number}
+    logs = {'answered': False, 'reason': 'no block answered a state read'}
+    if deepest:
+        try:
+            rpc_call(rpc, 'eth_getLogs', [{'fromBlock': hex(deepest['block']),
+                                           'toBlock': hex(deepest['block'])}], opener, timeout)
+            logs = {'answered': True, 'block': deepest['block']}
+        except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            logs = {'answered': False, 'block': deepest['block'],
+                    'reason': _scrub_endpoint(str(exc), rpc)[:200]}
+    return {'probes': probes, 'oldest_answering_block': deepest['block'] if deepest else None,
+            'archive_depth_blocks': deepest['offset'] if deepest else None, 'logs': logs}
+
+
+def _probe_rpc(rpc, opener, timeout):
+    """Chain id, head and reach. The URL is an argument only; it is never part of the result."""
+    try:
+        chain_id = int(rpc_call(rpc, 'eth_chainId', [], opener, timeout), 16)
+        head = int(rpc_call(rpc, 'eth_blockNumber', [], opener, timeout), 16)
+    except (OSError, ValueError, TypeError, urllib.error.URLError,
+            json.JSONDecodeError) as exc:
+        return {'reachable': False, 'endpoint': 'not recorded',
+                'reason': _scrub_endpoint(str(exc), rpc)[:200]}
+    result = {'reachable': True, 'endpoint': 'not recorded', 'chain_id': chain_id,
+              'head_block': head}
+    result.update(_archive_probe(rpc, head, opener, timeout))
+    return result
+
+
+def _evidence(state, reason):
+    return {'state': state, 'reason': reason}
+
+
+def _evidence_kinds(build, tests, build_run, test_run, rpc, deep):
+    """What this run can actually prove, one line per evidence kind.
+
+    `unknown` is used only where nothing was measured - no --rpc, or a build nobody executed.
+    A measured failure is `unavailable` and says what failed.
+    """
+    kinds = {}
+    build_command = build.get('command')
+    if not build_command:
+        kinds['source-build'] = _evidence(
+            'unavailable', 'no root build manifest this helper knows how to build: '
+            + (', '.join(build['root_manifests']) or 'no root manifest at all'))
+    elif not build_command['toolchain_present']:
+        kinds['source-build'] = _evidence(
+            'unavailable', build_command['toolchain'] + ' is not on PATH, so `'
+            + build_command['command'] + '` cannot run')
+    elif not deep:
+        kinds['source-build'] = _evidence(
+            'unknown', 'the build was NOT executed: `' + build_command['command']
+            + '` would run it, and --deep executes it and records the result')
+    elif build_run and build_run.get('ran') and build_run.get('exit_code') == 0:
+        kinds['source-build'] = _evidence('available', '`' + build_command['command']
+                                          + '` exited 0 in this checkout')
+    else:
+        kinds['source-build'] = _evidence(
+            'unavailable', '`' + build_command['command'] + '` '
+            + ((f"exited {build_run['exit_code']}: " + build_run.get('output_excerpt', ''))
+               if build_run and build_run.get('ran') else
+               (build_run or {}).get('reason', 'was not executed')))
+    test_command = tests.get('command')
+    if not tests['test_files']:
+        kinds['native-test-execution'] = _evidence(
+            'unavailable', 'the checkout has no tracked test files')
+    elif not test_command:
+        kinds['native-test-execution'] = _evidence(
+            'unavailable', 'test files exist but no root manifest names a runner for them')
+    elif not test_command['toolchain_present']:
+        kinds['native-test-execution'] = _evidence(
+            'unavailable', test_command['toolchain'] + ' is not on PATH, so `'
+            + test_command['command'] + '` cannot run')
+    elif not deep:
+        kinds['native-test-execution'] = _evidence(
+            'unknown', 'the tests were NOT executed: `' + test_command['command']
+            + '` would run them, and --deep executes them and records the result')
+    elif test_run and test_run.get('ran') and test_run.get('exit_code') == 0:
+        kinds['native-test-execution'] = _evidence('available', '`' + test_command['command']
+                                                   + '` exited 0 in this checkout')
+    else:
+        kinds['native-test-execution'] = _evidence(
+            'unavailable', '`' + test_command['command'] + '` '
+            + ((f"exited {test_run['exit_code']}: " + test_run.get('output_excerpt', ''))
+               if test_run and test_run.get('ran') else
+               (test_run or {}).get('reason', 'was not executed')))
+    on_chain = ('mainnet-fork', 'archive-state', 'historical-logs', 'bytecode-comparison')
+    if rpc is None or not rpc['reachable']:
+        state, reason = (('unknown', 'no --rpc was given, so no endpoint was probed')
+                         if rpc is None else
+                         ('unavailable', 'the endpoint did not answer: ' + rpc['reason']))
+        for kind in on_chain:
+            kinds[kind] = _evidence(state, reason)
+        return kinds
+    # Forking and bytecode comparison both need an EVM toolchain. forge brings anvil; hardhat
+    # through npx forks and compiles too, so either one answers both kinds.
+    evm_tool = (build_command['toolchain']
+                if build_command and build_command['toolchain'] in ('forge', 'npx')
+                and build_command['toolchain_present'] else None)
+    kinds['mainnet-fork'] = _evidence(
+        'available', f"the endpoint answers at head block {rpc['head_block']} on chain "
+                     f'{rpc["chain_id"]}, and {evm_tool} is on PATH to fork it') \
+        if evm_tool else _evidence(
+        'unavailable', 'the endpoint answers, but no EVM toolchain is on PATH to fork it')
+    depth = rpc.get('archive_depth_blocks')
+    if depth is None:
+        kinds['archive-state'] = _evidence(
+            'unavailable', 'no probed block answered a state read')
+    elif depth >= ARCHIVE_MIN_DEPTH:
+        kinds['archive-state'] = _evidence(
+            'available', f'a state read answered {depth} blocks behind the head '
+                         f"(oldest answering block {rpc['oldest_answering_block']})")
+    else:
+        kinds['archive-state'] = _evidence(
+            'unavailable', f'a state read answered only {depth} blocks behind the head; this '
+                           'endpoint keeps no archive history worth aiming at')
+    logs = rpc.get('logs') or {}
+    if logs.get('answered') and (depth or 0) >= ARCHIVE_MIN_DEPTH:
+        kinds['historical-logs'] = _evidence(
+            'available', f"eth_getLogs answered at block {logs.get('block')}")
+    elif logs.get('answered'):
+        kinds['historical-logs'] = _evidence(
+            'unavailable', f"eth_getLogs answered only at block {logs.get('block')}, "
+                           f'{depth} blocks behind the head')
+    else:
+        kinds['historical-logs'] = _evidence(
+            'unavailable', 'eth_getLogs did not answer: ' + str(logs.get('reason')))
+    kinds['bytecode-comparison'] = _evidence(
+        'available', 'the endpoint answers eth_getCode and ' + str(evm_tool) + ' is on PATH to '
+                     'build the artifact; run verify-deployment --run once it is built') \
+        if evm_tool else _evidence(
+        'unavailable', 'the endpoint answers, but no EVM build toolchain is on PATH to produce '
+                       'the artifact to compare against')
+    return kinds
+
+
+def capability_probe(repo, run, rpc=None, deep=False, timeout=PROBE_TIMEOUT, opener=None):
+    """Establish, before the first lens runs, what evidence this run can produce.
+
+    Nothing here finds a bug. It measures the run's own reach - toolchains, build and test
+    surface, how far back an endpoint answers - so the lenses aim at what is provable and a
+    real constraint is a known boundary instead of a surprise exit three passes in.
+    """
+    repo = Path(repo).resolve()
+    root = Path(git(repo, 'rev-parse', '--show-toplevel').strip()).resolve()
+    run = _deployment_run(run)
+    require_private_output(run, root, what='capability-probe --run')
+    if timeout < 1:
+        raise ValueError('--timeout must be at least 1 second')
+    tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
+    skipped = []
+    toolchains = _probe_toolchains(timeout)
+    build = _build_surface(root, set(tracked), skipped)
+    build['command'] = _command_for(build['root_manifests'], toolchains, BUILD_COMMANDS)
+    tests = _test_surface(root, tracked, build['root_manifests'], toolchains)
+    build_run = test_run = None
+    if deep:
+        # --deep runs the target's own build and test suite, which executes target-controlled
+        # code (build.rs, npm lifecycle scripts, foundry plugins). That is the other reason it
+        # is off by default, besides the time it takes.
+        for command, slot in ((build['command'], 'build'), (tests['command'], 'test')):
+            if not command or not command['toolchain_present']:
+                continue
+            result = _probe_command(command['argv'], cwd=root, timeout=timeout)
+            if slot == 'build':
+                build_run = result
+            else:
+                test_run = result
+    probed_rpc = _probe_rpc(rpc, opener, timeout) if rpc else None
+    kinds = _evidence_kinds(build, tests, build_run, test_run, probed_rpc, deep)
+    result = {'schema_version': SCHEMA_VERSION, 'skill_version': skill_version(),
+              'probed_at': datetime.now(timezone.utc).isoformat(),
+              'target_root': str(root), 'commit': git(root, 'rev-parse', 'HEAD').strip(),
+              'deep': bool(deep), 'timeout_seconds': timeout,
+              'toolchains': toolchains, 'build_surface': build, 'test_surface': tests,
+              'deep_build': build_run, 'deep_test': test_run,
+              'rpc': probed_rpc, 'evidence': kinds,
+              'skipped_files': skipped,
+              'notice': 'Capability only. This says what this run could prove, never that any '
+                        'mechanism is real. '
+                        + ('--deep executed the build and the test command; their output is '
+                           'excerpted and redacted.' if deep else
+                           'The build was NOT executed: rerun with --deep to execute the build '
+                           'and the test command and record their exit codes.')
+                        + (' The RPC endpoint is never written here or printed.' if rpc else
+                           ' No --rpc was given, so nothing on-chain was measured.')}
+    path = run / 'capabilities.json'
+    if path.is_symlink():
+        raise ValueError(f'{path} is a symlink; refusing to write through it')
+    dump(path, result)
+    return dict(result, capabilities_file=str(path))
+
+
+def read_capabilities(run):
+    """The probed capabilities of a run, or None when it never probed."""
+    path = Path(run) / 'capabilities.json'
+    if not path.is_file():
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get('evidence'), dict) else None
+
+
+# Blocker wording a probe can contradict, each pattern naming the one evidence kind that
+# answers it. Deliberately short and literal: a false accusation against a real blocker costs
+# more than a missed one, so a pattern fires only on wording that names what the probe
+# measured, and only against a capability the probe recorded as `available`.
+BLOCKER_CONTRADICTIONS = (
+    ('source-build', re.compile(
+        r'(?i)\b(?:cannot|can ?not|can\'t|could ?n[o\']t|unable to|fails? to|failed to|'
+        r'does ?n[o\']t|do ?n[o\']t|will not|won\'t|impossible to)\s+(?:\w+\s+){0,3}?'
+        r'(?:build|compile)\b|\b(?:build|compilation)\s+(?:is\s+)?(?:fails|failed|failing|'
+        r'broken|impossible)\b|\bcannot be (?:built|compiled|installed)\b')),
+    ('native-test-execution', re.compile(
+        r'(?i)\b(?:cannot|can ?not|can\'t|could ?n[o\']t|unable to|fails? to|failed to|'
+        r'does ?n[o\']t|will not|won\'t|no way to)\s+(?:\w+\s+){0,3}?(?:run|execute)\s+'
+        r'(?:the\s+|any\s+)?tests?\b|\btests?\s+cannot be (?:run|executed)\b|'
+        r'\bno (?:test (?:suite|runner|harness)|runnable tests)\b')),
+    ('archive-state', re.compile(
+        r'(?i)\b(?:no|without|needs?|requires?|lacks?|missing)\s+(?:an?\s+|paid\s+){0,2}'
+        r'archive(?:\s+(?:node|rpc|access|history))?\b|\bnot an archive node\b')),
+    ('historical-logs', re.compile(
+        r'(?i)\b(?:no|without|needs?|requires?|lacks?|missing)\s+(?:\w+\s+){0,2}?'
+        r'(?:log|event)\s*histor|\bhistorical (?:logs|events)\s+(?:are\s+)?'
+        r'(?:un)?available\b')),
+    ('mainnet-fork', re.compile(
+        r'(?i)\b(?:cannot|can ?not|can\'t|could ?n[o\']t|unable to)\s+fork\b|'
+        r'\bno (?:mainnet )?fork(?:ing)?\b|\bforking is (?:not possible|unavailable)\b')),
+)
+
+
+def contradicted_blockers(run, records):
+    """Open records whose blocker claims the opposite of something the probe measured.
+
+    Only a capability the probe recorded as `available` contradicts anything: an `unknown` or
+    an `unavailable` kind agrees with the blocker or says nothing, and must never accuse it.
+    """
+    capabilities = read_capabilities(run)
+    if not capabilities:
+        return []
+    flagged = []
+    for row in records:
+        if not isinstance(row, dict) or row.get('status') not in OPEN_STATUSES:
+            continue
+        next_step = row.get('next_experiment')
+        claim = blocker_claim(next_step.get('blocker') if isinstance(next_step, dict) else None)
+        if not claim:
+            continue
+        for kind, pattern in BLOCKER_CONTRADICTIONS:
+            entry = capabilities['evidence'].get(kind)
+            if not isinstance(entry, dict) or entry.get('state') != 'available':
+                continue
+            if not pattern.search(claim):
+                continue
+            flagged.append({'id': row.get('id'), 'claim': claim[:300], 'capability': kind,
+                            'probe_reason': str(entry.get('reason'))[:300],
+                            'matched': pattern.search(claim).group(0)})
+    return flagged
+
+
+# --------------------------------------------------------------------------- #
+# coverage floor
+# --------------------------------------------------------------------------- #
+
+# Directories a checkout carries but does not own, plus build output. `bundle` keeps them out
+# through --scope; a coverage floor has to name them, or one vendored OpenZeppelin tree puts
+# the fraction permanently out of reach. Every exclusion is counted in the result so a wrong
+# one is visible rather than silent, and --scope stays the authoritative narrowing.
+VENDOR_PARTS = {'node_modules', 'vendor', 'third_party', 'thirdparty', 'lib', 'libs',
+                'dependencies', 'submodules', 'target', 'dist', 'build', 'out', 'artifacts',
+                'cache', 'generated', 'venv', '.venv'}
+COVERAGE_FLOOR_DEFAULT = 0.8
+UNEXAMINED_SHOWN = 50
+# A surface cell reads `src/Vault.sol:Vault.withdraw`, sometimes two of them in one cell. Only
+# the path part is a path, and it is matched by whole segments.
+SURFACE_SPLIT = re.compile(r'[\s,;]+')
+
+
+def _is_vendored_path(path):
+    return any(part.lower() in VENDOR_PARTS for part in Path(path).parts[:-1])
+
+
+def _surface_paths(cell):
+    """Path-looking tokens in one surface cell, stripped of the `:Contract.function` tail.
+
+    A token counts as a path when it carries a separator or a source suffix. `src/` and
+    `src/vault` are directories and cover what is under them; a bare `src` is not credited,
+    because one such row would otherwise mark a whole tree examined - and it is anyway
+    indistinguishable from an invariant name like `accounting`.
+    """
+    found = []
+    for token in SURFACE_SPLIT.split(cell or ''):
+        raw = token.strip().strip('`*_|').split(':', 1)[0].replace('\\', '/').lstrip('./')
+        if not raw or _is_placeholder(raw) or not ('/' in raw or Path(raw).suffix):
+            continue
+        trimmed = raw.rstrip('/')
+        if trimmed:
+            found.append(trimmed)
+    return found
+
+
+def _examines(path, surface):
+    """Whole-segment match only: `src` covers src/Vault.sol, `Vault.sol` covers it by name."""
+    if path == surface or path.startswith(surface + '/'):
+        return True
+    return '/' not in surface and bool(Path(surface).suffix) and Path(path).name == surface
+
+
+def _examined_by(files, surfaces):
+    return {path for path in files for surface in surfaces if _examines(path, surface)}
+
+
+def _coverage_md_surfaces(run):
+    surfaces = []
+    path = Path(run) / 'coverage.md'
+    if not path.is_file():
+        return surfaces
+    for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
+        # The header names the columns and the rule is dashes; neither is a surface examined.
+        if line.count('|') < 3 or re.match(r'\s*\|?\s*:?-{3}', line):
+            continue
+        surfaces.extend(_surface_paths(line.strip().strip('|').split('|')[0]))
+    return surfaces
+
+
+def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_DEFAULT):
+    """Measure what the run recorded against the in-scope file list it was given.
+
+    `exhausted` was declared on one target after eight contracts were read, with nothing
+    comparing that against scope. This is that comparison: a file counts as examined when a
+    coverage.md row, a known-hypotheses.md row or a record's affected_paths names it.
+    """
+    repo, run = Path(repo).resolve(), Path(run).resolve()
+    root = Path(git(repo, 'rev-parse', '--show-toplevel').strip()).resolve()
+    run = _deployment_run(run)
+    require_private_output(run, root, what='coverage-floor --run')
+    if not 0 <= min_fraction <= 1:
+        raise ValueError('--min-fraction must be between 0 and 1')
+    tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
+    candidates = [p for p in tracked if Path(p).suffix in SOURCE_SUFFIXES
+                  and not _is_test_path(p) and path_in_scope(p, scope_prefixes)]
+    vendored = sorted(p for p in candidates if _is_vendored_path(p))
+    skipped = []
+    in_scope = []
+    for path in candidates:
+        if _is_vendored_path(path):
+            continue
+        # Same rule the bundle readers apply: a tracked symlink, a submodule gitlink or a
+        # device node is not a source file anybody can be asked to have read.
+        if target_file_size(root, path) is None:
+            skipped.append({'path': path, 'reason': 'not a regular file in the checkout'})
+            continue
+        in_scope.append(path)
+    files = set(in_scope)
+    records = read_json(run / 'findings.json') if (run / 'findings.json').is_file() else []
+    records = records if isinstance(records, list) else []
+    record_surfaces = []
+    for row in records:
+        paths = row.get('affected_paths') if isinstance(row, dict) else None
+        for item in paths if isinstance(paths, list) else []:
+            record_surfaces.extend(_surface_paths(item if isinstance(item, str) else ''))
+    sources = {
+        'coverage.md': _examined_by(files, _coverage_md_surfaces(run)),
+        'known-hypotheses.md': _examined_by(
+            files, [s for row in _known_hypothesis_rows(run)
+                    for s in _surface_paths(row['surface'])]),
+        'findings.json': _examined_by(files, record_surfaces)}
+    examined = sorted(sources['coverage.md'] | sources['known-hypotheses.md']
+                      | sources['findings.json'])
+    unexamined = sorted(files - set(examined))
+    fraction = round(len(examined) / len(files), 4) if files else 0.0
+    state = ('no-files-in-scope' if not files else
+             'at-or-above-floor' if fraction >= min_fraction else 'below-floor')
+    result = {'state': state, 'scope': list(scope_prefixes or []),
+              'files_in_scope': len(files), 'files_examined': len(examined),
+              'examined_fraction': fraction, 'min_fraction': min_fraction,
+              'examined_by_source': {name: len(hit) for name, hit in sources.items()},
+              'unexamined_count': len(unexamined), 'unexamined': unexamined,
+              'excluded_vendored_count': len(vendored), 'excluded_vendored': vendored[:50],
+              'skipped_files': skipped,
+              'notice': 'Recorded, not audited: a coverage.md row means somebody wrote a row, '
+                        'never that the file is safe. A file counts as examined when a '
+                        'coverage.md surface, a known-hypotheses.md surface or a record\'s '
+                        'affected_paths names it by whole path segments; a surface ending in / '
+                        'is a directory and covers what is under it, a bare name with no '
+                        'separator is not credited. Vendored and test paths are excluded and '
+                        'counted; --scope is what actually decides the in-scope list, and an '
+                        'empty one measures nothing and never passes.'}
+    path = run / 'coverage-floor.json'
+    if path.is_symlink():
+        raise ValueError(f'{path} is a symlink; refusing to write through it')
+    dump(path, result)
+    summary = dict(result, coverage_floor_file=str(path),
+                   unexamined=unexamined[:UNEXAMINED_SHOWN],
+                   unexamined_truncated=len(unexamined) > UNEXAMINED_SHOWN)
+    return summary
+
+
+def read_coverage_floor(run):
+    """The last coverage-floor measurement of a run, or None when it never measured."""
+    path = Path(run) / 'coverage-floor.json'
+    if not path.is_file():
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get('examined_fraction'), (int, float)):
+        return None
+    return {'state': data.get('state'), 'files_in_scope': data.get('files_in_scope'),
+            'files_examined': data.get('files_examined'),
+            'examined_fraction': data['examined_fraction'],
+            'min_fraction': data.get('min_fraction'),
+            'unexamined_count': data.get('unexamined_count')}
 
 
 # --------------------------------------------------------------------------- #
@@ -1319,6 +1979,89 @@ def _deployment_evidence_paths(value):
     return None
 
 
+def blocker_claim(blocker):
+    """The claim text of a blocker in either form, or '' when the record carries none."""
+    if isinstance(blocker, str):
+        return blocker.strip()
+    if isinstance(blocker, dict) and has_text(blocker.get('claim')):
+        return blocker['claim'].strip()
+    return ''
+
+
+def blocker_state(blocker):
+    """Classify a blocker as reproduced, unverified or absent.
+
+    Reproduced means someone ran something and recorded what came back: the command and an
+    excerpt of its output. Everything else - a bare sentence, an object with a claim and no
+    command - is unverified. It is still a blocker; it is simply not evidence yet.
+    """
+    if not blocker_claim(blocker):
+        return 'absent'
+    if (isinstance(blocker, dict) and has_text(blocker.get('command'))
+            and has_text(blocker.get('output_excerpt'))):
+        return 'reproduced'
+    return 'unverified'
+
+
+def _check_blocker(blocker, prefix, errors):
+    """Shape only. A string is the legacy form and always passes; an object must be complete."""
+    if isinstance(blocker, str):
+        return
+    if not isinstance(blocker, dict):
+        errors.append(prefix + ': next_experiment.blocker must be a string, or an object with '
+                      'claim and the optional command, exit_code, output_excerpt, recorded_at '
+                      'and attempted_alternative')
+        return
+    if not has_text(blocker.get('claim')):
+        errors.append(prefix + ': next_experiment.blocker.claim is required and must be a '
+                      'nonempty string')
+    for key in BLOCKER_STRING_FIELDS:
+        if key in blocker and not isinstance(blocker[key], str):
+            errors.append(prefix + ': next_experiment.blocker.' + key + ' must be a string')
+    if 'exit_code' in blocker and type(blocker['exit_code']) is not int:
+        errors.append(prefix + ': next_experiment.blocker.exit_code must be an integer')
+
+
+def _blocked_lead(row):
+    """An open record whose experiment is ready and whose only obstacle is a blocker."""
+    next_step = row.get('next_experiment')
+    if not isinstance(next_step, dict):
+        return None
+    if not all(has_text(next_step.get(key))
+               for key in ('question', 'method', 'expected_evidence')):
+        return None
+    blocker = next_step.get('blocker')
+    state = blocker_state(blocker)
+    return None if state == 'absent' else {'state': state, 'claim': blocker_claim(blocker)}
+
+
+def _record_surface(row):
+    """The paths a record names, as one readable string; a wrong shape simply names nothing."""
+    paths = row.get('affected_paths')
+    return ', '.join(p.strip() for p in paths if has_text(p)) if isinstance(paths, list) else ''
+
+
+def _check_blocked_leads(records, errors):
+    """No submission out of a run that parked a needed experiment behind an unproven blocker.
+
+    This is a run-level gate, the same shape as the unread-bundle one: a `needs-evidence`
+    record is a stated intention to run an experiment, and a bare-string blocker on it is the
+    one failure mode that leaves no trace - later passes read it as closed ground and the
+    surface is never looked at again. Reproducing it costs one command and two lines of output,
+    and running that command is exactly what catches a blocker that was never true.
+    """
+    for i, row in enumerate(records):
+        if not isinstance(row, dict) or row.get('status') != 'needs-evidence':
+            continue
+        blocked = _blocked_lead(row)
+        if not blocked or blocked['state'] == 'reproduced':
+            continue
+        errors.append(f'finding[{i}]: needs-evidence record is held by an unverified blocker '
+                      f'({blocked["claim"][:120]}). Reproduce it - record next_experiment.blocker '
+                      'as an object with claim, command and output_excerpt - or, if nobody is '
+                      'going to run it, drop the blocker and park or refute the record')
+
+
 def _escalation_attempted(row):
     """Amplifiers this record actually recorded a result for; wrong shapes simply do not count."""
     escalation = row.get('escalation')
@@ -1409,8 +2152,8 @@ def _check_record(row, prefix, run, seen, errors):
             for key in ('question', 'method', 'expected_evidence'):
                 if not has_text(next_step.get(key)):
                     errors.append(prefix + ': open candidate requires next_experiment.' + key)
-            if 'blocker' in next_step and not isinstance(next_step['blocker'], str):
-                errors.append(prefix + ': next_experiment.blocker must be a string')
+            if 'blocker' in next_step:
+                _check_blocker(next_step['blocker'], prefix, errors)
     history_review = row.get('history_review')
     if history_review is not None:
         if not isinstance(history_review, dict):
@@ -1884,6 +2627,7 @@ def validate(run, submission=False, ledger=True):
                    if submission else None)
     if submission:
         _check_dispatch(run, errors)
+        _check_blocked_leads(records, errors)
     seen, targets = set(), 0
     for i, row in enumerate(records):
         prefix = f'finding[{i}]'
@@ -4481,6 +5225,31 @@ def build_parser():
     queue = sub.add_parser('queue', help='show every open lead and its required next experiment')
     queue.add_argument('--run', required=True)
 
+    probe = sub.add_parser('capability-probe',
+                           help='establish what evidence this run can produce, before aiming it')
+    probe.add_argument('--repo', required=True)
+    probe.add_argument('--run', required=True)
+    probe.add_argument('--rpc', default=None,
+                       help='read-only JSON-RPC endpoint to measure reach against; the URL is '
+                            'never written to capabilities.json nor printed')
+    probe.add_argument('--deep', action='store_true',
+                       help='also run the build and the test command and record their exit '
+                            'codes; slow, and it executes the target\'s own build scripts')
+    probe.add_argument('--timeout', type=int, default=PROBE_TIMEOUT,
+                       help=f'seconds per probed command; default {PROBE_TIMEOUT}')
+
+    floor = sub.add_parser('coverage-floor',
+                           help='compare what the run recorded against the in-scope file list')
+    floor.add_argument('--repo', required=True)
+    floor.add_argument('--run', required=True)
+    floor.add_argument('--scope', action='append', default=None,
+                       help='path prefix to keep; repeatable')
+    floor.add_argument('--gate', action='store_true',
+                       help='fail while the examined fraction is below --min-fraction')
+    floor.add_argument('--min-fraction', type=float, default=COVERAGE_FLOOR_DEFAULT,
+                       help=f'examined fraction a run must reach before it may call itself '
+                            f'exhausted; default {COVERAGE_FLOOR_DEFAULT}')
+
     exp = sub.add_parser('experiment-gate', help='require paired execution on top queued leads before another hunt pass')
     exp.add_argument('--run', required=True)
     exp.add_argument('--limit', type=int, default=3)
@@ -4647,6 +5416,14 @@ def main(argv=None):
             result = lead_queue(args.run)
             print(json.dumps(result, indent=2))
             return 1 if result['state'] == 'invalid' else 0
+        if args.action == 'capability-probe':
+            print(json.dumps(capability_probe(args.repo, args.run, args.rpc, args.deep,
+                                              args.timeout), indent=2))
+            return 0
+        if args.action == 'coverage-floor':
+            result = coverage_floor(args.repo, args.run, args.scope, args.min_fraction)
+            print(json.dumps(result, indent=2))
+            return 1 if args.gate and result['examined_fraction'] < args.min_fraction else 0
         if args.action == 'experiment-gate':
             result = load_impact_helper('experiment_gate').review(args.run, args.limit)
             print(json.dumps(result, indent=2))

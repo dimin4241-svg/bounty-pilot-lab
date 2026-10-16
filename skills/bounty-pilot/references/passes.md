@@ -266,7 +266,31 @@ found. Then stop when any one is true:
 - Every lens the shape table calls for has run, the seam pass has run, and `misses.md` is
   answered.
 - Every remaining lead is blocked on the same missing capability — a toolchain, an RPC, program
-  rules. Report the blocker rather than narrating around it.
+  rules. Report the blocker rather than narrating around it, and reproduce it first: a shared
+  blocker closes the whole run, so it is the one claim worth an `output_excerpt`
+  (`evidence.md`, `blind-spots.md` §8).
+
+Each of those is a claim about coverage, so none of them is satisfied on your own sense of having
+read enough. Measure it:
+
+```sh
+python3 $S coverage-floor --repo <checkout> --run <run> --scope src/ --gate
+```
+
+It writes `coverage-floor.json`: the in-scope files compared against what this run actually
+recorded — `coverage.md` rows, `known-hypotheses.md` surfaces and `affected_paths` in
+`findings.json` — with the examined fraction and the list of what is unexamined. **A run may not
+call itself exhausted over an unread majority.** This is a condition on the rules above, not a
+replacement for them: on one target a hunt was declared exhausted after eight contracts, and
+nothing ever compared that against the in-scope file list. Either read what the floor names, or
+write in `coverage.md` which files you are leaving unread and why — the unexamined list is the
+honest coverage statement, and it is where a resumed scan aims.
+
+`--gate` fails below `--min-fraction`, default 0.8: a coverage row is cheap at the moment you
+declare yourself done, including a "read it, nothing here" row, which is what the table is for, and
+the remaining fifth is room for files that genuinely need none. A surface ending in `/` is a
+directory and credits what is under it; a bare name with no separator credits nothing, because
+`src` and an invariant called `accounting` are indistinguishable.
 
 There is no finding quota. Zero verified findings after an honest run is a legitimate result, and
 more useful than three inflated ones: say which surfaces you closed and on what evidence.
@@ -274,7 +298,7 @@ more useful than three inflated ones: say which surfaces you closed and on what 
 ## Before you report — answer `misses.md`
 
 The last step of the loop is not a pass; it is a check against your own output.
-`references/misses.md` lists twenty ways a hunt stops short, each with a cheap fix: concluding from
+`references/misses.md` lists twenty-six ways a hunt stops short, each with a cheap fix: concluding from
 a name, stopping at the first consequence, skipping the privileged path because a checklist said
 "do not report admin can rug", never reading the dependency, never checking the compiler, auditing
 HEAD when scope is pinned to deployed addresses, dropping leads silently, and letting an unanchored

@@ -11,6 +11,32 @@ eligibility unknown. Read-only inspection is distinct from active testing; follo
 limits for any network interaction. A public repository alone does not authorize testing a running
 service.
 
+## First, probe what this run can actually prove
+
+Before the lenses are chosen and before any pass reads code for bugs, record what this environment
+can do:
+
+```sh
+python3 <skill-dir>/scripts/bounty.py capability-probe --repo <checkout> --run <run> \
+    [--rpc <read-only-url>] [--deep]
+```
+
+It writes `capabilities.json`: which toolchains are present and at which versions, which build and
+test files the checkout actually has — including whether a root manifest exists and what workspaces
+it declares — and, with `--rpc`, the chain id, the head block and the **measured archive depth**,
+how far back the endpoint still answers historical queries. `--deep` additionally runs the build
+and test command and records their exit codes. The RPC URL itself is never written into the run and
+never printed.
+
+Run it here, not after a candidate has been parked. The archive-depth measurement is the specific
+fact hunts keep rediscovering by hand, always too late — "needs an archive mainnet RPC", "public
+RPCs give no archive or log history", "blocked without a paid key", each one found with a candidate
+already in hand that was then parked unproven. Measured at Stage 1 the same fact is a boundary the
+hunt is aimed inside: it tells you which experiments are decidable here before you choose what to
+look for, and whether this target needs access you do not have. It also contradicts a wrong blocker
+in one command — a root manifest a record claims does not exist appears in `capabilities.json` with
+its workspace list (`blind-spots.md` §8).
+
 ## Record in `scope.md`
 
 - Canonical repository, full commit, clean or dirty status, and local changes relevant to the audit.
@@ -21,6 +47,8 @@ service.
 - Previous audits and contests with their **exact** reviewed revisions. If no baseline is evidenced,
   do a full review; never call an arbitrary recent range the post-audit delta.
 - The commands needed to compile and test, whether they were inspected, and whether they were run.
+  `capabilities.json` answers all three, and `--deep` is what makes the last one a recorded exit
+  code rather than a claim.
 
 ## Write these three files before any pass reads code for bugs
 

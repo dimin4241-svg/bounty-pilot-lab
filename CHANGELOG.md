@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.16.0
+
+Fifteen hunts, zero payouts. Reading the records, most were not lost at triage — they stopped
+before proving anything. Three mechanisms let a run quit while calling itself finished, and each
+is now measured instead of asserted.
+
+### A blocker carries its own evidence
+
+- `next_experiment.blocker` was validated as "is a string". In a live hunt a subagent wrote
+  "cannot be installed — no root package.json, no workspaces"; the orchestrator carried it
+  unverified and three passes went by with no test ever executed against the highest-paying
+  contracts in scope. The root manifest existed and declared the workspaces — the subagent had
+  copied one subproject out of a monorepo. A blocker is read by every later pass as closed ground,
+  so a wrong one silently deletes a surface, and it is the one claim the triage exchange never
+  attacks.
+- It now also accepts an object: `claim` plus `command`, `exit_code`, `output_excerpt`,
+  `recorded_at`, `attempted_alternative`. A bare string still validates, so existing runs are
+  unaffected. A blocker counts as **reproduced** only with both a command and an output excerpt.
+- `queue` reports `unverified_blockers`. **Behaviour change that can newly fail a run:**
+  `check --submission` refuses a `needs-evidence` record whose only obstacle is an unverified
+  blocker. Three one-step escapes — run the command, drop the blocker, or re-file as a hypothesis.
+
+### `capability-probe`: know what this run can prove, before hunting
+
+- The same wall recurred hunt after hunt — "needs an archive RPC this run has no access to",
+  "public RPCs give no log history" — always found *after* a candidate existed, which was then
+  parked. New `capability-probe --repo <checkout> --run <run> [--rpc URL] [--deep] [--timeout N]`
+  records which toolchains are present with versions, which build and test files the checkout
+  actually has, and with `--rpc` the chain id, head block and **measured archive depth**.
+- It reports six evidence kinds as `available`, `unavailable` or `unknown`, each with a reason, and
+  reserves `unknown` for "nothing was measured" rather than letting it read as a pass. `--deep`
+  runs the build and tests and records exit codes; it is off by default because it executes
+  target-controlled code.
+- `build_surface` flags a manifest that exists only below the root — the shape of a subproject
+  copied out of its monorepo, which is the mistake above, caught in one command.
+- The RPC URL is never written or printed: `capabilities.json` records `"endpoint": "not recorded"`
+  and the URL and its bare hostname are scrubbed from every error string.
+- `queue` flags `contradicted_blockers` — a blocker whose wording claims the opposite of something
+  the probe measured as available. Five named patterns, each tied to one capability; `unknown` and
+  `unavailable` never accuse anything.
+
+### `coverage-floor`: "exhausted" has to answer to a number
+
+- On one target a hunt was declared exhausted after eight contracts and nothing compared that
+  against the in-scope list. New `coverage-floor --repo <checkout> --run <run> [--scope P]
+  [--gate] [--min-fraction F]` compares in-scope files against `coverage.md` rows,
+  `known-hypotheses.md` surfaces and `affected_paths`, and reports the examined fraction with the
+  complete unexamined list. `--gate` fails below 0.8 by default.
+- A surface ending in `/` credits the tree under it; a bare name with no separator credits nothing.
+  Vendored and test paths are excluded, counted and sampled, because that exclusion list cannot be
+  right everywhere.
+- Recorded is not audited: a row means somebody wrote a row, never that the file is safe.
+
+### Trimmed
+
+- `SKILL.md` 24.3KB to 23.4KB. The monorepo case moved to `references/blind-spots.md` §8, where
+  blockers are handled, leaving the rule in place at the top. Stale counts fixed: `misses.md` has
+  twenty-six items, and `lenses.md` now lists all eight blind spots.
+- `misses.md` 26 is the LI.FI lesson that reached 0.15.1 outside git — a balance sweep reported
+  half a million dollars on an address typed from recall that turned out to be a Uniswap pool.
+  It was filed as a second item 24; renumbered here.
+
 ## 0.15.0
 
 The workflow gated everything except the one step that finds bugs.
