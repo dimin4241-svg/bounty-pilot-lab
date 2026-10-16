@@ -166,9 +166,17 @@ and the stop rules. In outline:
    calls for: `config` for deployed addresses, `logic` when several actions share state,
    `cross-stack` for off-chain components, `anchor-account` for Solana. `privileged-path` and
    `coverage-gap` run on nearly every target.
-3. **Attack.** Build the bundles and dispatch one agent per bundle in its own context, at most four
-   concurrent by default. A lens reading files opportunistically covers less than a lens handed
-   its bundle.
+3. **Attack.** Build the bundles and dispatch **one agent per bundle, each in its own context**, at
+   most four concurrent by default. A lens reading files opportunistically covers less than a lens
+   handed its bundle.
+
+**Assembling a bundle and then reading it yourself is not a pass; it is the failure this workflow
+exists to prevent.** Independent contexts are the whole mechanism: one orchestrator reading eight
+bundles in one context is one reading, not eight, and it converges on whatever it noticed first.
+`bundle` now logs what it emitted to `bundles/manifest.json`; `queue` lists any lens that was
+assembled and never read as `unread_bundles`, and the submission gate refuses a run that still has
+one. If you genuinely cannot dispatch — no agent tool in this runtime — say so in `coverage.md` and
+read the bundles yourself in separate turns, but record it as the degraded mode it is.
 
 ```sh
 python3 $S bundle --repo <checkout> --run <run> --lens attack --include <run>/delta.json
@@ -213,7 +221,7 @@ orchestrators. Stop at the pass budget, or after two consecutive passes produce 
 mechanism nor new coverage. There is no finding quota; zero verified findings after an honest run
 is a result.
 
-## Evidence-First gate — after the first hunt pass, before another broad reading pass
+## Evidence-First gate — run the experiments, do not stall the passes
 
 Read references/evidence-first.md. Every initial run creates private experiments.json.
 Run the cheapest decisive experiment for up to three highest-priority open records;
@@ -228,8 +236,18 @@ python3 $S experiment-gate --run <run> --limit 3 --gate
 python3 $S queue --run <run>
 ~~~
 
-The gate is mandatory before the next broad pass when open records exist.
-It checks recorded experiment execution, not whether the vulnerability is real;
+**This gate does not hold up the next pass.** Its purpose is that a later pass does not
+re-read an untested hypothesis, and `known-hypotheses.md` plus `saturated.md` already carry that
+information into the bundles. Running the experiments is serial work you do yourself; the passes
+are parallel readings by other agents on other surfaces. Start the next pass, and run the
+experiments alongside it. The gate is mandatory before you report, not between readings.
+
+A gate placed between passes costs more than it saves: in a live run eight bundles were assembled
+and `coverage.md` came back empty, because the budget went to the gate and the readings never
+happened. Dispatch is the only thing in this workflow that finds bugs — nothing may be allowed to
+queue in front of it.
+
+The gate checks recorded experiment execution, not whether the vulnerability is real;
 Stage 4 adjudication and Stage 5 PoC remain independent. A blocked experiment
 stays needs-evidence, never verified. If every experiment is genuinely blocked,
 record the reasons and continue reading on other surfaces without claiming proof.

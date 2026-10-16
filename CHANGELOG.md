@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.15.0
+
+The workflow gated everything except the one step that finds bugs.
+
+Deployment evidence, duplicate review, the escalation ladder, experiments and the scope audit all
+became gates with a script behind them. Dispatch — one agent per bundle, each in its own context —
+stayed prose. `bundle` wrote the files and nothing ever checked that a reading came back, so under
+budget pressure it was the first thing dropped, silently. In the `lifi` run eight lens bundles were
+assembled, `coverage.md` came back as the empty template and no record carried any of those lenses:
+the bundles were built and never read, and the run looked normal.
+
+### A bundle nobody read is now visible, then refused
+
+- `bundle` logs what it emitted to `bundles/manifest.json`: an accumulating list of dispatch events
+  bound to the `run_id`, each with the commit, the scope prefixes, and per bundle the lens, path,
+  size and sha256. Rebuilding one lens never drops another.
+- A lens counts as read on any one of four signals: it appears in `convergence.json`, a
+  `coverage.md` row names it, a record in `findings.json` carries it, or — for `triage`, whose
+  product is objections on other agents' records — a record carries an objection or a concession.
+  Four routes rather than one, so the check does not cry wolf.
+- `queue` lists the rest as `unread_bundles`. It stays a report: it does not fail, and `state` is
+  unchanged.
+- `check --submission` refuses a run that still has one. A run with no manifest is never blocked,
+  so older runs and runs that never bundled are unaffected, and structural `check` ignores it.
+
+### The Evidence-First gate no longer stands in front of the passes
+
+- It was mandatory *before the next broad pass whenever open records existed* — and a first pass
+  always leaves open records. Running up to three experiments is serial work the orchestrator does
+  itself, so passes 2 and 3, where most of the dispatch lived, stopped arriving.
+- Its purpose was that a later pass should not re-read an untested hypothesis, and
+  `known-hypotheses.md` and `saturated.md` already carry that into the bundles. So the gate now runs
+  **alongside** the next pass and is mandatory before the run is reported, never between readings.
+
+### Said plainly in the instructions
+
+- `SKILL.md` and `passes.md` now state that assembling a bundle and reading it yourself is not a
+  pass: an orchestrator that reads eight bundles in one context has performed one reading, not
+  eight. A runtime with no agent tool is a degraded mode to record in `coverage.md`, not a
+  substitute.
+
 ## 0.13.0
 
 - Evidence-First checkpoint: private experiments.json records paired native

@@ -840,8 +840,11 @@ def lead_queue(run):
     # what this command exists to show, so it must not turn the queue into an error.
     errors = validate(run, ledger=False)
     records = read_json(run / 'findings.json')
+    # Reported whatever the records look like: a bundle nobody read is not a record defect.
+    unread_bundles = _dispatch_state(run)['unread']
     if errors:
-        return {'state': 'invalid', 'errors': errors, 'leads': []}
+        return {'state': 'invalid', 'errors': errors, 'leads': [],
+                'unread_bundles': unread_bundles}
     leads, weak_refusals, parked, possibly_parked = [], [], [], []
     for row in records:
         if row['status'] == 'parked':
@@ -878,7 +881,7 @@ def lead_queue(run):
             'untracked_leads': untracked, 'unrecorded_documents': documents,
             'parked': sorted(parked, key=lambda row: row['id']),
             'possibly_parked': sorted(possibly_parked, key=lambda row: row['id']),
-            'weak_refusals': weak_refusals,
+            'weak_refusals': weak_refusals, 'unread_bundles': unread_bundles,
             'notice': 'Every open lead needs a decisive next experiment. A listed experiment is '
                       'not evidence that it was run. untracked_leads are open rows in '
                       'known-hypotheses.md with no live record, and unrecorded_documents are '
@@ -887,7 +890,10 @@ def lead_queue(run):
                       'resume. possibly_parked are refusals whose wording describes an ineligible '
                       'but real mechanism - re-file them as parked if so. escalation_gaps names '
                       'the amplifiers a record has no result for; a weak refusal is a mechanism '
-                      'dropped without one amplifier tried.'}
+                      'dropped without one amplifier tried. unread_bundles are lenses bundle '
+                      'assembled with no evidence that any reading came back - no parsed '
+                      'reading, no coverage.md row, no record carrying the lens - so the bundle '
+                      'was built and never dispatched, and submission is blocked until it is.'}
 
 
 # --------------------------------------------------------------------------- #
@@ -1105,6 +1111,192 @@ def converge(readings, run, threshold=2):
             'notice': 'This counts what was reported, not what is true. A mechanism many readings '
                       'agreed on can still be invalid, and a singleton is the mechanism that still '
                       'needs a second opinion.'}
+
+
+# --------------------------------------------------------------------------- #
+# bundle dispatch: what was assembled, and what came back
+# --------------------------------------------------------------------------- #
+
+BUNDLE_MANIFEST = 'bundles/manifest.json'
+
+
+def _record_dispatch(run, commit, scope_prefixes, written):
+    """Append this bundling to the dispatch log, and report what could not be kept.
+
+    `bundle` legitimately runs several times in one run - aim, attack, logic, seam, triage - so
+    this is a log and not a snapshot: rebuilding one lens must never erase the entry that says
+    another was emitted and is still waiting for a reading.
+    """
+    path = run / BUNDLE_MANIFEST
+    meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
+    run_id, dispatches, notes = meta.get('run_id'), [], []
+    if path.is_file():
+        try:
+            previous = read_json(path)
+        except (OSError, json.JSONDecodeError):
+            previous = None
+        if not isinstance(previous, dict) or not isinstance(previous.get('dispatches'), list):
+            notes.append(BUNDLE_MANIFEST + ' was not a dispatch log and was rewritten; earlier '
+                         'bundlings in this run are no longer recorded')
+        elif previous.get('run_id') != run_id:
+            notes.append(BUNDLE_MANIFEST + ' belongs to a different run and was rewritten; it '
+                         'now records this bundling only')
+        else:
+            dispatches = [event for event in previous['dispatches'] if isinstance(event, dict)]
+    emitted = [{'lens': item['lens'], 'bundle': item['bundle'], 'bytes': item['bytes'],
+                'sha256': _sha256_file(run / item['bundle'])} for item in written]
+    dispatches.append({'generated_at': datetime.now(timezone.utc).isoformat(), 'commit': commit,
+                       'scope_prefixes': [p for p in scope_prefixes or [] if isinstance(p, str)],
+                       'bundles': emitted})
+    dump(path, {'schema_version': SCHEMA_VERSION, 'run_id': run_id, 'dispatches': dispatches})
+    return notes
+
+
+def _names_lens(text, lens):
+    """Whole-word mention, so `seam` is not found inside `seams` nor `delta` inside `deltas`."""
+    return re.search(r'\b' + re.escape(lens) + r'\b', text, re.I) is not None
+
+
+def _manifested_lenses(run):
+    """Every lens the dispatch log says was emitted, the last bundling of each one winning.
+
+    None means there is no usable log: an older run, or one that never called `bundle`. Such a
+    run claims nothing about what was read, so nothing may be concluded against it.
+    """
+    path = Path(run) / BUNDLE_MANIFEST
+    if not path.is_file():
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get('dispatches'), list):
+        return None
+    manifested = {}
+    for event in data['dispatches']:
+        if not isinstance(event, dict) or not isinstance(event.get('bundles'), list):
+            continue
+        for item in event['bundles']:
+            if not isinstance(item, dict) or not has_text(item.get('lens')):
+                continue
+            manifested[item['lens']] = {
+                'lens': item['lens'],
+                'bundle': item['bundle'] if has_text(item.get('bundle')) else '',
+                'built_at': (event['generated_at'] if has_text(event.get('generated_at'))
+                             else '')}
+    return manifested
+
+
+def _reading_evidence(run):
+    """Where each lens left a trace that a reading came back, by lens.
+
+    Any one trace counts, so the check cannot cry wolf at a pass that recorded its reading one
+    way and not another: a reading `converge` parsed, a coverage.md row naming the lens, or a
+    record carrying it. Triage is not a lens and its product is objections rather than findings
+    or coverage rows, so a record some agent marked up counts as its reading.
+    """
+    run = Path(run)
+    known = LENSES + (TRIAGE,)
+    evidence = {}
+
+    def mark(lens, kind):
+        kinds = evidence.setdefault(lens, [])
+        if kind not in kinds:
+            kinds.append(kind)
+
+    path = run / 'convergence.json'
+    if path.is_file():
+        try:
+            data = read_json(path)
+        except (OSError, json.JSONDecodeError):
+            data = None
+        if isinstance(data, dict):
+            groups = data['groups'] if isinstance(data.get('groups'), list) else []
+            for group in groups:
+                if not isinstance(group, dict) or not isinstance(group.get('lenses'), list):
+                    continue
+                for lens in group['lenses']:
+                    if lens in known:
+                        mark(lens, 'convergence.json')
+            readings = data['readings'] if isinstance(data.get('readings'), list) else []
+            for reading in readings:
+                # A lens that read its bundle and reported nothing names itself nowhere but in
+                # the name of its own reading file - and it did read.
+                if not isinstance(reading, str):
+                    continue
+                for lens in known:
+                    if _names_lens(Path(reading).name, lens):
+                        mark(lens, 'convergence.json')
+    path = run / 'coverage.md'
+    if path.is_file():
+        for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
+            # The header names the columns and the rule is dashes; neither is a lens that ran.
+            if line.count('|') < 3 or re.match(r'\s*\|?\s*:?-{3}', line):
+                continue
+            for lens in known:
+                if any(_names_lens(cell, lens) for cell in line.split('|')):
+                    mark(lens, 'coverage.md')
+    path = run / 'findings.json'
+    if path.is_file():
+        try:
+            records = read_json(path)
+        except (OSError, json.JSONDecodeError):
+            records = []
+        for row in records if isinstance(records, list) else []:
+            if not isinstance(row, dict):
+                continue
+            if row.get('lens') in known:
+                mark(row['lens'], 'findings.json')
+            if any(isinstance(row.get(field), list) and row[field]
+                   for field in ('objections', 'concessions')):
+                mark(TRIAGE, 'objections')
+    return evidence
+
+
+def _dispatch_state(run):
+    """Which bundled lenses have evidence of a reading, and which have none.
+
+    The value of this skill is that each lens is read by its own agent in its own context.
+    `bundle` writes the bundles and nothing else checks that a reading ever came back, so under
+    budget pressure dispatch is the first thing dropped - silently, with the run still looking
+    finished. This is what makes it visible.
+    """
+    run = Path(run)
+    manifested = _manifested_lenses(run)
+    if manifested is None:
+        return {'present': False, 'manifested': [], 'read': [], 'unread': [],
+                'note': BUNDLE_MANIFEST + ' is absent or unreadable: this run predates the '
+                        'dispatch log or never bundled, so nothing is claimed about what was '
+                        'read and nothing is gated on it'}
+    evidence = _reading_evidence(run)
+    read, unread = [], []
+    for lens, entry in manifested.items():
+        kinds = evidence.get(lens) or []
+        if kinds:
+            read.append({'lens': lens, 'evidence': kinds})
+        else:
+            unread.append(entry)
+    read.sort(key=lambda row: row['lens'])
+    unread.sort(key=lambda row: row['lens'])
+    return {'present': True, 'manifested': sorted(manifested), 'read': read, 'unread': unread,
+            'note': 'A bundle counts as read when a reading left a trace: a reading converge '
+                    'parsed, a coverage.md row naming the lens, or a record carrying it. An '
+                    'unread bundle was assembled and never dispatched to its own agent.'}
+
+
+def _check_dispatch(run, errors):
+    """No submission out of a run whose lenses were assembled and never read."""
+    state = _dispatch_state(run)
+    if not state['present'] or not state['unread']:
+        return
+    names = [entry['lens'] for entry in state['unread']]
+    shown = ', '.join(names[:8])
+    more = '' if len(names) <= 8 else f' and {len(names) - 8} more'
+    errors.append(BUNDLE_MANIFEST + f': {len(names)} bundled lens(es) have no reading recorded: '
+                  + shown + more + '. A bundle nobody read is a pass that did not happen. '
+                  'Dispatch each one to its own agent, or - if the readings exist already - '
+                  'rerun converge --readings over them so the evidence is recorded (a '
+                  'coverage.md row naming the lens, or a record carrying it, counts too)')
 
 
 # --------------------------------------------------------------------------- #
@@ -1690,6 +1882,8 @@ def validate(run, submission=False, ledger=True):
                        if submission else None)
     dup_matches = (_submission_dup_matches(run, meta, records, errors)
                    if submission else None)
+    if submission:
+        _check_dispatch(run, errors)
     seen, targets = set(), 0
     for i, row in enumerate(records):
         prefix = f'finding[{i}]'
@@ -2732,7 +2926,8 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
         written.append({'lens': lens, 'bundle': str(path.relative_to(run)),
                         'bytes': path.stat().st_size})
 
-    notes = []
+    # The dispatch log, so a later gate can ask whether a reading of each bundle came back.
+    notes = _record_dispatch(run, commit, scope_prefixes, written)
     biggest = max((w['bytes'] for w in written), default=0)
     if biggest > BUNDLE_WARN_BYTES:
         notes.append(f'largest bundle is {biggest} bytes; narrow with --scope and hunt the ranked '
@@ -2763,9 +2958,11 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
             'doc_files_bundled_for_spec_divergence': len(docs_paths) - len(docs_skipped),
             'doc_files_omitted': len(docs_omitted),
             'context_sections': len(context), 'bundles': written, 'notes': notes,
-            'skipped_files': skipped_files,
+            'skipped_files': skipped_files, 'manifest': BUNDLE_MANIFEST,
             'dispatch': 'Give each bundle to its own agent, in its own context. Record in '
-                        'coverage.md which lenses actually ran.'}
+                        'coverage.md which lenses actually ran. The manifest logs what was '
+                        'emitted: queue lists every bundle with no reading recorded, and '
+                        'check --submission blocks while any remain.'}
 
 # --------------------------------------------------------------------------- #
 # target scoring
