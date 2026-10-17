@@ -2,6 +2,7 @@
 """Evidence-labelled, conservative multi-stack routing. No code is executed."""
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -34,6 +35,19 @@ BACKEND_JS_DEPS = ("express", "fastify", "@nestjs", "koa", "@hapi/hapi", "hapi",
                    "loopback", "adonis", "@adonisjs", "nestjs")
 BACKEND_PY_DEPS = ("flask", "fastapi", "django", "aiohttp", "tornado", "sanic",
                    "starlette", "bottle", "falcon", "uvicorn", "gunicorn", "hypercorn")
+
+
+# Cross-chain messaging: a bridge, a relayer or keeper, or a messaging SDK. Whatever the stack,
+# the trust boundary is who may deliver a message and whether its origin is authenticated, which
+# is the integration-auth lens. Long names match anywhere in a path; short ones only as a word.
+MESSAGING_PATH_WORDS = ("bridge", "relayer", "keeper", "messenger", "messaging", "crosschain",
+                        "cross-chain", "cross_chain", "layerzero", "wormhole", "hyperlane",
+                        "axelar", "ccip", "lzreceive")
+MESSAGING_PATH_TOKENS = ("relay", "oapp", "oft", "xcm", "ibc", "lz", "cctp")
+MESSAGING_DEPS = ("@layerzerolabs", "layerzero", "wormhole", "@hyperlane-xyz", "hyperlane",
+                  "@axelar-network", "axelar", "contracts-ccip", "@chainlink/ccip", "ibc-",
+                  "cosmwasm-ibc", "xcm", "@eth-optimism", "@arbitrum/nitro-contracts",
+                  "@across-protocol", "@connext", "@debridge")
 
 
 def _read(path, cap=400000):
@@ -70,6 +84,31 @@ def _backend_signals(root, files, lower):
         if "EXPOSE" in text or "ENTRYPOINT" in text or "CMD" in text:
             signals.append(docker + " defines a runnable service")
     return signals
+
+
+def _messaging_signals(root, files):
+    """Evidence that the repository sends or receives cross-chain messages."""
+    signals = []
+    words = set()
+    for name in files:
+        lower = name.lower()
+        hit = next((w for w in MESSAGING_PATH_WORDS if w in lower), None)
+        if not hit:
+            # Split camelCase before tokenising, so `OFTAdapter.sol` yields `oft`.
+            spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
+            tokens = set(re.split(r"[^a-z0-9]+", spaced.lower()))
+            hit = next((t for t in MESSAGING_PATH_TOKENS if t in tokens), None)
+        if hit and hit not in words:
+            words.add(hit)
+            signals.append("path names " + repr(hit) + ": " + name)
+    for manifest in [x for x in files if Path(x).name.lower() in
+                     ("package.json", "cargo.toml", "remappings.txt", "foundry.toml",
+                      "go.mod", "move.toml", "scarb.toml")]:
+        text = _read(root / manifest).lower()
+        hit = sorted({d for d in MESSAGING_DEPS if d in text})
+        if hit:
+            signals.append(manifest + " declares messaging dependency: " + ", ".join(hit))
+    return signals[:20]
 
 
 def route(repo):
@@ -148,6 +187,7 @@ def route(repo):
         warnings.append("Mixed-language/repo detection is not component ownership. Inspect real process and trust boundaries.")
     report = {"schema": 1, "method": "manifest-and-extension-heuristics",
             "stacks": stacks, "warnings": warnings, "native_execution_verified": False,
+            "messaging_signals": _messaging_signals(root, files),
             "suggested_cross_stack_lenses": ["semantic-mismatch", "recovery-failure", "composition"]
             if len(stacks) > 1 else [],
             "notice": "Routing only. A file extension does not prove a runtime, deployment or coverage."}
@@ -173,10 +213,19 @@ def prioritize(route_report, budget=6):
         for name in ("semantic-mismatch", "recovery-failure", "composition"):
             base[name] += 4
             reasons[name].append("multiple language/runtime candidates")
+    messaging = route_report.get("messaging_signals") or []
+    if messaging:
+        base["integration-auth"] += 8
+        reasons["integration-auth"].append("bridge/relayer/messaging signal: " + messaging[0])
     # Anchor's account model must never be force-selected on ordinary Rust.
     if "rust-solana" not in {x["stack"] for x in route_report["stacks"]}:
         base.pop("anchor-account")
     ranked = sorted(base, key=lambda name: (-base[name], name))
+    # Who may deliver a message is the boundary every bridge and relayer turns on: with any
+    # messaging signal, integration-auth is selected whatever the budget.
+    if messaging and "integration-auth" not in ranked[:budget]:
+        ranked.remove("integration-auth")
+        ranked.insert(budget - 1, "integration-auth")
     return {"budget": budget, "selected": ranked[:budget],
             "not_selected": ranked[budget:],
             "rationale": {x: reasons[x] for x in ranked[:budget]},

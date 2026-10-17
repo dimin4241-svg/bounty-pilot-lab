@@ -11,14 +11,22 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+# Every suffix here must also be in bounty.py's SOURCE_SUFFIXES: a stack the bundle can never
+# include is reported missing whatever --scope says, and the gate can then never pass.
 EXT_STACK = {
-    ".sol": "evm", ".vy": "evm", ".yul": "evm", ".huff": "evm",
+    ".sol": "evm", ".vy": "evm", ".yul": "evm", ".huff": "evm", ".fe": "evm",
     ".rs": "rust", ".move": "move", ".cairo": "cairo",
+    ".circom": "circom", ".nr": "noir", ".sw": "sway",
+    ".tact": "ton", ".fc": "ton", ".func": "ton", ".tolk": "ton",
     ".go": "go", ".py": "python", ".ts": "js-ts", ".tsx": "js-ts",
-    ".js": "js-ts", ".jsx": "js-ts", ".java": "java", ".cs": "csharp",
+    ".js": "js-ts", ".jsx": "js-ts", ".mjs": "js-ts", ".cjs": "js-ts",
+    ".java": "java", ".cs": "csharp",
 }
 IGNORE_PARTS = {"node_modules", "vendor", "target", "build", "dist", "out", ".git"}
-TEST_PARTS = {"test", "tests", "__tests__", "fixtures", "mocks"}
+# The bundle leaves out what bounty.py's _is_test_path calls a test; counting such a file as
+# source would report its stack missing however the scope is set.
+TEST_PARTS = {"test", "tests", "__tests__", "spec", "fixture", "fixtures", "mock", "mocks"}
+TEST_NAME_ENDINGS = (".t.sol", ".test.ts", ".spec.ts", "_test.go", "_test.py")
 BUNDLE_PATH = re.compile(r"^### ([^\r\n]+)$", re.M)
 
 
@@ -29,7 +37,7 @@ def _sources(paths):
         if (p.suffix not in EXT_STACK or
                 any(x.lower() in IGNORE_PARTS for x in p.parts) or
                 any(x.lower() in TEST_PARTS for x in p.parts) or
-                p.name.endswith((".t.sol", ".test.ts", ".spec.ts", "_test.go"))):
+                p.name.lower().endswith(TEST_NAME_ENDINGS) or "mock" in p.name.lower()):
             continue
         result[name] = EXT_STACK[p.suffix]
     return result
