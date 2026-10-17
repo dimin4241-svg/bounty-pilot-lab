@@ -2972,24 +2972,31 @@ class ConvergeTests(unittest.TestCase):
         # the grouping, so they compare without it.
         return lines if with_record else [line.rsplit(' | ', 1)[0] for line in lines]
 
-    def test_the_same_mechanism_at_neighbouring_functions_is_one_group(self):
-        # Grouping on the full `path:Contract.function` would split this into two singletons,
-        # and the next pass would be told nothing is saturated.
+    def test_the_same_class_at_neighbouring_functions_stays_two_groups(self):
+        # Keyed on the file alone, a second instance in `redeem` became closed ground the
+        # moment `withdraw` saturated. Splitting costs a duplicate; merging hides a bug.
         self.reading('pass1.md', 'CANDIDATE | lens: accounting | surface: '
                                  'src/Vault.sol:Vault.withdraw | bug_class: aggregate-not-decremented')
         self.reading('pass2.md', 'CANDIDATE | lens: seam | surface: '
                                  'src/Vault.sol:Vault.redeem | bug_class: aggregate-not-decremented')
         result = bounty.converge([str(self.readings)], self.run)
         self.assertEqual(result['readings_parsed'], 2)
-        self.assertEqual(result['distinct_groups'], 1)
+        self.assertEqual(result['distinct_groups'], 2)
+        self.assertEqual(result['saturated_groups'], 0)
+        # Arguments are not part of the function: `withdraw(uint256)` is `withdraw`.
+        self.reading('pass3.md', 'CANDIDATE | lens: seam | surface: '
+                                 'src/Vault.sol:Vault.withdraw(uint256) | '
+                                 'bug_class: aggregate-not-decremented')
+        result = bounty.converge([str(self.readings)], self.run)
         self.assertEqual(result['saturated_groups'], 1)
         self.assertEqual(self.saturated_lines(),
-                         ['src/Vault.sol | aggregate-not-decremented | reported by 2 readings '
-                          '(2 claims, 0 leads)'])
+                         ['src/Vault.sol:Vault.withdraw | aggregate-not-decremented | reported by '
+                          '2 readings (2 claims, 0 leads)'])
 
     def test_saturated_ground_without_a_record_is_not_closed(self):
-        for name, fn in (('pass1.md', 'withdraw'), ('pass2.md', 'redeem')):
-            self.reading(name, f'CANDIDATE | lens: accounting | surface: src/Vault.sol:Vault.{fn} '
+        # Byte-identical files are one reading copied twice, so the two lenses differ here.
+        for name, lens in (('pass1.md', 'accounting'), ('pass2.md', 'seam')):
+            self.reading(name, f'CANDIDATE | lens: {lens} | surface: src/Vault.sol:Vault.withdraw '
                                '| bug_class: aggregate-not-decremented')
         result = bounty.converge([str(self.readings)], self.run)
         self.assertEqual(len(result['saturated_unrecorded']), 1)
@@ -3009,26 +3016,28 @@ class ConvergeTests(unittest.TestCase):
         # so `Aggregate Not Decremented` is the same ground as `aggregate-not-decremented`.
         self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
                                  'bug_class: aggregate-not-decremented')
-        self.reading('pass2.md', 'FINDING | surface: src/Vault.sol:Vault.redeem | '
+        self.reading('pass2.md', 'FINDING | surface: ./src/Vault.sol:Vault.withdraw | '
                                  'bug_class: Aggregate Not Decremented')
         self.reading('pass3.txt', '  LEAD | bug_class: aggregate-not-decremented | lens: seam '
-                                  '| surface: src/Vault.sol:Vault.deposit')
+                                  '| surface: src/Vault.sol:Vault.withdraw()')
         bounty.converge([str(self.readings)], self.run)
         report = bounty.read_json(self.run / 'convergence.json')
         self.assertEqual(report['blocks_parsed'], 3)
         group = report['saturated'][0]
         self.assertEqual((group['readings'], group['claims'], group['leads']), (3, 2, 1))
         self.assertEqual(len(group['sources']), 3)
-        self.assertIn('src/Vault.sol:Vault.deposit', group['surfaces'])
+        self.assertEqual(group['surfaces'], ['src/Vault.sol:Vault.withdraw'])
         self.assertEqual(self.saturated_lines(),
-                         ['src/Vault.sol | aggregate-not-decremented | reported by 3 readings '
-                          '(2 claims, 1 leads)'])
+                         ['src/Vault.sol:Vault.withdraw | aggregate-not-decremented | reported by '
+                          '3 readings (2 claims, 1 leads)'])
 
     def test_format_examples_are_never_counted_as_reports(self):
         # Every reading quotes the output format from _shared.md; counting those placeholders
         # would make every reading look like it reported the same mechanism.
+        # Byte-identical files are one reading copied twice, so each names its own pass.
         for name in ('pass1.md', 'pass2.md'):
             self.reading(name,
+                         f'Reading {name}',
                          '```',
                          'CANDIDATE | lens: <lens-name> | surface: <path:Contract.function> | '
                          'bug_class: <kebab-case>',
@@ -3040,13 +3049,13 @@ class ConvergeTests(unittest.TestCase):
         self.assertEqual(result['blocks_skipped'], 2)
         self.assertEqual(result['distinct_groups'], 1)
         self.assertEqual(self.saturated_lines(),
-                         ['src/Vault.sol | pause-blocks-exit | reported by 2 readings '
+                         ['src/Vault.sol:Vault.pause | pause-blocks-exit | reported by 2 readings '
                           '(0 claims, 2 leads)'])
 
     def test_the_singletons_are_what_the_next_pass_needs(self):
         self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
                                  'bug_class: aggregate-not-decremented')
-        self.reading('pass2.md', 'CANDIDATE | surface: src/Vault.sol:Vault.redeem | '
+        self.reading('pass2.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
                                  'bug_class: aggregate-not-decremented',
                      'LEAD | surface: src/Oracle.sol:Oracle.peek | bug_class: stale-price-accepted')
         result = bounty.converge([str(self.readings)], self.run)
@@ -3073,7 +3082,7 @@ class ConvergeTests(unittest.TestCase):
                                          'bug_class: aggregate-not-decremented')
         second = self.base / 'other'
         second.mkdir()
-        (second / 'pass2.md').write_text('LEAD | surface: src/Vault.sol:Vault.redeem | '
+        (second / 'pass2.md').write_text('LEAD | surface: src/Vault.sol:Vault.withdraw | '
                                          'bug_class: aggregate-not-decremented\n')
         result = bounty.converge([str(first), str(second)], self.run)
         self.assertEqual(result['readings_parsed'], 2)
@@ -3119,7 +3128,7 @@ class ConvergeTests(unittest.TestCase):
     def test_converge_output_is_the_input_of_the_next_bundle(self):
         self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
                                  'bug_class: aggregate-not-decremented')
-        self.reading('pass2.md', 'CANDIDATE | surface: src/Vault.sol:Vault.redeem | '
+        self.reading('pass2.md', 'CANDIDATE | surface: src/Vault.sol:Vault.withdraw | '
                                  'bug_class: aggregate-not-decremented')
         bounty.converge([str(self.readings)], self.run)
         bounty.bundle(self.repo, self.run, ['accounting'])
