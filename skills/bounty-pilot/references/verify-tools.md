@@ -3,14 +3,15 @@
 Stage 5 helpers. Every one of them produces review material, never exploit evidence on its own: a
 claim is verified only by a reproducible test against unmodified production source.
 
-## Mandatory between-pass execution gate (new runs)
+## The execution gate — alongside the passes, mandatory before reporting
 
-Native execution is not optional for the highest-priority testable survivors.
-A private experiments.json row points to a scenario_runner.py --allow-exec
-result file (candidate and negative-control). Run bounty.py experiment-gate
---run <run> --gate before the next broad reading pass. A genuine toolchain
-blocker with an attempted alternative may permit further reading without
-confirming any claim. See evidence-first.md.
+Native execution is not optional for the highest-priority testable records. A private
+`experiments.json` row points to a `scenario_runner.py --allow-exec` result file with a candidate and
+a negative-control case that run different commands, select at least one test each, and belong to
+that record alone. Run `bounty.py experiment-gate --run <run> --gate` while the next pass reads and
+before anything is reported, never as a wait between readings. A `verified` record needs an executed,
+conforming pair; a genuine toolchain blocker with an attempted alternative keeps a record open
+without confirming anything. See `evidence-first.md`.
 
 ## Bounded state-model counterexamples
 
@@ -72,6 +73,26 @@ The runner rules:
 Both commands returning their expected exit codes is **not** proof of exploit truth; inspect the
 assertions and the unchanged target source. Never execute untrusted repo-supplied plans, access
 production keys, load-test live infrastructure or broadcast transactions.
+
+## Invariant campaigns — a standard step on high-value targets
+
+Reading finds mechanisms; it is poor at edge states — the first and last depositor, zero supply,
+an exhausted reserve, the hundredth repetition of a rounding step, an order of operations nobody
+wrote a test for. A stateful fuzzer finds exactly those. Run one as a standard step, not an extra,
+when the value at risk is large or when an open record concerns accounting, rounding, share math or
+a multi-step state sequence.
+
+1. **Write the property first**, from `model.md` and the protocol's own documentation: a
+   conservation law (`sum of balances == totalSupply`), a solvency bound, a monotonic index, a
+   round-trip that must not profit. A campaign without a stated property is not coverage.
+2. **Generate or write the suite.** `fizz` (pashov/skills) generates an Echidna/Medusa harness with
+   actors and handlers; `templates/Invariant.t.sol` is the Foundry starting point; for existing
+   native property tests use `native_fuzz_plan.py`.
+3. **Show the harness can see a violation** before trusting a clean run — the next section.
+4. **Record the campaign** in `experiments.json`: tool and version, property, actors, budget (runs,
+   depth, time), seed, corpus location and result. A broken invariant is a candidate that still needs
+   a minimal, deterministic PoC with a negative control; a clean campaign is coverage of that property
+   at that budget, never proof of safety.
 
 ## Proving a negative about a guard: mutate your own detector
 

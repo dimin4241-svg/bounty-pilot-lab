@@ -117,6 +117,11 @@ call itself exhausted over an unread majority — on one target a hunt was close
 contracts and nothing compared that against the file list. The unexamined list is the answer to this
 item; paste it.
 
+Then go one level down: `function-coverage --run <run>` lists every external entry point and the
+ones no record or coverage row names. A file counted as read can still hide thirty entry points
+nobody looked at, and the unexamined list is ranked so that the functions that write state or move
+value come first. A directory row (`src/`) credits nothing toward either floor.
+
 ## 16. Did you let an unanchored objection kill a finding?
 
 Re-read every record you refuted. Does `rejection_reason` quote code, a specification, a test or a
@@ -169,6 +174,8 @@ of the namespace string. Colliding namespaces alias two structs onto one storage
 In a mature, heavily audited codebase the bug is the inconsistency, not the mistake. Tabulate the
 handlers in a dispatch, the implementations of an interface, the call sites of a helper, the same
 contract on each chain — then read the one that differs. See `references/blind-spots.md`.
+For Solidity the first table is already built: did you read every entry of `odd-one-out.json` and
+write down why each asymmetry is intended or not?
 
 ## 24. Did you verify the blocker, or inherit it?
 

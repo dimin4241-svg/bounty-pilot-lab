@@ -10,10 +10,14 @@ persistence, live truth, the Solana account model — and each produces falsifia
 shapes. Select only the relevant ones; a generic checklist pasted into a report is not a finding.
 On Solidity targets this sweep is exactly what `solidity-auditor` does in parallel and in depth, so
 prefer delegating it when installed (see `compare.md`) and spend your own passes on the aimed
-lenses it has no equivalent for.
+lenses it has no equivalent for. The `classic` hunt lens (`hunt-agents/classic-agent.md`) is the
+dispatched form of this list: its Part A — EVM semantics newer than most checklists, such as
+EIP-7702 delegated EOAs, transient storage, Permit2, L2 sequencer checks and v4 hooks — runs on every
+EVM target, and its Part B is the fallback sweep when `solidity-auditor` did not run.
 
 **Blind-spot lenses** are in `blind-spots.md`: controls that exist only as live configuration,
-derived constants nobody recomputes, the odd one out, the authoritative value that was available
+derived constants nobody recomputes, the odd one out (computed for Solidity by `impact-plan` into
+`odd-one-out.json`), the authoritative value that was available
 and unused, safety resting on a dependency detail, state that only exists between versions, code
 that is deployed but absent from the repository, the surface your own run closed with a blocker
 nobody reproduced, and the cliff at a scale nobody's test fixtures ever reach.

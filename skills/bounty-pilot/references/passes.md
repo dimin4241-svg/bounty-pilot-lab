@@ -10,16 +10,16 @@ universal law: model outputs can be correlated, and a ranking can hide an unrank
 unique coverage per reading, keep unexamined paths visible, and use held-out cases to decide whether
 extra passes earn their cost.
 
-## Stage A — Aim (cheap, mechanical, not a hunt pass)
+## Stage A — Aim (not a hunt pass)
 
-Four lenses whose job is a ranked surface list, not findings. They read diffs, manifests, published
-documentation and test files rather than hunting the whole codebase, so they are cheap and they run
-once.
+Four lenses whose job is a ranked surface list, not findings. They are aimed at diffs, manifests,
+published documentation and test files rather than at hunting; their bundles still carry the source
+so they can check what they rank, and they run once.
 
 ```sh
 S=<skill-dir>/scripts/bounty.py
-python3 $S delta --repo <checkout> --since <audited-commit> --scope src/ > <run>/delta.json
-python3 $S bundle --repo <checkout> --run <run> --lens aim --scope src/ --include <run>/delta.json
+python3 $S delta --repo <checkout> --since <audited-commit> --scope <source roots> > <run>/delta.json
+python3 $S bundle --repo <checkout> --run <run> --lens aim --scope <source roots> --include <run>/delta.json
 ```
 
 Dispatch `delta`, `upstream-diff`, `coverage-gap` and `spec-divergence`, one agent each. Their
@@ -34,8 +34,11 @@ exchange (`hunt-agents/spec-divergence-agent.md`).
 
 ## Choosing lenses — select by behavior and stack
 
-There are twenty lenses. Running every one on every target wastes most of the budget on surfaces
-the protocol does not have. Pick by shape, and say in `coverage.md` which you chose and why.
+There are more than twenty lenses. Running every one on every target wastes most of the budget on
+surfaces the protocol does not have. `<source roots>` below means every directory that holds
+in-scope source — `src/`, `contracts/`, `programs/`, a Vyper or Huff tree — not `src/` by habit:
+`coverage-floor` lists on-chain source outside the scope you gave it, and that list should be empty
+or justified in `scope.md`. Pick by shape, and say in `coverage.md` which you chose and why.
 
 | Target shape | Run first | Then |
 | --- | --- | --- |
@@ -43,7 +46,7 @@ the protocol does not have. Pick by shape, and say in `coverage.md` which you ch
 | DEX / AMM / concentrated liquidity | `economics`, `accounting`, `external-call` | `upstream-diff`, `coverage-gap` |
 | Vault / ERC-4626 / yield aggregator | `accounting`, `economics`, `external-call` | `privileged-path`, `liveness` |
 | Bridge / cross-chain messaging | `integration-auth`, `privileged-path`, `external-call` | `live-reality`, `upgrade` |
-| Router / aggregator / zapper | `external-call`, `integration-auth` | `privileged-path`, `accounting` |
+| Router / aggregator / zapper | `external-call`, `integration-auth` | `privileged-path`, `accounting`; measure approval exposure, not balance |
 | Staking / LST / restaking | `accounting`, `privileged-path`, `economics` | `liveness`, `upgrade` |
 | Perps / options / structured | `economics`, `accounting`, `live-reality` | `liveness`, `coverage-gap` |
 | Governance / timelock / treasury | `privileged-path`, `upgrade` | `liveness`, `delta` |
@@ -55,6 +58,8 @@ the protocol does not have. Pick by shape, and say in `coverage.md` which you ch
 | Move / Cairo / CosmWasm | `business-logic`, `temporal-logic`, `privileged-path` | `composition`, stack-native adapter |
 | Cross-language relayer + contracts | `semantic-mismatch`, `recovery-failure`, `integration-auth` | `composition`, `coverage-gap` |
 | Go / Python / TypeScript backend | `privileged-path`, `recovery-failure`, `business-logic` | `semantic-mismatch`, `composition` |
+| A website or dApp listed in scope | `web-frontend` (`--lens web`) | the program's web exclusions first |
+| Any EVM target | `classic` (Part A always; Part B unless `solidity-auditor` ran) | — |
 
 Two lenses run on essentially every target, because their yield does not depend on the protocol's
 shape: **`privileged-path`** (access control and initialization are the categories automated
@@ -64,28 +69,31 @@ reviewers measurably miss most, and the largest real losses came from them) and 
 ## Stage B — Attack (the hunt passes)
 
 ```sh
-python3 $S bundle --repo <checkout> --run <run> --lens attack --scope src/ --include <run>/delta.json
+python3 $S bundle --repo <checkout> --run <run> --lens attack --scope <source roots> --include <run>/delta.json
 ```
 
 The `attack` group is the six highest-yield mechanism lenses — `privileged-path`, `accounting`,
-`integration-auth`, `external-call`, `economics`, `liveness` — and the `config` group is
-`live-reality` and `upgrade`, which check what is true of the deployment rather than the source. Add
-`--lens anchor-account` for Solana or Rust. Each bundle carries the SOP, the shared rules, that
-lens's procedure, the impact ladder, the precedent catalogue, the run context and all in-scope
-source.
+`integration-auth`, `external-call`, `economics`, `liveness` — plus `classic`, the standard-class
+questions (`hunt-agents/classic-agent.md`). The `config` group is `live-reality` and `upgrade`, which
+check what is true of the deployment rather than the source. Add `--lens anchor-account` for a
+Solana program. Each bundle carries the SOP, the shared rules, that lens's procedure, the impact
+ladder, the precedent catalogue, the run context, all in-scope source, and — when the run has them —
+the mechanical outputs that lens uses: `impact-paths.json` for `impact-first` and `seam`,
+`odd-one-out.json` for `privileged-path`, `accounting`, `business-logic`, `classic` and `seam`, and the
+unexamined entry points of `function-coverage.json` for `coverage-gap`, `classic` and `seam`.
 
 **Pick one base group, then add to it.** The base groups are alternatives, not layers:
 
 | Base | When |
 | --- | --- |
 | `attack` | The default for EVM targets. |
-| `high-impact` | A large value at risk and the goal is loss-of-funds class findings: `impact-first`, `privileged-path`, `business-logic`, `economics`, `composition`. |
+| `high-impact` | A large value at risk and the goal is loss-of-funds class findings: `impact-first`, `privileged-path`, `accounting`, `external-call`, `integration-auth`, `business-logic`, `economics`, `composition`. |
 | `recommended` | Non-EVM or mixed repositories, where the `stack_route.py` shortlist fits the stacks better than the EVM-shaped `attack` group. |
 
 Then add only what the target's shape calls for: `config` when there are deployed addresses,
 `logic` when several actions change the same asset, privilege, reward or epoch, `cross-stack` when a
-keeper, relayer, signer, API or watcher shares a trust boundary with on-chain code, and
-`anchor-account` for Solana. Lenses named in the shape table but absent from your groups can be
+keeper, relayer, signer, API or watcher shares a trust boundary with on-chain code,
+`anchor-account` for Solana, and `web` when a website or app is in scope. Lenses named in the shape table but absent from your groups can be
 added individually with `--lens <name>`.
 
 **A pass that did not run `bundle` did not bundle its source**, and a lens reading files
@@ -228,12 +236,18 @@ forgotten is a pass spent re-deriving it. Record what you did not reach too: fil
 untraced, dependencies unopened. That list is the honest answer to "what did this cover", and it is
 where the next pass aims.
 
-Then compute convergence over the pass's readings and write `saturated.md`: the mechanisms two or
-more independent readings reported.
+Then add the pass's readings to the run's convergence and rewrite `saturated.md`: the mechanisms
+two or more independent readings reported, grouped by file, function and bug class.
 
 ```sh
 python3 $S converge --run <run> --readings <dir of this pass's raw reading output>
 ```
+
+`converge` keeps every reading it has seen in the run, so pass 2 adds to pass 1 instead of replacing
+it, and a mechanism seen once in each pass is two readings. `--reset` starts the count over. Two
+bugs of the same class in two functions of one file are two groups, never one: merging them would
+close the second as saturated ground. The **singletons** are the output to act on — `queue` lists
+the ones with no record as `unrecorded_singletons`.
 
 That list goes into the next pass's bundles beside `known-hypotheses.md`, and `_shared.md` tells
 every lens to treat its recorded lines as closed ground. A line marked UNRECORDED is a mechanism
@@ -242,10 +256,14 @@ between the files — a reading spent re-deriving a saturated mechanism under a
 new label is a reading spent on nothing. Convergence counts what was reported, not what is true: a
 mechanism every reading agreed on can still be invalid.
 
-Update `coverage.md` with which lenses actually ran, how many readings each got, and what each
-closed. A lens you could not dispatch is reported, never silently skipped. Then run:
+Update `coverage.md` with which lenses actually ran, how many readings each got, what each closed,
+and **which functions each reading examined**, by name (`path:Contract.function`). A file row
+credits the file; only a function named in a row, a hypothesis surface or a record's
+`affected_paths` credits that function. A lens you could not dispatch is reported, never silently
+skipped. Then run:
 
 ```sh
+python3 $S function-coverage --run <run>
 python3 $S queue --run <run>
 python3 $S history check --run <run>
 ```
@@ -274,12 +292,17 @@ Each of those is a claim about coverage, so none of them is satisfied on your ow
 read enough. Measure it:
 
 ```sh
-python3 $S coverage-floor --repo <checkout> --run <run> --scope src/ --gate
+python3 $S coverage-floor --repo <checkout> --run <run> --scope <source roots> --gate
+python3 $S function-coverage --run <run> --gate
 ```
 
-It writes `coverage-floor.json`: the in-scope files compared against what this run actually
-recorded — `coverage.md` rows, `known-hypotheses.md` surfaces and `affected_paths` in
-`findings.json` — with the examined fraction and the list of what is unexamined. **A run may not
+`coverage-floor` writes `coverage-floor.json`: the in-scope files compared against what this run
+actually recorded — `coverage.md` rows, `known-hypotheses.md` surfaces and `affected_paths` in
+`findings.json` — with the examined fraction and the list of what is unexamined.
+`function-coverage` does the same one level down, over every external entry point, and ranks the
+unexamined ones so that state-writing and value-moving functions come first. A file can be
+"examined" while most of its entry points were never named; the second number is the one that
+says whether anyone looked. **A run may not
 call itself exhausted over an unread majority.** This is a condition on the rules above, not a
 replacement for them: on one target a hunt was declared exhausted after eight contracts, and
 nothing ever compared that against the in-scope file list. Either read what the floor names, or
@@ -288,9 +311,11 @@ honest coverage statement, and it is where a resumed scan aims.
 
 `--gate` fails below `--min-fraction`, default 0.8: a coverage row is cheap at the moment you
 declare yourself done, including a "read it, nothing here" row, which is what the table is for, and
-the remaining fifth is room for files that genuinely need none. A surface ending in `/` is a
-directory and credits what is under it; a bare name with no separator credits nothing, because
-`src` and an invariant called `accounting` are indistinguishable.
+the remaining fifth is room for files that genuinely need none. A surface ending in `/` names a
+directory; the files under it are reported as `credited_by_directory_only` and do **not** count
+toward the floor — one `src/` row once made a whole scope read as examined. A bare name with no
+separator credits nothing, because `src` and an invariant called `accounting` are
+indistinguishable.
 
 There is no finding quota. Zero verified findings after an honest run is a legitimate result, and
 more useful than three inflated ones: say which surfaces you closed and on what evidence.
@@ -309,15 +334,15 @@ paragraph, and each of them is a near-miss that was already paid for.
 
 ## Budget, honestly
 
-Three passes over the six `attack` lenses, with two of them doubled in pass 1, is about 15
-readings (8 + 6 + 1 seam), plus 4 aim readings, the escalation pass and triage. Each mechanism bundle contains the full in-scope source, so cost scales with the codebase —
+Three passes over the seven `attack` lenses, with two of them doubled in pass 1, is about 17
+readings (9 + 7 + 1 seam), plus 4 aim readings, the escalation pass and triage. Each mechanism bundle contains the full in-scope source, so cost scales with the codebase —
 `bundle` reports each bundle's size and warns past 400 KB, where narrowing `--scope` and trusting
 the ranking beats handing a lens more than it will read.
 
 If the target is Solidity and `solidity-auditor` is installed, delegate the classic bug-class sweep
-to it in loop mode instead of writing those lenses yourself, and spend this loop's passes on the
-aimed lenses it has no equivalent for. `compare.md` has the division of labour and the import rules.
-Do not nest the two orchestrators.
+to it — in a disposable copy, with `--loop N`, aimed by file names — and spend this loop's passes on
+the aimed lenses it has no equivalent for. Bring its output in with `import-findings`; `compare.md`
+has the division of labour and the import rules. Do not nest the two orchestrators.
 
 ## Carrying work across scans
 

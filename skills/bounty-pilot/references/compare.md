@@ -44,38 +44,60 @@ generation stance deliberately suppresses self-refutation, which is right for re
 paid for by a real adjudication pass afterwards, or the report arrives at the program full of
 confident candidates that a triage engineer kills in one reading.
 
+## When it is not installed
+
+Bounty Pilot's own `attack` group does not replace twelve specialists. Its `classic` lens carries the
+classic sweep as one reading (Part B of `hunt-agents/classic-agent.md`) so a run without
+`solidity-auditor` still asks the standard questions, but expect lower recall on those classes and
+say so in `coverage.md`. On a Solidity target worth a week, installing it is the cheaper fix.
+
 ## Recommended combination
 
 1. **Bounty Pilot stages 0–2.** Choose the target, read the program rules, build the dup map, verify
-   what is deployed, and run `delta` to get the ranked surface list. Nothing is read for bugs yet.
-2. **Delegate the Solidity generation pass to `solidity-auditor`, in loop mode**, pointed at the
-   target. Give it the ranked surfaces and the dup map contents in the request so its passes do not
-   spend themselves on burned ground. Keep its own report; it is a good artifact.
-3. **Run Bounty Pilot's own lenses that it does not have** — `delta`, `upstream-diff`,
+   what is deployed, run `delta` and `impact-plan`. Nothing is read for bugs yet.
+2. **Run `solidity-auditor` in a disposable copy of the checkout**, at the revision you recorded. It
+   scans the working directory and writes `.solidity-auditor/` into it, and the target checkout must
+   stay clean. Pass `--loop 3` (or another number): without a pass count it stops at an interactive
+   question, which an orchestrated run cannot answer.
+3. **Aim it with file names, not prose.** It has no input channel for a ranked list or a dup map:
+   its agents receive bundles assembled by shell from fixed files. What it does accept is a list of
+   files — `$filename ...` mode scans exactly those. Name the top of `delta.json` and the files that
+   `impact-paths.json` and `odd-one-out.json` point at. A default scan of everything is fine on a
+   small codebase.
+4. **Run Bounty Pilot's own lenses that it does not have** — `delta`, `upstream-diff`,
    `coverage-gap`, `live-reality`, `accounting` (as writer enumeration), `integration-auth`,
-   `liveness`, and `anchor-account` for non-EVM. These are aimed at axes outside its lens set:
+   `liveness`, `classic` Part A (post-2023 EVM semantics it does not cover: EIP-7702, L2 sequencer
+   checks, Permit2), and `anchor-account` for non-EVM. These are aimed at axes outside its lens set:
    time, lineage, observability, live truth, and the authorization of parameters rather than callers.
-4. **Import its output as hypotheses, not findings.** Each `FINDING` / `LEAD` block becomes one
-   `findings.json` record with `status: hypothesis`, its `group_key` split into `surface` and
-   `bug_class`, and `evidence` empty. Its confidence score is not evidence and does not transfer.
-5. **Adjudicate everything together** with `adjudicate.md`, then verify survivors with a real PoC,
-   then `dup-harvest` and `dup-check`, then `check --submission`.
+5. **Import its output as hypotheses, not findings:**
+
+   ```sh
+   python3 $S import-findings --run <run> --from <copy>/.solidity-auditor/runs/<stamp> --repo <checkout>
+   ```
+
+   It reads both the raw agent blocks (`FINDING | contract: … | function: … | bug_class: …`) and
+   the persisted run and report files (`<!--F key=contract|function|bug-class … kind=FINDING-->`),
+   maps each contract to the file that declares it, and writes `status: hypothesis` records with an
+   `origin` and empty evidence. Its confidence score is not evidence and is not copied. Imported
+   records show in `queue` as `imported_untriaged` until a hunter or triage pass has worked them.
+   `converge` reads the same formats, so its readings can count toward convergence too.
+6. **Adjudicate everything together** with `adjudicate.md`, then verify survivors with a real paired
+   PoC, then `dup-harvest`, `dup-check` and `check --submission`.
 
 Do not nest the two orchestrators — do not ask `solidity-auditor` to run Bounty Pilot's passes or
 the reverse. Both are multi-pass loops; nesting multiplies cost and makes coverage unreadable.
 
 ## Note on its artifacts
 
-`solidity-auditor` writes into the audited repository (`.solidity-auditor/`, including a findings
-ledger). That path is already in this repository's `.gitignore`, but check the target's own
-`.gitignore` before committing anything there, and never commit a findings ledger to a public
-target repo.
+`solidity-auditor` writes `.solidity-auditor/` — run files, a report and, with memory on, a findings
+ledger — into the directory it scans. That is why it runs in a copy. That path is already in this
+repository's `.gitignore`; never commit a findings ledger to a public target repo.
 
 ## Also in the same family
 
 `x-ray` (pre-audit readiness: threat model, invariants, git history) is a reasonable substitute for
-parts of Bounty Pilot stage 2 on Solidity targets, and `fizz` (Echidna/Medusa invariant suites) is a
-genuine verification tool — if a candidate is an invariant violation, a fuzz suite that breaks the
-invariant is stronger evidence than a hand-written PoC. Prefer them over writing those stages from
-scratch, record the exact commit you ran, and normalise whatever they produce through this
-workflow's gates.
+parts of Bounty Pilot stage 2 on Solidity targets. `fizz` (Echidna/Medusa invariant suites) is the
+quickest route to the invariant campaign Stage 5 makes standard on high-value targets: a broken
+invariant with a shrunk call sequence is strong evidence, and replaying that sequence as a
+deterministic test with a negative control turns it into a submittable PoC. Record the exact commit
+you ran either at, and normalise whatever they produce through this workflow's gates.

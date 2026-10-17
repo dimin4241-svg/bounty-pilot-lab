@@ -85,6 +85,14 @@ while its siblings do; one sender implementation signing the payload a server re
 other sender signs the caller's own. Both were invisible to a per-function review and obvious in a
 table.
 
+For Solidity, `impact-plan` builds the first version of that table from the compiler AST and
+writes it to `odd-one-out.json`: writers of a state variable missing a guard the other writers carry,
+functions that update one of two variables normally updated together, and name-paired siblings
+(deposit/withdraw, stake/unstake, borrow/repay) whose guards or writes differ. It sees modifiers,
+`require`/`revert` conditions and internal helper checks, not intent, so many entries are deliberate;
+read each one and record why it differs. It does not see dispatch switches, other chains or
+off-chain code — build those tables by hand.
+
 ## 4. The authoritative value was available and something else was used
 
 A specific, recurring shape worth its own search: the platform already computed the trustworthy
@@ -230,7 +238,7 @@ This lens also survives the common objection that reaching the scale is unrealis
 usually the *intended* use of the parameter, so the precondition arrives on its own, and a single
 participant can often drive it there deliberately.
 
-## 8. Absent from the deny-list is not the same as reachable
+## 10. Absent from the deny-list is not the same as reachable
 
 A guard written as a deny-list over an enum invites the obvious move: list the enum, subtract the denied
 entries, and treat the remainder as attack surface. That step is wrong often enough to waste a pass, and

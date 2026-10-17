@@ -95,6 +95,36 @@ The helper compares critical/high rediscovered counts and rejects mismatched
 ground truth. It does not establish that sealing was genuinely blind or
 measure cost; you must preserve held-out cases and actual model/time budgets.
 
+## The first measurement worth making: three arms
+
+The question this package cannot answer from its own text is whether its passes find more than
+`solidity-auditor` alone, and whether the combination finds more than either. Measure it with three
+arms on the **same** cases, each in its own fresh session and run directory, each sealed separately:
+
+| Arm | What runs |
+| --- | --- |
+| A | `solidity-auditor --loop 3` alone, imported with `import-findings` |
+| B | Bounty Pilot stages 2–5 alone, `solidity-auditor` not installed |
+| C | Bounty Pilot with `solidity-auditor` delegated as `compare.md` describes |
+
+Rules that make the comparison mean something:
+
+- **Contamination first.** Prefer contests whose reports were published after the knowledge cutoff of
+  the model doing the hunting, and record each case's publication date against that cutoff. A
+  contest the model may have read measures recall of a memory, not a workflow.
+- **The person who sets up a case does not hunt it.** Choosing a case means reading its page, and
+  its page lists the findings. Let one session (or person) pick cases and run `backtest init`; let a
+  fresh session that has never seen the page do the hunt and the seal.
+- **Same model, same budget per arm**: record model, pass count, wall-clock time and, where the host
+  reports it, tokens. An arm that used three times the budget has measured the budget.
+- **Five cases of different shapes** are the minimum for a number you would act on, and still give
+  counts, not rates. Report per arm: High/Critical rediscovered, Medium rediscovered, and the misses
+  each arm alone caught.
+- **Score with the same `truth.json`** for all three arms, then `bench_compare.py` pairwise.
+
+Until this has been run, the honest description of every lens and gate in this package is "designed
+to help", not "measured to help".
+
 ## Reading the result
 
 What the output gives you, and what each number is worth:
