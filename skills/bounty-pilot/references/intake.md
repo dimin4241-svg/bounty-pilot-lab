@@ -62,6 +62,33 @@ its workspace list (`blind-spots.md` §8).
 3. **The delta baseline** — the exact commit of the last audit, written into `run.json` as
    `audited_revision`, so `bounty.py delta` can rank what nobody has reviewed.
 
+### Account for every audit the repository ships
+
+The densest list of issues a team already knows is usually sitting in the checkout. Royco, Squads
+and marginfi all ship their review reports inside the repository — ten of them in the Squads case —
+and nothing here ever listed them, let alone read them; all three lost findings to ground the team
+had already covered in its own repository — a shipped audit in two of them, a discussion on the
+team's own PR #623 in marginfi's.
+
+```sh
+python3 <skill-dir>/scripts/bounty.py audit-inventory --repo <checkout> --run <run> [--gate]
+```
+
+It enumerates the published review artifacts the repository ships — an `audit/`, `audits/`,
+`security/` or `reviews/` directory, files named like a review wherever they sit, and `SECURITY.md`
+when it names one — attributes a firm where the name is recognised, and writes
+`audit-inventory.json` with every artifact `unreviewed` until you say otherwise.
+
+**It cannot read a PDF and does not pretend to.** The inventory is an accounting of known-issue
+sources, not a summary of them. Each artifact has to end as `read`, as `not-applicable` with a
+reason (wrong component, a revision the scope predates), or as `unavailable` when the repository
+names a report it does not actually contain. What a report you read burned then goes into
+`dup-map.json` as a `past-audit` entry at the exact revision it covered; `dup-map.md` has the
+format.
+
+`--gate`, and the submission gate, refuse a run that still holds an `unreviewed` artifact. A target
+that ships none is never blocked.
+
 Then establish what is deployed:
 
 ```sh

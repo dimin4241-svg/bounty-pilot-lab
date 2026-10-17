@@ -303,3 +303,22 @@ format mismatch and not the target. Say which it was. The verdict may still be r
 reasons — in that same run the dup map independently confirmed `deprioritise` for the spec surface —
 but it has to be argued from the evidence that actually exists, and `unparsed_coverage_files` in the
 output means the run's own notes were never credited either.
+
+## 31. Did you gather the duplicate evidence before the work, or after it?
+
+Item 11 asks whether the finding is already known. This one asks **when** you found out. Before the
+first reading pass, did you read your own prior submissions to this program, the audit reports the
+repository ships, and the team's own closed issues and PRs — or did you estimate duplicate risk by
+guesswork and learn the answer at submission? That guess is the largest recorded source of loss
+here: six Morpheus reports closed as known, one of them a verified High; four Ledger findings
+demonstrated end to end and returned DUPLICATE; a marginfi PoC the team had already discussed in
+its own PR #623; and a finding whose root cause was the hunter's **own** report from six weeks
+earlier, already in a duplicate cluster on the same account.
+
+Four commands answer it, and all four belong before the hunt, not after it: `score-target` reports
+your prior outcomes on this project and how many review artifacts the repository ships
+(`targets.md`); `audit-inventory` turns each of those artifacts into an accounted-for known-issue
+source (`intake.md`); `history import --from-file` loads what you already sent this program into
+the ledger, and `dup-harvest` retrieves the closed issues the team already judged (both in
+`dup-map.md`). If any of them ran only after the reading passes, write that here — it is the gap,
+not a clean answer.

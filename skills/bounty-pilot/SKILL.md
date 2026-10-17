@@ -75,6 +75,13 @@ Report the band and, more importantly, the `unknowns` it lists. If the score say
 so in one short paragraph with the reason, and let the user decide — do not silently hunt a target
 you have just judged poor, and do not refuse one the user wants.
 
+**Duplicate risk is a Stage 0 fact, not a Stage 6 autopsy.** The score now also reports your own
+prior outcomes on this project from the private ledger, and how many review artifacts the
+repository ships. Both are decisive and both are cheap: a program where your last reports all
+closed as duplicate is a worse target whatever it pays, and ten shipped audits mean a more farmed
+one than zero. Select by audit coverage, not by prize. An empty ledger is an unknown, never a good
+sign.
+
 ## Stage 1 — Scope, duplicates, and what is actually deployed
 
 Read `references/intake.md`. Resolve URL, revision, language, build system, production surfaces and
@@ -91,15 +98,28 @@ program rules. Before any pass reads code looking for bugs, produce these:
    which are frequently not the repository's HEAD; establish the revision at the in-scope addresses
    before reading anything for bugs. For a proxy, the implementation is what must match.
 4. **Compiler and value checks.** Both are one command and both have preceded real losses.
-5. **`history-matches.json`**, reviewed before hunting.
+5. **`audit-inventory.json`**: the review artifacts the repository itself ships. A published audit
+   is the densest list of issues the team already knows, and three of these hunts lost findings to
+   ground an in-repo report had already covered. The tool lists and attributes them; it cannot read
+   a PDF and does not pretend to. Mark each `read`, `not-applicable` with a reason, or
+   `unavailable` — an unreviewed artifact blocks submission.
+6. **`history-matches.json`**, reviewed before hunting. Before that, **import what you have already
+   submitted to this program**: the single-record form was too tedious to use, and a report once
+   went out that duplicated the hunter's own earlier submission to the same program.
 
 ```sh
+python3 $S history import --from-file <your export of this program's submissions>
+python3 $S history check --run <run>
+python3 $S dup-harvest --run <run>
+python3 $S audit-inventory --repo <checkout> --run <run> --gate
 python3 $S verify-deployment --rpc <url> --address <addr> --artifact <build-artifact.json> --run <run>
 python3 $S solc-bugs --repo <checkout>
 python3 $S value --rpc <url> --address <each in-scope address> --token <main assets>
-python3 $S history check --run <run>
-python3 $S dup-harvest --run <run>
 ```
+
+The duplicate work comes first on purpose. `dup-map.json` travels in every hunt bundle, so ground
+burned before the first pass is ground the lenses skip; ground burned at Stage 6 is a week already
+spent.
 
 `verify-deployment --run` writes `<run>/deployments/<address>.json`. A finding claiming
 `deployment_status: exact` names that file in `deployment_evidence`, and the gate checks it, so a
@@ -108,17 +128,16 @@ Solidity/Vyper paths. It needs a build artifact at the candidate
 revision; if there is no RPC, no build or no network, record the step as **blocked** and leave
 `deployment_status` unknown — never fill in a value that was not read.
 
-`solc-bugs` matches the compiler versions in the build config, the artifacts and the pragmas against
-Solidity's published bug list and the known Vyper advisories (it fetches the list; offline, record
-it as blocked). A broken reentrancy guard in specific Vyper versions (Curve, ~$70M) and a contract
-compiled without overflow checks (Truebit, ~$26M) are both invisible in the contract source.
-`value` reads balances so severity is aimed at the contracts that actually hold the money.
+`solc-bugs` matches the build config, the artifacts and the pragmas against Solidity's published
+bug list and the known Vyper advisories; offline, record it as blocked. Both of its precedents are
+invisible in the contract source (`references/hack-patterns.md`). `value` reads balances so
+severity is aimed at the contracts that actually hold the money — confirm each address **is** the
+contract before believing what it holds (`misses.md` 26).
 
-On a new run, `history check` shows compact records from your own prior reports on this project as
-`prior_cases`; use them as patterns to extend in `known-hypotheses.md`, never as a reason to skip
-nearby code. A match is a review lead, never an automatic duplicate verdict, and no personal match
-says nothing about another hunter's private queue. If no canonical project key is available, record
-personal history as unavailable, not as a clean `no-match`.
+`history check` returns your own prior reports on this project as `prior_cases`: patterns to
+extend in `known-hypotheses.md`, never a reason to skip nearby code. A match is a review lead, not
+a verdict, and no personal match says nothing about another hunter's queue. With no canonical
+project key, record personal history as unavailable, never as a clean `no-match`.
 
 If program rules cannot be found, continue with `scope_status: unknown`, claim no eligibility, and do
 no live testing beyond read-only reads the environment already permits.
@@ -208,16 +227,16 @@ python3 $S history check --run <run>
 ```
 
 `converge` counts how many **independent readings** reported each mechanism and writes
-`saturated.md`, which every later bundle carries as closed ground — except a line marked
-UNRECORDED, which has no record yet and must get one before the next pass. `queue` also lists
-`untracked_leads` (open rows of `known-hypotheses.md` with no live record),
-`unrecorded_documents`, `parked` records with their `revive_if`, and `possibly_parked` refusals
-whose wording describes a real but ineligible mechanism. A real mechanism the program will not pay
-for today is `parked`, never `refuted`. This is not bookkeeping: in a
-backtest of this skill, nine of twelve independent readings reported the same mechanism, and it was
-not a valid finding. The list of `singletons` in `convergence.json` is the more interesting half —
-a mechanism only one reading saw is the one still owed a second opinion. Convergence counts what
-was reported, never what is true: agreement among models is not evidence.
+`saturated.md`, closed ground for every later bundle — except a line marked UNRECORDED, which owes
+a record before the next pass. Read `queue` in full: it lists `untracked_leads`,
+`unrecorded_documents`, `unverified_blockers`, `unread_bundles`, `parked` records with their
+`revive_if`, and `possibly_parked` refusals describing a real but ineligible mechanism. A mechanism
+the program will not pay for today is `parked`, never `refuted`.
+
+None of this is bookkeeping. In a backtest nine of twelve independent readings reported the same
+mechanism, and it was not a valid finding — so `singletons` in `convergence.json` is the half worth
+acting on: a mechanism one reading saw is the one still owed a second opinion. Convergence counts
+what was reported, never what is true.
 
 For the classic Solidity bug-class sweep, delegate to `solidity-auditor` in loop mode when it is
 installed and spend your own passes on the aimed lenses (`references/compare.md`). Do not nest
@@ -338,12 +357,11 @@ python3 $S history check --run <run>
 python3 $S check --run <run> --submission
 ```
 
-A dup collision is not an automatic drop; it is a demand to state how your mechanism differs — set
-`dup_review.status` to `different-mechanism` or `different-consequence`, list the `entry_ids` you
-compared against, and write the comparison. `same-mechanism` and `unchecked` block submission, as
-does an untriaged harvested issue or a `dup-matches.json` older than the current map or findings.
-No public match never proves no private duplicate. Check program exclusions and the exact deployed
-configuration separately from everything else.
+A collision is not an automatic drop; it is a demand to say how your mechanism differs. Set
+`dup_review.status`, list the `entry_ids` compared, write the comparison (`references/dup-map.md`).
+`same-mechanism`, `unchecked`, an untriaged harvested issue, an unreviewed audit artifact, or a
+`dup-matches.json` older than the map or the findings all block submission. No public match never
+proves no private duplicate.
 
 Set `history_review.status` to `no-match`, `different-root-cause`, or `regression` and explain it.
 The gate requires a fresh `history-matches.json` for the current candidate mechanisms; if an id,

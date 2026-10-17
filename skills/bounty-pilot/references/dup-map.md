@@ -101,6 +101,30 @@ A search that ran and found nothing is a clean result; a search that never ran i
 Unauthenticated GitHub search allows only a few queries a minute. Export a read-only token and
 name its variable with `--token-env`; the value is never printed or written to the run.
 
+## Import what you have already sent this program
+
+The other half of the map is private: your own submissions. A finding filed on pump.fun in October
+had the same root cause as the hunter's own report from 4 September, already sitting in a duplicate
+cluster on the same account. Nothing could have caught it, because the ledger was empty — the
+single-record `history import`, one command per report, was too tedious to be used.
+
+```sh
+python3 <skill-dir>/scripts/bounty.py history import --from-file <export> \
+    [--program <name>] [--project <host/owner/repo>] [--dry-run]
+```
+
+It accepts a JSON array, JSON Lines, or an object holding the list, maps each record into the
+private ledger, and is idempotent: re-importing the same export adds nothing, so refreshing it
+mid-hunt is safe. `--program` and `--project` supply the program name and the canonical project key
+for records that carry neither; `--dry-run` prints what would be added and writes nothing.
+
+**Before hunting a program, export or paste what you have already submitted to it and import it.**
+Then `history check` joins it against this run's candidates, and `evidence.md` has the
+`history_review` fields a submission needs. The ledger keeps compact metadata only — project key,
+program, bug class, surfaces, a one-line root cause, disposition, effort — and never report bodies,
+source, PoCs, wallets or addresses. Verify each imported field against the original record: the
+importer checks shapes, not truth.
+
 ## Format — `dup-map.json` in the run directory
 
 `id` is required and unique: it is the name a finding's `dup_review.entry_ids` cites, and the
