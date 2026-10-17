@@ -93,9 +93,11 @@ say so in `coverage.md`. On a Solidity target worth a week, installing it is the
    ```
 
    It reads both the raw agent blocks (`FINDING | contract: … | function: … | bug_class: …`) and
-   the persisted run and report files (`<!--F key=contract|function|bug-class … kind=FINDING-->`),
-   maps each contract to the file that declares it, and writes `status: hypothesis` records with an
-   `origin` and empty evidence. Its confidence score is not evidence and is not copied. Imported
+   the persisted run files `run-K.md` (`<!--F key=contract|function|bug-class … kind=FINDING-->`),
+   maps each contract to the file that declares it (`--repo`), and writes `status: hypothesis`
+   records with an `origin` and empty evidence. Point it at the runs directory, not at
+   `full-report.md`: the assembled report drops the markers and the bug class, so its lines are only
+   counted as covered when a run file holds the same function. Its confidence score is not evidence and is not copied. Imported
    records show in `queue` as `imported_untriaged` until a hunter or triage pass has worked them.
    `converge` reads the same formats, so its readings can count toward convergence too.
 6. **Adjudicate everything together** with `adjudicate.md`, then verify survivors with a real paired
