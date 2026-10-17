@@ -28,7 +28,7 @@ def paired():
                 "matched_expected_exit": True,
                 "argv": ["forge", "test", "--match-test", "test_" + role]}
     return {"source_revision": SHA, "source_status": "clean", "mode": "executed", "result": "experiments-conformed",
-            "cases": [case("candidate"), case("negative-control")]}
+            "finding_id": "BP-001", "cases": [case("candidate"), case("negative-control")]}
 
 
 class EvidenceFirstTests(unittest.TestCase):

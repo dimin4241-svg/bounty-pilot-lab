@@ -35,13 +35,18 @@ def _within_run(run, relative):
     return path
 
 
+def read_result(run, relative):
+    """The runner output a ledger entry cites, refused unless it is a regular file in the run."""
+    return _read(_within_run(Path(run).resolve(), relative))
+
+
 def _paired_result(data):
     if not isinstance(data, dict) or data.get("mode") != "executed":
         return False, "runner was not executed"
     cases = data.get("cases")
     if not isinstance(cases, list) or not cases:
         return False, "runner has no cases"
-    pairs = {}
+    pairs, commands = {}, {}
     for case in cases:
         if not isinstance(case, dict):
             return False, "malformed runner case"
@@ -58,25 +63,30 @@ def _paired_result(data):
         if not isinstance(case.get("argv"), list) or not case["argv"]:
             return False, "missing executed argv"
         pairs.setdefault(ident, []).append(role)
+        commands.setdefault(ident, []).append(
+            json.dumps([case["argv"], case.get("cwd", ".")], sort_keys=True))
     if not pairs or any(sorted(roles) != ["candidate", "negative-control"]
                         for roles in pairs.values()):
         return False, "candidate and negative-control must both run exactly once per pair"
+    # A control that runs the very command the candidate ran contrasts nothing: both `true`,
+    # or the same test twice, conform on exit codes and test no property at all.
+    same = sorted(ident for ident, runs in commands.items() if len(set(runs)) == 1)
+    if same:
+        return False, ("candidate and negative-control ran the same command in the same "
+                       "directory (pair " + ", ".join(same) + "); the control must exercise "
+                       "the contrasting case")
     if data.get("result") != "experiments-conformed":
         return False, "runner did not finish in conformed status"
     return True, "paired native commands executed; assertions still require human review"
 
 
-def review(run, limit=3):
-    run = Path(run).resolve()
-    if limit < 1 or limit > 20:
-        raise ValueError("limit must be between 1 and 20")
-    meta, findings = _read(run / "run.json"), _read(run / "findings.json")
+def load_ledger(run):
+    """Read experiments.json as (final entry by finding id, errors); a missing file is empty."""
+    run = Path(run)
     ledger_path = run / "experiments.json"
     ledger = _read(ledger_path) if ledger_path.exists() else {"version": 1, "experiments": []}
     if not isinstance(ledger, dict) or ledger.get("version") != 1 or not isinstance(ledger.get("experiments"), list):
         raise ValueError("experiments.json requires version=1 and experiments array")
-    if not isinstance(findings, list):
-        raise ValueError("findings.json must be an array")
     by_id, errors = {}, []
     for entry in ledger["experiments"]:
         if not isinstance(entry, dict) or not FINDING_ID.fullmatch(str(entry.get("finding_id", ""))):
@@ -86,10 +96,83 @@ def review(run, limit=3):
         if key in by_id:
             errors.append(key + ": multiple final experiment records; keep only the latest")
         by_id[key] = entry
+    return by_id, errors
+
+
+def shared_results(run, by_id):
+    """Errors for one runner result cited by more than one executed finding."""
+    run = Path(run).resolve()
+    cited = {}
+    for key, entry in sorted(by_id.items()):
+        if entry.get("status") != "executed" or not isinstance(entry.get("result_path"), str):
+            continue
+        try:
+            path = (run / entry["result_path"]).resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        cited.setdefault(path, []).append(key)
+    errors = []
+    for path, keys in sorted(cited.items()):
+        if len(keys) > 1:
+            errors.append(", ".join(keys) + ": cite the same result_path; one paired run is the "
+                          "evidence for one finding, so run and record each finding's own pair")
+    return errors
+
+
+def check_entry(run, meta, finding, entry):
+    """Validate one finding's ledger entry as (state, reason, runner result or None).
+
+    The before-next-reading-pass gate and the submission gate both call this, so a record can
+    never be held to a weaker standard at submission than it was between passes.
+    """
+    run = Path(run).resolve()
+    ident = finding.get("id", "<missing-id>")
+    status = entry.get("status")
+    if status == "blocked":
+        reason, alternative = entry.get("reason"), entry.get("attempted_alternative")
+        if (not isinstance(reason, str) or len(reason.strip()) < 20 or
+                not isinstance(alternative, str) or len(alternative.strip()) < 20):
+            return "unsubstantiated-blocker", "blocker needs specific reason and attempted alternative", None
+        return "blocked", reason, None
+    if status != "executed":
+        return "invalid", "status must be executed or blocked", None
+    if entry.get("revision") != meta.get("commit") or entry.get("revision") != finding.get("revision"):
+        return "stale-revision", "experiment revision differs from pinned run/finding revision", None
+    if not isinstance(entry.get("observation"), str) or len(entry["observation"].strip()) < 20:
+        return "missing-observation", "execution requires a concrete observed outcome", None
+    result = None
+    try:
+        result = read_result(run, entry.get("result_path"))
+        valid, reason = _paired_result(result)
+        if valid and result.get('source_revision') != entry['revision']:
+            valid, reason = False, 'runner-observed checkout commit differs from pinned revision'
+        bound = result.get("finding_id") if isinstance(result, dict) else None
+        if valid and bound != ident:
+            # A result names the finding it tests, or one passing pair would satisfy any record.
+            valid = False
+            if isinstance(bound, str) and bound:
+                reason = "runner result is bound to " + bound + ", not " + ident
+            else:
+                reason = ("runner result names no finding_id; set finding_id in the plan so the "
+                          "result is bound to its finding, and rerun scenario_runner.py")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        valid, reason = False, str(exc)
+    return ("executed" if valid else "incomplete"), reason, result
+
+
+def review(run, limit=3):
+    run = Path(run).resolve()
+    if limit < 1 or limit > 20:
+        raise ValueError("limit must be between 1 and 20")
+    meta, findings = _read(run / "run.json"), _read(run / "findings.json")
+    by_id, errors = load_ledger(run)
+    if not isinstance(findings, list):
+        raise ValueError("findings.json must be an array")
     ids = {f.get("id") for f in findings if isinstance(f, dict)}
     for key in by_id:
         if key not in ids:
             errors.append(key + ": experiment has no matching finding")
+    errors.extend(shared_results(run, by_id))
     queue = sorted((f for f in findings if isinstance(f, dict) and f.get("status") in OPEN),
                    key=lambda f: (RANK.get(f.get("severity"), 6),
                                   0 if f.get("status") == "needs-evidence" else 1,
@@ -103,39 +186,16 @@ def review(run, limit=3):
             errors.append(ident + ": no executed experiment or explicit blocker recorded")
             details.append({"finding_id": ident, "state": "unattempted"})
             continue
-        status = entry.get("status")
-        if status == "blocked":
-            reason, alternative = entry.get("reason"), entry.get("attempted_alternative")
-            if (not isinstance(reason, str) or len(reason.strip()) < 20 or
-                    not isinstance(alternative, str) or len(alternative.strip()) < 20):
-                errors.append(ident + ": blocker needs specific reason and attempted alternative")
-                details.append({"finding_id": ident, "state": "unsubstantiated-blocker"})
-            else:
-                details.append({"finding_id": ident, "state": "blocked", "reason": reason})
-            continue
-        if status != "executed":
-            errors.append(ident + ": status must be executed or blocked")
-            details.append({"finding_id": ident, "state": "invalid"})
-            continue
-        if entry.get("revision") != meta.get("commit") or entry.get("revision") != finding.get("revision"):
-            errors.append(ident + ": experiment revision differs from pinned run/finding revision")
-            details.append({"finding_id": ident, "state": "stale-revision"})
-            continue
-        if not isinstance(entry.get("observation"), str) or len(entry["observation"].strip()) < 20:
-            errors.append(ident + ": execution requires a concrete observed outcome")
-            details.append({"finding_id": ident, "state": "missing-observation"})
-            continue
-        try:
-            result = _read(_within_run(run, entry.get("result_path")))
-            valid, reason = _paired_result(result)
-            if valid and result.get('source_revision') != entry['revision']:
-                valid, reason = False, 'runner-observed checkout commit differs from pinned revision'
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            valid, reason = False, str(exc)
-        if not valid:
-            errors.append(ident + ": paired execution incomplete: " + reason)
-        details.append({"finding_id": ident, "state": "executed" if valid else "incomplete",
-                        "review_note": reason})
+        state, reason, _ = check_entry(run, meta, finding, entry)
+        if state == "blocked":
+            details.append({"finding_id": ident, "state": state, "reason": reason})
+        elif state in ("executed", "incomplete"):
+            if state == "incomplete":
+                errors.append(ident + ": paired execution incomplete: " + reason)
+            details.append({"finding_id": ident, "state": state, "review_note": reason})
+        else:
+            errors.append(ident + ": " + reason)
+            details.append({"finding_id": ident, "state": state})
     return {"gate": "before-next-reading-pass", "result": "failed" if errors else "passed",
             "selected": details, "deferred": [f.get("id") for f in deferred],
             "errors": errors, "checked": len(selected),
