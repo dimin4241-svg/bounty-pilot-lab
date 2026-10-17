@@ -256,10 +256,11 @@ between the files — a reading spent re-deriving a saturated mechanism under a
 new label is a reading spent on nothing. Convergence counts what was reported, not what is true: a
 mechanism every reading agreed on can still be invalid.
 
-Update `coverage.md` with which lenses actually ran, how many readings each got, what each closed,
-and **which functions each reading examined**, by name (`path:Contract.function`). A file row
-credits the file; only a function named in a row, a hypothesis surface or a record's
-`affected_paths` credits that function. A lens you could not dispatch is reported, never silently
+Update `coverage.md` with which lenses actually ran, how many readings each got and what each
+closed. **Which functions were examined** comes from the readings themselves: each ends with
+`EXAMINED | path:Contract.function` lines, and `converge` collects them into `examined.json`. A file
+row credits the file; only a function named in `examined.json`, a `coverage.md` row, a hypothesis
+surface or a record's `affected_paths` credits that function. A lens you could not dispatch is reported, never silently
 skipped. Then run:
 
 ```sh

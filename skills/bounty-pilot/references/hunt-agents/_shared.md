@@ -143,6 +143,19 @@ a label already in `known-hypotheses.md` whenever the mechanism is the same.
 `surface` is `path:Contract.function` for EVM, `path:program::instruction` for Solana, `path:symbol`
 otherwise. Keep it exact — it is matched against the dup map mechanically.
 
+**End every reading with what you actually examined**, one function per line, in the same surface
+form — the functions you read in full and attacked with your lens, not the ones you scrolled past:
+
+```
+EXAMINED | path:Contract.function
+EXAMINED | path:Contract.otherFunction
+NOT-REACHED | path:Contract.function | why: ran out of budget / needs a dependency not bundled
+```
+
+The run's coverage floor is computed from these lines, per entry point. A function you did not list
+counts as unexamined for every later pass, which is the honest default; a function you list without
+having read it closes ground nobody covered.
+
 ## Never
 
 - Never claim a test ran, a fork was simulated, or a value was read on chain unless you did it.

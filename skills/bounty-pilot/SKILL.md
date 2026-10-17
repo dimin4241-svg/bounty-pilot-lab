@@ -200,8 +200,9 @@ escalation, triage and evidence as everything else (`references/compare.md`). Ne
 orchestrators.
 
 After every pass: append investigated mechanisms to `known-hypotheses.md` — including the ones you
-looked for and did not find — and record in `coverage.md` which lenses ran and which functions each
-reading actually examined. Then:
+looked for and did not find — and record in `coverage.md` which lenses ran. Every reading ends with
+`EXAMINED | path:Contract.function` lines (`hunt-agents/_shared.md`); `converge` collects them into
+`examined.json`, which is what credits a function. Then:
 
 ```sh
 python3 $S converge --readings <dir of this pass's raw agent output> --run <run>
@@ -209,7 +210,7 @@ python3 $S function-coverage --run <run>
 python3 $S queue --run <run>
 ```
 
-`converge` accumulates readings across passes and groups them by file, function and bug class; it
+`converge` accumulates readings across passes, groups them by file, function and bug class, and
 writes `saturated.md`, closed ground for later bundles except lines marked UNRECORDED. Its
 **singletons** — mechanisms only one reading saw — are the half worth acting on, and `queue` lists
 the unrecorded ones. Read `queue` in full: `untracked_leads`, `unrecorded_singletons`,
