@@ -2579,6 +2579,21 @@ DEPLOYMENT_EVIDENCE_DIR = 'deployments'
 EVM_SOURCE_SUFFIXES = ('.sol', '.vy')
 
 
+# An on-chain identity is not always an EVM address. A Solana program id is base58 and
+# case-significant, so lowercasing it would never match its own file: requiring the hex form
+# made `deployment_status: exact` structurally unreachable on every Solana target, however good
+# the evidence. Reported from a live Squads run that left its gate failing rather than edit it.
+EVM_ADDRESS = re.compile(r'0x[0-9a-fA-F]{40}')
+BASE58_ID = re.compile(r'[1-9A-HJ-NP-Za-km-z]{32,44}')
+
+
+def _evidence_stem(address):
+    """The filename `verify-deployment --run` gives this address, or None if it is not one."""
+    if EVM_ADDRESS.fullmatch(address):
+        return address.lower()
+    return address if BASE58_ID.fullmatch(address) else None
+
+
 def _check_deployment_evidence(row, prefix, run, errors):
     """`exact` must be backed by verify-deployment output saved in this run, never typed in."""
     status = row['deployment_status']
@@ -2620,9 +2635,10 @@ def _check_deployment_evidence(row, prefix, run, errors):
             errors.append(label + ' is not a verify-deployment result')
             continue
         address = data.get('address')
-        if (not isinstance(address, str) or not re.fullmatch(r'0x[0-9a-fA-F]{40}', address)
-                or target.stem != address.lower()):
-            errors.append(label + ' does not name the address it was recorded for')
+        if not isinstance(address, str) or _evidence_stem(address) != target.stem:
+            errors.append(label + ' does not name the address it was recorded for; the file is '
+                          'named after its address, lowercased for an EVM address and verbatim '
+                          'for a base58 program id')
             continue
         if data.get('deployment_status') != 'exact':
             errors.append(label + ' reports ' + str(data.get('deployment_status'))
@@ -4370,46 +4386,48 @@ def score_target(repo, program_path, ledger=None):
         unknowns.append('value_at_rest_usd unknown: run `value` over every in-scope address '
                         'BEFORE committing - it is the ceiling on every severity you can claim')
 
-    # Eyes already on the code. A long known-issues list is a free dup map, but a large
-    # published audit corpus means every mechanism has been read by paid auditors.
-    audits = program.get('public_audit_count')
-    if isinstance(audits, int) and audits >= 0:
-        if audits >= 20:
-            points -= 20
-            reasons.append(f'{audits} public audit reports: the custom surface has been read '
-                           'many times over - expect duplicate or intended-behaviour verdicts, '
-                           'and hunt only the post-audit delta and live configuration')
-        elif audits >= 5:
-            points -= 8
-            reasons.append(f'{audits} public audit reports: build the dup corpus first')
-        else:
-            points += 6
-            reasons.append(f'only {audits} public audit report(s): few eyes per dollar')
-    else:
-        unknowns.append('public_audit_count unknown: count the published reports before '
-                        'reading code, and keep their text as the dup corpus')
-
     if total_lines > 60000:
         reasons.append(f'{total_lines} in-scope lines: too large for one sweep, '
                        'prioritise by delta and value-bearing paths')
 
-    # Two duplicate-risk facts, both cheap and both decisive in the recorded losses. They are
-    # inputs to a heuristic, not a veto: the heaviest of them moves the score by less than the
-    # largest code factor, so neither can carry a band on its own.
+    # How many eyes have already read this code. Two sources measure the same thing: the count
+    # the hunter wrote into program.json, and the review artifacts the repository actually ships.
+    # They are scored ONCE, off whichever is larger - a repo shipping ten reports while
+    # program.json says two means at least ten reviews exist - because penalising both would
+    # double-count one fact, and rewarding both would double-reward a target nobody has audited.
+    # It is an input to a heuristic, not a veto: it moves the score by less than the largest code
+    # factor, so it cannot carry a band on its own.
+    audits = program.get('public_audit_count')
+    declared = audits if isinstance(audits, int) and audits >= 0 else None
     artifacts = _review_artifacts(root, tracked, skipped)
-    if len(artifacts) >= 6:
+    shipped = len(artifacts)
+    eyes = max(declared or 0, shipped)
+    source = ('the repository ships' if shipped >= (declared or 0)
+              else 'program.json declares')
+    if eyes >= 20:
+        points -= 20
+        reasons.append(f'{eyes} review reports ({source} them): the custom surface has been read '
+                       'many times over - expect duplicate or intended-behaviour verdicts, and '
+                       'hunt only the post-audit delta and the live configuration')
+    elif eyes >= 6:
         points -= 15
-        reasons.append(f'{len(artifacts)} review artifacts ship in this repository: heavily '
-                       'farmed ground - select by audit coverage, not by prize')
-    elif len(artifacts) >= 3:
+        reasons.append(f'{eyes} review reports ({source} them): heavily farmed ground - select '
+                       'by audit coverage, not by prize')
+    elif eyes >= 3:
         points -= 10
-        reasons.append(f'{len(artifacts)} review artifacts ship in this repository: published '
-                       'reviews have already read these surfaces')
-    elif artifacts:
+        reasons.append(f'{eyes} review reports ({source} them): published reviews have already '
+                       'read these surfaces, so build the dup corpus before reading code')
+    elif eyes:
         points -= 5
-        reasons.append(f'{len(artifacts)} review artifact(s) ship in this repository')
-    else:
+        reasons.append(f'{eyes} review report(s) ({source} them)')
+    elif declared == 0:
         points += 5
+        reasons.append('no published review and none shipped in the repository: few eyes per '
+                       'dollar')
+    else:
+        unknowns.append('public_audit_count unknown and no review artifact ships in the '
+                        'repository: count the published reports before reading code, and keep '
+                        'their text as the dup corpus')
         reasons.append('no review artifact ships in this repository, so none is pre-burning '
                        'these surfaces - an audit published elsewhere would not show here')
 

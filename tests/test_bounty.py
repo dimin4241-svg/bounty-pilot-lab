@@ -3791,6 +3791,57 @@ class DeltaTests(unittest.TestCase):
         self.assertIn('src/Risky.sol', result['untested_sample'])
         self.assertTrue(any('first-to-report' in r for r in result['reasons']))
 
+    def test_evidence_filename_accepts_a_base58_program_id(self):
+        """A Solana program id is base58 and case-significant. Requiring the EVM hex form, and
+        lowercasing it, made deployment_status exact unreachable on every Solana target however
+        good the evidence - reported from a live run that left its gate failing rather than
+        edit the skill to pass."""
+        evm = '0xAbC0000000000000000000000000000000000001'
+        self.assertEqual(bounty._evidence_stem(evm), evm.lower())
+        program_id = 'SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf'
+        self.assertEqual(bounty._evidence_stem(program_id), program_id)
+        for junk in ('not-an-address', '0xZZ', '', '0OIl' * 9):
+            self.assertIsNone(bounty._evidence_stem(junk), junk)
+
+    def test_review_count_is_scored_once_from_the_larger_source(self):
+        """program.json's count and the shipped artifacts measure the same fact: eyes on this
+        code. Penalising both double-counts it, and rewarding both double-rewards an unaudited
+        target, so the score takes whichever source is larger and applies one penalty."""
+        audits = self.repo / 'audit'
+        audits.mkdir(exist_ok=True)
+        for n in range(6):
+            (audits / f'firm-{n}-audit.md').write_text(f'review {n}\n')
+        commit(self.repo, 'ship six review reports')
+
+        def score(declared):
+            body = {'program': 'Example', 'in_scope_paths': ['src/']}
+            if declared is not None:
+                body['public_audit_count'] = declared
+            path = Path(self.temp.name) / f'p-{declared}.json'
+            path.write_text(json.dumps(body))
+            return bounty.score_target(self.repo, path)
+
+        shipped_only, both, declared_higher = score(None), score(6), score(20)
+        # Six shipped and six declared is the same six: the penalty must not double.
+        self.assertEqual(shipped_only['priority_score'], both['priority_score'])
+        # One reason mentions the count, never two.
+        for result in (shipped_only, both, declared_higher):
+            counted = [r for r in result['reasons'] if 'review report' in r]
+            self.assertEqual(len(counted), 1, counted)
+        # The larger source wins, so a bigger declared count scores strictly worse.
+        self.assertLess(declared_higher['priority_score'], both['priority_score'])
+        self.assertTrue(any('program.json declares' in r for r in declared_higher['reasons']))
+        self.assertTrue(any('the repository ships' in r for r in shipped_only['reasons']))
+        self.assertEqual(shipped_only['review_artifacts']['count'], 6)
+
+    def test_no_review_anywhere_is_unknown_not_a_clean_bill(self):
+        bare = Path(self.temp.name) / 'no-reviews.json'
+        bare.write_text(json.dumps({'program': 'Bare', 'in_scope_paths': ['src/']}))
+        result = bounty.score_target(self.repo, bare)
+        self.assertEqual(result['review_artifacts']['count'], 0)
+        self.assertTrue(any('public_audit_count unknown' in u for u in result['unknowns']))
+        self.assertFalse(any('few eyes per dollar' in r for r in result['reasons']))
+
     def test_score_target_records_unknowns_instead_of_assuming(self):
         program = Path(self.temp.name) / 'bare.json'
         program.write_text(json.dumps({'program': 'Bare', 'in_scope_paths': ['src/']}))
