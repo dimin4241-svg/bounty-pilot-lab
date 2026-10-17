@@ -15,8 +15,8 @@ lenses it has no equivalent for.
 **Blind-spot lenses** are in `blind-spots.md`: controls that exist only as live configuration,
 derived constants nobody recomputes, the odd one out, the authoritative value that was available
 and unused, safety resting on a dependency detail, state that only exists between versions, code
-that is deployed but absent from the repository, and the surface your own run closed with a
-blocker nobody reproduced.
+that is deployed but absent from the repository, the surface your own run closed with a blocker
+nobody reproduced, and the cliff at a scale nobody's test fixtures ever reach.
 Reach for them on a heavily audited target where the lenses above came back empty.
 
 For every lens, produce: entry point, attacker capability, preconditions, state transition, broken
@@ -55,6 +55,19 @@ local validator or test harness. An ordinary Rust panic is a failed transaction,
 
 For off-chain Rust: untrusted parsing, panic and abort boundaries, persistence and retry state,
 resource growth, synchronisation, and `unsafe`. Keep chain and runtime semantics explicit.
+
+## Web and dApp frontend
+
+When the program lists a website or an app next to the contracts, it is usually the only in-scope
+surface with no competent competition, and the aimed lens for it is
+`hunt-agents/web-frontend-agent.md`. The payable class is narrow — typically only script execution or
+a redirect that changes **what the user is asked to sign** — and the exclusion list removes everything
+a scanner reports, so read the program's web exclusions before the first grep. The one question that
+closes the largest class in a single pass: does any URL parameter, hash fragment or stored value set a
+transaction recipient, spender, router, token address or calldata?
+Two disciplines carry over to every target: prove the sink and the source **separately** and file
+neither alone; and settle a URL guard against `new URL()` rather than by eye, because a hostname check
+that ignores the scheme passes `javascript://host/%0a…`.
 
 ## Other languages
 

@@ -10,6 +10,7 @@ ADAPTERS = {
     "rust-native": "adapters/rust-native.md",
     "rust-solana": "adapters/rust-solana.md",
     "rust-cosmwasm": "adapters/rust-cosmwasm.md",
+    "rust-substrate": "adapters/rust-substrate.md",
     "move": "adapters/move.md",
     "cairo-starknet": "adapters/cairo.md",
     "go": "adapters/go.md",
@@ -20,6 +21,7 @@ LENSES = {
     "rust-native": ["impact-first", "recovery-failure", "semantic-mismatch", "business-logic"],
     "rust-solana": ["impact-first", "anchor-account", "privileged-path", "business-logic", "temporal-logic"],
     "rust-cosmwasm": ["business-logic", "temporal-logic", "integration-auth"],
+    "rust-substrate": ["impact-first", "privileged-path", "composition", "accounting", "live-reality", "upstream-diff"],
     "move": ["privileged-path", "business-logic", "temporal-logic"],
     "cairo-starknet": ["privileged-path", "business-logic", "temporal-logic"],
     "go": ["recovery-failure", "business-logic", "semantic-mismatch"],
@@ -114,6 +116,10 @@ def route(repo):
         data = path.read_text(encoding="utf-8", errors="replace").lower()
         solana = any(s in data for s in ("anchor-lang", "solana-program", "solana-sdk", "anchor-spl"))
         cosmwasm = any(s in data for s in ("cosmwasm-std", "cw-storage-plus", "cw-multi-test"))
+        # FRAME/Substrate is NOT ordinary Rust: dispatchables behind a fee/weight/validation
+        # pipeline, and most exploitable composition sits in the per-chain runtime config.
+        substrate = any(s in data for s in ("frame-support", "frame-system", "sp-runtime",
+                                            "polkadot-sdk", "frame-benchmarking", "sp-io"))
         is_workspace = "[workspace]" in data
         has_package = "[package]" in data
         has_deps = "[dependencies]" in data or "[dependencies." in data
@@ -121,14 +127,19 @@ def route(repo):
             add("rust-solana", manifest + " contains Solana/Anchor dependency")
         if cosmwasm:
             add("rust-cosmwasm", manifest + " contains CosmWasm dependency")
-        if not solana and not cosmwasm:
+        if substrate:
+            # Detected independently of the workspace-root branch below: a Substrate monorepo
+            # root declares its deps under [workspace.dependencies], which `has_deps` misses,
+            # so the root would otherwise be dropped with a workspace-only warning.
+            add("rust-substrate", manifest + " contains FRAME/Substrate dependency")
+        if not solana and not cosmwasm and not substrate:
             if is_workspace and not has_package and not has_deps:
                 # A pure [workspace] root declares no crate of its own; its members
                 # carry the real runtime (e.g. an Anchor programs/* directory).
                 warnings.append(manifest + " is a workspace root only; runtime comes from "
                                 "member crates, not rust-native")
             else:
-                add("rust-native", manifest + " (no Solana/CosmWasm dependency in this manifest)")
+                add("rust-native", manifest + " (no Solana/CosmWasm/Substrate dependency in this manifest)")
     if any(x.endswith(".rs") for x in lower) and not cargo:
         warnings.append("Rust source without tracked Cargo.toml: runtime unknown")
     stacks = [{"stack": s, "evidence": sorted(ev), "adapter": ADAPTERS[s],

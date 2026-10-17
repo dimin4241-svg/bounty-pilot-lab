@@ -13,10 +13,13 @@ conservative manifest-based shortlist, then confirm the real runtime. `bounty.py
 <checkout>` prints the same data. Logic bundles include detected adapter instructions.
 
 Read the matching files in `adapters/`: `rust-native.md`, `rust-solana.md`,
-`rust-cosmwasm.md`, `move.md`, `cairo.md`, `go.md`, or `web-backend.md`.
+`rust-cosmwasm.md`, `rust-substrate.md`, `move.md`, `cairo.md`, `go.md`, or `web-backend.md`.
 Do this **in addition to** the basic workflow, not instead of scope, evidence and triage.
 A Cargo.toml alone does not mean Solana: distinguish the exact VM/framework and mixed
-native worker crates. When a repository has multiple runtimes, run targeted checks
+native worker crates. A manifest pulling `frame-support`/`frame-system`/`sp-runtime` is
+Substrate/FRAME, not ordinary Rust — its entry points are dispatchables behind a fee,
+weight and transaction-extension pipeline, and the exploitable composition usually sits
+in a per-chain runtime config that lives in a *different repository* from the pallets. When a repository has multiple runtimes, run targeted checks
 for each and add `semantic-mismatch` and `recovery-failure` across the boundary.
 
 ## Built-in routing
