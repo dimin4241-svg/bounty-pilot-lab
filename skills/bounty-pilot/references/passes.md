@@ -328,7 +328,10 @@ the remaining fifth is room for files that genuinely need none. A surface ending
 directory; the files under it are reported as `credited_by_directory_only` and do **not** count
 toward the floor — one `src/` row once made a whole scope read as examined. A bare name with no
 separator credits nothing, because `src` and an invariant called `accounting` are
-indistinguishable.
+indistinguishable — except a file name with an extension (`Vault.sol`) that is unique in the scope;
+an ambiguous one is reported, not credited. Both floors record digests of their inputs, and `queue`
+reports a result as `stale` when the inputs changed after it was computed — rerun it before relying
+on the number.
 
 There is no finding quota. Zero verified findings after an honest run is a legitimate result, and
 more useful than three inflated ones: say which surfaces you closed and on what evidence.

@@ -120,7 +120,11 @@ item; paste it.
 Then go one level down: `function-coverage --run <run>` lists every external entry point and the
 ones no record or coverage row names. A file counted as read can still hide thirty entry points
 nobody looked at, and the unexamined list is ranked so that the functions that write state or move
-value come first. A directory row (`src/`) credits nothing toward either floor.
+value come first. A directory row (`src/`) credits nothing toward either floor. Inherited functions
+count at the contract that deploys them, so an upgrade or ownership entry point inherited from a
+library is on the list until someone names it; read-only inherited functions are left out. A
+surface with an argument list credits one overload; `ambiguous_surfaces` and `unparsed_surfaces` list
+what credited nothing, and a `stale` result must be rerun.
 
 ## 16. Did you let an unanchored objection kill a finding?
 
@@ -175,7 +179,7 @@ In a mature, heavily audited codebase the bug is the inconsistency, not the mist
 handlers in a dispatch, the implementations of an interface, the call sites of a helper, the same
 contract on each chain — then read the one that differs. See `references/blind-spots.md`.
 For Solidity the first table is already built: did you read every entry of `odd-one-out.json` and
-write down why each asymmetry is intended or not?
+record in `odd-one-out-review.json` why each asymmetry is intended — with a quoted anchor — or not?
 
 ## 24. Did you verify the blocker, or inherit it?
 

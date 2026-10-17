@@ -88,9 +88,13 @@ table.
 For Solidity, `impact-plan` builds the first version of that table from the compiler AST and
 writes it to `odd-one-out.json`: writers of a state variable missing a guard the other writers carry,
 functions that update one of two variables normally updated together, and name-paired siblings
-(deposit/withdraw, stake/unstake, borrow/repay) whose guards or writes differ. It sees modifiers,
-`require`/`revert` conditions and internal helper checks, not intent, so many entries are deliberate;
-read each one and record why it differs. It does not see dispatch switches, other chains or
+(deposit/withdraw, stake/unstake, borrow/repay) whose guards or writes differ, plus authorisation
+hooks such as `_authorizeUpgrade` that check nothing. It compares functions within one deployed
+contract, counts modifier arguments, treats a modifier as implied only by the checks the modifier
+itself performs, and does not count `msg.sender` passed as an argument as a sender check. It sees
+modifiers, `require`/`revert` conditions and internal helper checks, not intent, and its writes are
+path-insensitive, so many entries are deliberate — about three in four on a realistic project. Read
+each one and record the decision in `odd-one-out-review.json`. It does not see dispatch switches, other chains or
 off-chain code — build those tables by hand.
 
 ## 4. The authoritative value was available and something else was used

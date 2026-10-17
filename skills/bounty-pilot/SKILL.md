@@ -145,9 +145,12 @@ For Solidity, build the compiler-resolved map from the exact pinned build
 (`forge build --build-info`, then the file under `out/build-info/`):
 
 ```sh
-python3 $S impact-plan --solc <build-info.json> --out <run>
+python3 $S impact-plan --solc <build-info.json> --out <run> --scope <source roots>
 python3 $S function-coverage --run <run>
 ```
+
+Pass `--scope`: without it a build-info file drags `lib/` into every ranking. Out-of-scope code
+that in-scope contracts call or inherit is kept and marked `dependency`.
 
 `impact-plan` writes `semantic-graph.json` (per function: entry, guards, writes, reads, calls,
 sinks), `impact-paths.json` (paths to value-moving sinks, including arbitrary calls) and
@@ -155,11 +158,18 @@ sinks), `impact-paths.json` (paths to value-moving sinks, including arbitrary ca
 
 - `guard-asymmetry`: a writer of a state variable that lacks a guard most other writers carry;
 - `paired-write-omission`: a function that updates one of two variables normally updated together;
-- `sibling-asymmetry`: deposit/withdraw, mint/burn, stake/unstake… pairs whose guards or writes differ.
+- `sibling-asymmetry`: deposit/withdraw, mint/burn, stake/unstake… pairs whose guards or writes differ;
+- `unguarded-hook`: an authorisation hook such as `_authorizeUpgrade` whose body checks nothing.
 
-These are leads, often intentional, and the bundles carry them to the lenses that judge them.
-`function-coverage` lists every external entry point and, from then on, which ones the run's records
-actually name. Rust, Move, Cairo and Vyper get a lexical entry-point list (`--repo`), marked as such.
+Comparisons are made within each deployed contract, through its own linearisation: an inherited
+function appears at the heir (`Vault.upgradeToAndCall`, not only `UUPSUpgradeable.upgradeToAndCall`),
+modifier arguments count (`onlyRole(MINTER)` is not `onlyRole(PAUSER)`), and a modifier is implied
+only by the checks it performs itself. These are leads — on a realistic project about a quarter are
+real — so record each decision in `<run>/odd-one-out-review.json` (`intended` needs a quoted anchor);
+`queue` then counts only the unreviewed ones. `function-coverage` lists every external entry point
+per deployed contract, inherited ones included, and from then on which ones the run's records
+actually name; a surface with an argument list credits one overload, and results computed from
+inputs that have since changed are reported as `stale`. Rust, Move, Cairo and Vyper get a lexical entry-point list (`--repo`), marked as such.
 
 ## Stage 3 — Hunt
 
