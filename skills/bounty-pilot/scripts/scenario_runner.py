@@ -32,6 +32,9 @@ INTERPRETERS = {"python", "python2", "python3", "node", "nodejs", "deno", "bun",
                 "perl", "ruby", "php", "lua"}
 INTERPRETER_CODE_FLAGS = {"-c", "-e", "--eval", "--eval-file"}
 
+FINDING_ID = re.compile(r"BP-[0-9]{3,}")
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
 _REDACT = "<REDACTED>"
 # Key=value / key: value where the key NAME carries a sensitive token, even with
 # surrounding word characters (ETH_PRIVATE_KEY, "private_key", APIKEY, ...).
@@ -100,6 +103,9 @@ def _validate(plan, root):
     if not isinstance(plan, dict):
         raise ValueError("plan must be a JSON object")
     _env_names(plan.get("pass_env"), "plan.pass_env")
+    finding = plan.get("finding_id")
+    if finding is not None and (not isinstance(finding, str) or not FINDING_ID.fullmatch(finding)):
+        raise ValueError("finding_id must name the findings.json record this plan tests (BP-001)")
     cases = plan.get("cases")
     if not isinstance(cases, list) or not cases or len(cases) > 40:
         raise ValueError("plan.cases must contain between 1 and 40 cases")
@@ -169,27 +175,103 @@ def _dotenv_offenders(directory):
     return offenders
 
 
+def _counts(pattern, text):
+    return [int(n) for n in re.findall(pattern, text)]
+
+
+def _cargo_zero(argv, low):
+    """Zero unless a unit or integration harness ran a test; doc-tests are not the PoC.
+
+    Cargo prints its `Running <binary>` and `Doc-tests <crate>` headers on stderr and libtest
+    prints `running N tests` on stdout, so the two cannot be interleaved after capture. Cargo
+    runs every test binary before any doc-test, though, so the first blocks belong to the
+    binaries it announced. With `-q` there are no headers; a block is then a doc-test block
+    when every test it names is a `path - item (line N)` doc-test.
+    """
+    if "--no-run" in argv or "--doc" in argv:
+        return True
+    blocks = re.split(r"(?m)^running (\d+) tests?$", low)
+    counts = [int(n) for n in blocks[1::2]]
+    bodies = blocks[2::2]
+    if not counts:
+        return True
+    binaries = len(re.findall(r"(?m)^\s*running (?!\d+ tests?$)\S", low))
+    if binaries:
+        return sum(counts[:binaries]) == 0
+    ran = 0
+    for count, body in zip(counts, bodies):
+        names = re.findall(r"(?m)^test (.+?) \.\.\. ", body)
+        if names and all(re.search(r" - .* \(line \d+\)$", name) for name in names):
+            continue
+        ran += count
+    return ran == 0
+
+
+def _mocha_zero(low):
+    """Mocha, Hardhat (2 and 3) and the ts-mocha scripts `anchor test` runs: `N passing`."""
+    passing = _counts(r"\b(\d+) passing\b", low)
+    failing = _counts(r"\b(\d+) failing\b", low)
+    if passing or failing:
+        return sum(passing) + sum(failing) == 0
+    jest = _counts(r"\btests:\s+[^\n]*?\b(\d+) total\b", low)
+    if jest:
+        return not any(jest)
+    if "no tests found" in low or "no test files found" in low:
+        return True
+    # No summary at all: whatever ran, it reported no test result.
+    return True
+
+
 def _zero_tests(argv, returncode, text):
-    """True when the tool reported that the selector matched no test at all."""
+    """True when the tool reported that the selector matched no test at all.
+
+    The strings are the tools' own: forge's `no tests match the provided pattern` and `No tests
+    found in project!` and its `N tests passed, N failed, N skipped` summary; libtest's
+    `running N tests`; mocha's and Hardhat's `N passing`; the Move unit-test reporter's `Total
+    tests: N` (Sui and Aptos share it); unittest's `Ran N tests`; pytest's exit code 5.
+    """
     base = Path(argv[0]).name.lower()
-    low = text.lower()
+    names = {Path(arg).name.lower() for arg in argv}
+    low = ANSI.sub("", text).lower()
     if "forge" in base and "test" in argv:
-        if "no tests match the provided pattern" in low:
+        if "no tests match the provided pattern" in low or "no tests found in project" in low:
             return True
+        summary = re.findall(r"(\d+) tests passed, (\d+) failed, (\d+) skipped", low)
+        if summary:
+            # Every test skipped (vm.skip) is a run that asserted nothing.
+            return all(int(passed) + int(failed) == 0 for passed, failed, _ in summary)
         if "ran " not in low and "test suite" not in low:
             return True
         return False
     if "cargo" in base and "test" in argv:
-        counts = re.findall(r"running (\d+) tests?", low)
-        if counts and all(c == "0" for c in counts):
-            return True
-        return False
+        return _cargo_zero(argv, low)
     if base.startswith("go") and "test" in argv:
-        return "no tests to run" in low
+        if re.search(r"(?m)^\s*--- (?:pass|fail)", low):
+            return False
+        # One package line per package: `ok`, `FAIL` or `?` with [no test files]. A run where
+        # every package said [no tests to run] or [no test files] ran nothing.
+        packages = re.findall(r"(?m)^(ok|fail)[ \t]+\S+([^\n]*)$", low)
+        ran = [rest for _, rest in packages
+               if not any(note in rest for note in ("[no tests to run]", "[build failed]",
+                                                   "[setup failed]"))]
+        return not ran
     if base.startswith("pytest") or "pytest" in argv:
         if returncode == 5:
             return True
-        return "no tests ran" in low
+        return ("no tests ran" in low or "collected 0 items" in low
+                or bool(re.search(r"\b0 selected\b", low)))
+    if "unittest" in argv and (base.startswith("python") or base == "py"):
+        ran = _counts(r"\bran (\d+) tests? in\b", low)
+        return not ran or not any(ran) or "no tests ran" in low
+    if (base == "move" or base in ("sui", "aptos", "iota") and "move" in argv) and "test" in argv:
+        totals = _counts(r"total tests: (\d+)", low)
+        return not totals or not any(totals)
+    if ("mocha" in names or "_mocha" in names or "ts-mocha" in names
+            or (("hardhat" in names or "anchor" in names) and "test" in argv)):
+        if "anchor" in names and re.search(r"\brunning \d+ tests?\b", low):
+            # An Anchor workspace whose test script is `cargo test`.
+            return _cargo_zero(argv, low)
+        return _mocha_zero(low)
     return False
 
 
@@ -239,7 +321,8 @@ def execute(plan, root, allow_exec=False, allow_dotenv=False):
         command = case["argv"]
         pass_env = sorted(set(plan_env) | set(_env_names(case.get("pass_env"), "case.pass_env")))
         record = {"id": case["id"], "pair_id": case["pair_id"], "role": case["role"],
-                  "argv": [_scrub(x) for x in command], "executed": False,
+                  "argv": [_scrub(x) for x in command], "cwd": case.get("cwd", "."),
+                  "executed": False,
                   "expected_exit": case.get("expected_exit", 0),
                   "pass_env": pass_env, "tests_ran": None}
         if allow_exec:
@@ -290,7 +373,8 @@ def execute(plan, root, allow_exec=False, allow_dotenv=False):
                             and r.get("status") not in ("no-tests-ran", "blocked-dotenv", "launch-error")
                             for r in results)
     source_revision, source_status = _checkout_identity(root)
-    return {"schema": 1, "source_revision": source_revision,
+    return {"schema": 1, "finding_id": plan.get("finding_id"),
+            "source_revision": source_revision,
             "source_status": source_status,
             "mode": "executed" if allow_exec else "dry-run",
             "result": "experiments-conformed" if ok else ("not-executed" if not allow_exec else "incomplete"),
