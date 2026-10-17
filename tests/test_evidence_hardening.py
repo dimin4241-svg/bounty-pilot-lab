@@ -113,7 +113,9 @@ class SubmissionCase(unittest.TestCase):
         node = FakeNode({'eth_chainId': '0x1', 'eth_blockNumber': '0x100',
                          'eth_getCode': onchain or code,
                          'eth_getStorageAt': '0x' + '00' * 32})
-        self.artifact = self.base / ('artifact-' + address[-6:] + '.json')
+        # The gate accepts only a build in the target checkout's own build output.
+        self.artifact = self.repo / 'out' / ('artifact-' + address[-6:] + '.json')
+        self.artifact.parent.mkdir(exist_ok=True)
         self.artifact.write_text(json.dumps({'deployedBytecode': {'object': built or code}}))
         result = bounty.verify_deployment('http://node.invalid', address, str(self.artifact),
                                           'latest', opener=node, run=self.run)
@@ -379,7 +381,8 @@ class SolanaProgramTests(SubmissionCase):
         super().setUp()
         self.program_id = bounty.b58encode(bytes([9] * 32))
         self.elf = b'\x7fELF' + bytes(range(200)) + b'\x00' * 3
-        self.so = self.base / 'vault.so'
+        self.so = self.repo / 'target' / 'deploy' / 'vault.so'
+        self.so.parent.mkdir(parents=True)
         self.so.write_bytes(self.elf)
 
     def test_an_upgradeable_program_is_compared_as_solana_verify_hashes_it(self):
@@ -697,7 +700,11 @@ class ZeroTestTests(unittest.TestCase):
                                   '?   \texample.com/p\t[no test files]\n'))
         mixed = ('ok  \texample.com/p\t0.004s\n'
                  'ok  \texample.com/q\t0.003s [no tests to run]\n')
-        self.assertFalse(self.zero(['go', 'test', '-run', 'TestA', './...'], mixed))
+        # Without -v a test that called t.Skip prints the same `ok` line as one that passed,
+        # so only -v (or -json) output can show a test executed.
+        self.assertTrue(self.zero(['go', 'test', '-run', 'TestA', './...'], mixed))
+        self.assertFalse(self.zero(['go', 'test', '-v', '-run', 'TestA', './...'],
+                                   '=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\n' + mixed))
 
     def test_doc_tests_alone_never_conform_through_the_runner(self):
         with tempfile.TemporaryDirectory() as temp:

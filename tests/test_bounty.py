@@ -743,7 +743,9 @@ class RunTests(unittest.TestCase):
         code = '0x' + '60' * 40
         node = FakeNode({'eth_chainId': '0x1', 'eth_blockNumber': '0x100',
                          'eth_getCode': onchain or code, 'eth_getStorageAt': '0x' + '00' * 32})
-        artifact = self.base / ('artifact-' + address[-6:] + '.json')
+        # The gate accepts only a build in the target checkout's own build output.
+        artifact = self.repo / 'out' / ('artifact-' + address[-6:] + '.json')
+        artifact.parent.mkdir(exist_ok=True)
         artifact.write_text(json.dumps({'deployedBytecode': {'object': built or code}}))
         result = bounty.verify_deployment('http://node.invalid', address, str(artifact),
                                           'latest', opener=node, run=self.run)

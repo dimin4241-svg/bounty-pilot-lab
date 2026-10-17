@@ -105,6 +105,12 @@ class EvidenceFirstTests(unittest.TestCase):
             "attempted_alternative": "Tried cargo test --offline in a disposable checkout."
         }]
         self.write()
+        # A blocker carries what the shell printed, not only a sentence about it.
+        self.assertEqual(EXPERIMENT.review(self.run)["result"], "failed")
+        self.ledger["experiments"][0].update(
+            command="cargo test --offline", exit_code=101,
+            output_excerpt="error: no matching package named `anchor-lang` found")
+        self.write()
         self.assertEqual(EXPERIMENT.review(self.run)["result"], "passed")
         del self.ledger["experiments"][0]["attempted_alternative"]
         self.write()

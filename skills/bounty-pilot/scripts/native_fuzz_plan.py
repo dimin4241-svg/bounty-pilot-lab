@@ -51,7 +51,9 @@ def argv_for(stack, selector, package="."):
     if stack == "go":
         if not PACKAGE.fullmatch(package) or ".." in package:
             raise ValueError("unsafe go package")
-        return ["go", "test", package, "-run", "^" + re.escape(selector) + "$", "-count=1"]
+        # -v: without it a test that called t.Skip prints the same `ok` line as a pass, and the
+        # runner counts that as no test run.
+        return ["go", "test", package, "-run", "^" + re.escape(selector) + "$", "-count=1", "-v"]
     raise ValueError("supported stacks: " + ", ".join(SUPPORTED))
 
 def plan(spec, stack):
