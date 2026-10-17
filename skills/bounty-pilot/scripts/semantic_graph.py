@@ -9,6 +9,7 @@ runtime exploit paths. Rust and other stacks remain on the heuristic adapter pat
 import argparse
 import ast
 import json
+import re
 import subprocess
 from collections import defaultdict
 from pathlib import Path
@@ -22,6 +23,38 @@ SINK_TERMS = {
     "settlement": ("claim", "settle", "finaliz", "acknowledge", "processmessage"),
     "price-oracle": ("price", "oracle", "twap", "exchange_rate"),
 }
+# Families read from the compiler AST rather than from names. `arbitrary-call` is a low-level
+# call, an OpenZeppelin Address.functionCall* or a delegatecall whose target is neither a
+# literal, a constant, an immutable nor `this` (nor the caller itself) and whose calldata is not
+# an empty literal: the router/adapter shape that, with users' standing approvals, is the most
+# repeated production exploit class in references/hack-patterns.md.
+AST_SINK_FAMILIES = ("arbitrary-call", "delegatecall", "low-level-call", "self-destruct",
+                     "permit", "token-pull")
+# Whole camelCase/underscore words of a function's own name or a called name.
+SINK_WORDS = {"permit": "permit", "selfdestruct": "self-destruct"}
+LOW_LEVEL_MEMBERS = {"call": "low-level-call", "delegatecall": "delegatecall",
+                     "callcode": "delegatecall"}
+ADDRESS_LIB_MEMBERS = {"functionCall": "address-functioncall",
+                       "functionCallWithValue": "address-functioncall",
+                       "functionDelegateCall": "address-functiondelegatecall"}
+TOKEN_PULL_MEMBERS = ("transferFrom", "safeTransferFrom")
+YUL_SINKS = {"call": "assembly-call", "callcode": "assembly-delegatecall",
+             "delegatecall": "assembly-delegatecall", "selfdestruct": "selfdestruct"}
+# Where a call target or an argument comes from. Only these four are fixed at deployment.
+FIXED_SOURCES = ("literal", "constant", "immutable", "this")
+CALLER_SOURCES = ("msg.sender", "tx.origin")
+# Magic-variable members a guard condition can compare against.
+ENV_TOKENS = {("msg", "sender"): "msg.sender", ("tx", "origin"): "tx.origin",
+              ("block", "timestamp"): "block.timestamp", ("block", "number"): "block.number",
+              ("msg", "value"): "msg.value"}
+SENDER_ALIASES = ("_msgsender", "msgsender")
+# Builtins whose call in a condition says nothing about who or when: hashing, ABI coding.
+GUARD_SKIPPED_BASES = ("abi", "bytes", "string")
+GUARD_KEPT_BUILTINS = ("ecrecover",)
+# `require(token.transferFrom(...))` checks that a transfer succeeded; it says nothing about
+# who may call, so the moved-value call is not a guard token.
+GUARD_SKIPPED_CALLS = ("transfer", "transferFrom", "safeTransfer", "safeTransferFrom", "send",
+                       "approve", "safeApprove", "call", "delegatecall", "staticcall")
 MAX_AST_BYTES = 256_000_000
 MAX_NODES = 150_000
 EDGE_CAP = 7500
@@ -81,10 +114,251 @@ def load_solc(path, max_ast_bytes=MAX_AST_BYTES):
 ETH_MOVE_MEMBERS = ("send", "transfer")
 
 
-def _analyze_body(body, decls, funcs):
-    """Collect state reads/writes, resolved calls, called-member names and ETH
-    movement from a function or modifier body. Returns a dict of sets."""
+def _builtin(ident):
+    """A magic name (msg, require, selfdestruct, ...): solc gives builtins negative ids."""
+    rid = ident.get("referencedDeclaration")
+    return not isinstance(rid, int) or rid < 0
+
+
+def _callee(call):
+    """The expression a FunctionCall invokes, through `{value: ...}` call options."""
+    expression = call.get("expression") or {}
+    while expression.get("nodeType") == "FunctionCallOptions":
+        expression = expression.get("expression") or {}
+    return expression
+
+
+def _env_token(node):
+    """`msg.sender`, `tx.origin`, `block.timestamp`, ... for a magic member access, else None."""
+    if node.get("nodeType") != "MemberAccess":
+        return None
+    base = node.get("expression") or {}
+    if base.get("nodeType") != "Identifier" or not _builtin(base):
+        return None
+    return ENV_TOKENS.get((base.get("name"), node.get("memberName")))
+
+
+def _value_source(expr, params, state_info, depth=0):
+    """Where a call target or argument comes from: literal, constant, immutable, this,
+    msg.sender, tx.origin, parameter, state, local or expression. Syntactic only."""
+    if not isinstance(expr, dict) or depth > 12:
+        return "expression"
+    nt = expr.get("nodeType")
+    if nt == "Literal":
+        return "literal"
+    if nt == "TupleExpression":
+        parts = [c for c in expr.get("components") or [] if isinstance(c, dict)]
+        return _value_source(parts[0], params, state_info, depth + 1) if len(parts) == 1 \
+            else "expression"
+    if nt == "FunctionCall" and expr.get("kind") == "typeConversion":
+        args = [a for a in expr.get("arguments") or [] if isinstance(a, dict)]
+        return _value_source(args[0], params, state_info, depth + 1) if args else "expression"
+    if nt == "Identifier":
+        rid = expr.get("referencedDeclaration")
+        if expr.get("name") == "this" and _builtin(expr):
+            return "this"
+        if rid in state_info:
+            return state_info[rid]
+        if rid in params:
+            return "parameter"
+        return "local"
+    if nt == "MemberAccess":
+        env = _env_token(expr)
+        if env:
+            return env
+        rid = expr.get("referencedDeclaration")
+        if rid in state_info:  # `Config.TARGET`, a constant reached through its contract
+            return state_info[rid]
+        root = _value_source(expr.get("expression"), params, state_info, depth + 1)
+        return root if root in ("parameter", "state") else "expression"
+    if nt == "IndexAccess":
+        root = _value_source(expr.get("baseExpression"), params, state_info, depth + 1)
+        return root if root in ("parameter", "state") else "expression"
+    return "expression"
+
+
+def _empty_literal(expr):
+    """`""` or `hex""`: calldata that carries no selector, i.e. a plain ETH send."""
+    return (isinstance(expr, dict) and expr.get("nodeType") == "Literal"
+            and not expr.get("value") and not expr.get("hexValue"))
+
+
+def _library_style(base, libraries):
+    """`Address.functionCall(target, ...)` rather than `target.functionCall(...)`."""
+    if base.get("nodeType") != "Identifier":
+        return False
+    if base.get("referencedDeclaration") in libraries:
+        return True
+    type_string = str((base.get("typeDescriptions") or {}).get("typeString") or "")
+    return type_string.startswith("type(library ")
+
+
+def _call_sink(call, params, state_info, libraries):
+    """One sink detail for a FunctionCall node, or None."""
+    expression = _callee(call)
+    args = [a for a in call.get("arguments") or [] if isinstance(a, dict)]
+    nt = expression.get("nodeType")
+    if nt == "Identifier":
+        if expression.get("name") in ("selfdestruct", "suicide") and _builtin(expression):
+            return {"kind": "selfdestruct", "member": expression.get("name"),
+                    "beneficiary_source": (_value_source(args[0], params, state_info)
+                                           if args else "expression")}
+        return None
+    if nt != "MemberAccess":
+        return None
+    member = expression.get("memberName")
+    base = expression.get("expression") or {}
+    library = _library_style(base, libraries)
+    detail = None
+    if member in LOW_LEVEL_MEMBERS and not library:
+        detail = {"kind": LOW_LEVEL_MEMBERS[member], "member": member,
+                  "target_source": _value_source(base, params, state_info),
+                  "empty_data": bool(args) and _empty_literal(args[0])}
+    elif member in ADDRESS_LIB_MEMBERS:
+        target = args[0] if library and args else (None if library else base)
+        data = args[1:2] if library else args[0:1]
+        detail = {"kind": ADDRESS_LIB_MEMBERS[member], "member": member,
+                  "target_source": _value_source(target, params, state_info),
+                  "empty_data": bool(data) and _empty_literal(data[0])}
+    elif member in TOKEN_PULL_MEMBERS:
+        # IERC20(t).transferFrom(from, ...), t.safeTransferFrom(from, ...) with `using`, and
+        # SafeERC20.safeTransferFrom(t, from, ...) called on the library itself.
+        position = 1 if library else 0
+        detail = {"kind": "token-pull", "member": member,
+                  "from_source": (_value_source(args[position], params, state_info)
+                                  if len(args) > position else "expression")}
+    elif member == "permit":
+        position = 1 if library else 0
+        detail = {"kind": "permit", "member": member,
+                  "owner_source": (_value_source(args[position], params, state_info)
+                                   if len(args) > position else "expression")}
+    if detail and "target_source" in detail:
+        detail["dynamic_target"] = detail["target_source"] not in FIXED_SOURCES
+    return detail
+
+
+def _detail_families(detail):
+    kind = detail.get("kind")
+    if kind in ("selfdestruct",):
+        return {"self-destruct"}
+    if kind == "permit":
+        return {"permit"}
+    if kind == "token-pull":
+        return {"token-pull"}
+    if kind in ("assembly-call",):
+        return {"low-level-call"}
+    if kind in ("assembly-delegatecall",):
+        return {"delegatecall"}
+    families = set()
+    delegate = kind in ("delegatecall", "address-functiondelegatecall")
+    if delegate:
+        families.add("delegatecall")
+    chosen = detail.get("dynamic_target") and detail.get("target_source") not in CALLER_SOURCES
+    if chosen and (delegate or not detail.get("empty_data")):
+        families.add("arbitrary-call")
+    elif not delegate:
+        families.add("low-level-call")
+    return families
+
+
+def _reverts(statement):
+    """True when a branch reverts at its top level: `revert X()`, `revert(...)`, a
+    `_revertSomething()` helper, or a block holding one of those."""
+    if not isinstance(statement, dict):
+        return False
+    nt = statement.get("nodeType")
+    if nt == "RevertStatement":
+        return True
+    if nt == "Block":
+        return any(_reverts(s) for s in statement.get("statements") or [])
+    if nt == "ExpressionStatement":
+        call = statement.get("expression") or {}
+        if call.get("nodeType") != "FunctionCall":
+            return False
+        name = str(_callee(call).get("name") or _callee(call).get("memberName") or "")
+        return name == "revert" or bool(re.match(r"_?revert", name, re.I))
+    return False
+
+
+def _guard_conditions(body):
+    """Condition expressions of require/assert and of an `if` whose branch reverts."""
+    conditions = []
+    for x in walk_json(body):
+        nt = x.get("nodeType")
+        if nt == "FunctionCall":
+            expression = _callee(x)
+            args = [a for a in x.get("arguments") or [] if isinstance(a, dict)]
+            if (expression.get("nodeType") == "Identifier" and args and _builtin(expression)
+                    and expression.get("name") in ("require", "assert")):
+                conditions.append(args[0])
+        elif nt == "IfStatement" and isinstance(x.get("condition"), dict):
+            if _reverts(x.get("trueBody")) or _reverts(x.get("falseBody")):
+                conditions.append(x["condition"])
+    return conditions
+
+
+def _condition_tokens(condition, decls, funcs, local_ptr):
+    """Guard tokens of one condition, and the declared functions it calls.
+
+    `msg.sender` used only as a mapping key (`balances[msg.sender] >= x`) is a sufficiency
+    check, not an identity check, so it is not a token there.
+    """
+    tokens, callees = set(), set()
+    keyed, receivers = set(), set()
+    for x in walk_json(condition):
+        if x.get("nodeType") == "IndexAccess" and isinstance(x.get("indexExpression"), dict):
+            keyed.update(id(y) for y in walk_json(x["indexExpression"]))
+        if x.get("nodeType") == "FunctionCall":
+            expression = _callee(x)
+            if expression.get("nodeType") == "MemberAccess" and \
+                    expression.get("memberName") in GUARD_SKIPPED_CALLS:
+                # `asset` in `require(asset.transferFrom(...))` is where value moves, not a
+                # check; the arguments still count.
+                receivers.update(id(y) for y in walk_json(expression.get("expression") or {}))
+    for x in walk_json(condition):
+        nt = x.get("nodeType")
+        if id(x) in receivers:
+            continue
+        env = _env_token(x)
+        if env and id(x) not in keyed:
+            tokens.add(env)
+        if nt in ("Identifier", "MemberAccess"):
+            rid = x.get("referencedDeclaration")
+            if rid in decls:
+                tokens.add(decls[rid])
+            elif rid in local_ptr:
+                tokens.add(local_ptr[rid])
+        if nt != "FunctionCall" or x.get("kind", "functionCall") != "functionCall":
+            continue
+        expression = _callee(x)
+        rid = expression.get("referencedDeclaration")
+        if expression.get("nodeType") == "Identifier":
+            name = expression.get("name")
+            if _builtin(expression) and rid not in funcs and name not in GUARD_KEPT_BUILTINS:
+                continue
+        elif expression.get("nodeType") == "MemberAccess":
+            base = expression.get("expression") or {}
+            if base.get("nodeType") == "Identifier" and base.get("name") in GUARD_SKIPPED_BASES \
+                    and _builtin(base):
+                continue
+            name = expression.get("memberName")
+        else:
+            continue
+        if not isinstance(name, str) or not name or name in GUARD_SKIPPED_CALLS:
+            continue
+        tokens.add("msg.sender" if name.lower() in SENDER_ALIASES else name)
+        if rid in funcs:
+            callees.add(rid)
+    return tokens, callees
+
+
+def _analyze_body(body, decls, funcs, params=(), state_info=None, libraries=()):
+    """Collect state reads/writes, resolved calls, called-member names, ETH movement, guard
+    conditions and call sinks from a function or modifier body. Returns a dict of sets."""
+    state_info = state_info or {}
     reads, writes, calls, callnames = set(), set(), set(), set()
+    internal = set()
+    sink_details = []
     eth_move = False
     # Pass 1: map local storage pointers (`Pos storage p = pos[x];`) to their state var.
     local_ptr = {}
@@ -128,6 +402,13 @@ def _analyze_body(body, decls, funcs):
             # `addr.call{value: ...}(...)` moves ETH.
             if "value" in (x.get("names") or []):
                 eth_move = True
+        elif nt == "YulFunctionCall":
+            name = (x.get("functionName") or {}).get("name")
+            if name in YUL_SINKS:
+                # Inline assembly operands are Yul names; the target is not resolved.
+                sink_details.append({"kind": YUL_SINKS[name], "member": name,
+                                     "assembly": True, "dynamic_target": None,
+                                     "src": x.get("src")})
         elif nt == "FunctionCall":
             expression = x.get("expression") or {}
             if expression.get("nodeType") == "MemberAccess":
@@ -143,13 +424,60 @@ def _analyze_body(body, decls, funcs):
             if target in funcs:
                 calls.add(funcs[target]["id"])
                 callnames.add(funcs[target]["short"])
+                # An internal call runs in this contract's context, so its checks and writes
+                # are this function's: a plain identifier, `super.f()`, or any library function.
+                base = expression.get("expression") or {}
+                if (expression.get("nodeType") == "Identifier"
+                        or funcs[target].get("contract_kind") == "library"
+                        or (base.get("nodeType") == "Identifier" and base.get("name") == "super")):
+                    internal.add(target)
+            detail = _call_sink(x, params, state_info, libraries)
+            if detail:
+                detail["src"] = x.get("src")
+                sink_details.append(detail)
+                if detail["kind"] == "selfdestruct" or detail.get("member") == "functionCallWithValue":
+                    eth_move = True
+    guard_tokens, guard_callees = set(), set()
+    for condition in _guard_conditions(body):
+        tokens, callees = _condition_tokens(condition, decls, funcs, local_ptr)
+        guard_tokens |= tokens
+        guard_callees |= callees
     return {"reads": reads, "writes": writes, "calls": calls,
-            "callnames": callnames, "eth_move": eth_move}
+            "callnames": callnames, "eth_move": eth_move, "internal": internal,
+            "guard_tokens": guard_tokens, "guard_callees": guard_callees,
+            "sink_details": sink_details}
+
+
+def _close_over(base, edges):
+    """Least fixed point of value[f] = base[f] | union(value[g] for g in edges[f]).
+    A worklist over reverse edges, so call cycles terminate."""
+    value = {k: set(v) for k, v in base.items()}
+    callers = defaultdict(set)
+    for caller, callees in edges.items():
+        for callee in callees:
+            callers[callee].add(caller)
+    todo = list(value)
+    queued = set(todo)
+    while todo:
+        current = todo.pop()
+        queued.discard(current)
+        merged = set(value[current])
+        for callee in edges.get(current, ()):
+            merged |= value.get(callee, set())
+        if merged != value[current]:
+            value[current] = merged
+            for caller in callers[current]:
+                if caller not in queued:
+                    queued.add(caller)
+                    todo.append(caller)
+    return value
 
 
 def solidity_symbols(trees):
     decls, parent = {}, {}
+    state_info = {}
     modifier_defs = {}
+    contracts = {}
     for path, tree in trees:
         for node in walk_json(tree):
             nt = node.get("nodeType")
@@ -157,14 +485,24 @@ def solidity_symbols(trees):
                 ident = node.get("id")
                 if isinstance(ident, int):
                     decls[ident] = str(path) + ":" + str(node.get("name", ident))
+                    mutability = node.get("mutability") or (
+                        "constant" if node.get("constant") else "mutable")
+                    state_info[ident] = (mutability if mutability in ("constant", "immutable")
+                                         else "state")
             if nt == "ContractDefinition":
                 cname = node.get("name", "")
+                if isinstance(node.get("id"), int):
+                    contracts[node["id"]] = {
+                        "name": str(cname), "kind": node.get("contractKind", "contract"),
+                        "bases": [b for b in node.get("linearizedBaseContracts") or []
+                                  if isinstance(b, int)]}
                 for child in node.get("nodes", []):
                     if isinstance(child, dict):
-                        parent[child.get("id")] = cname
+                        parent[child.get("id")] = node.get("id")
             if nt == "ModifierDefinition" and isinstance(node.get("id"), int):
                 modifier_defs[node["id"]] = node
-    funcs = {}
+    libraries = {cid for cid, c in contracts.items() if c["kind"] == "library"}
+    funcs, nodes = {}, {}
     for path, tree in trees:
         for node in walk_json(tree):
             if node.get("nodeType") != "FunctionDefinition":
@@ -173,8 +511,10 @@ def solidity_symbols(trees):
             if not isinstance(num, int):
                 continue
             short = str(node.get("name") or node.get("kind") or "unnamed")
+            owner = contracts.get(parent.get(num), {})
+            nodes[num] = node
             funcs[num] = {"id": "solc:" + str(num), "path": str(path),
-                          "name": str(parent.get(num, "")) + "." + short, "short": short,
+                          "name": str(owner.get("name", "")) + "." + short, "short": short,
                           "declaration": num, "language": "solidity",
                           "implemented": node.get("implemented", True),
                           "entry": (node.get("visibility") in ("external", "public")
@@ -184,51 +524,161 @@ def solidity_symbols(trees):
                           "modifiers_unverified": [str((m.get("modifierName") or {}).get("name", "unknown"))
                               for m in node.get("modifiers", []) if isinstance(m, dict)],
                           "writes": [], "reads": [],
-                          "calls": [], "sinks": [], "source": "compiler-ast"}
+                          "calls": [], "sinks": [], "source": "compiler-ast",
+                          "contract": str(owner.get("name", "")),
+                          "contract_kind": owner.get("kind", "unknown"),
+                          "function_kind": node.get("kind", "function"),
+                          "state_mutability": node.get("stateMutability", "unknown"),
+                          "guards": [], "internal_calls": [], "writes_transitive": [],
+                          "writes_via_modifiers": [], "sink_details": [],
+                          "inherited_by": []}
     # Pre-compute each modifier's own effects so a function inherits them.
-    modifier_effects = {mid: _analyze_body(node.get("body") or {}, decls, funcs)
-                        for mid, node in modifier_defs.items()}
-    for path, tree in trees:
-        for node in walk_json(tree):
-            if node.get("nodeType") != "FunctionDefinition" or node.get("id") not in funcs:
+    modifier_effects = {}
+    for mid, node in modifier_defs.items():
+        params = {p.get("id") for p in ((node.get("parameters") or {}).get("parameters") or [])
+                  if isinstance(p, dict)}
+        modifier_effects[mid] = _analyze_body(node.get("body") or {}, decls, funcs, params,
+                                              state_info, libraries)
+    guard_base, internal_edges, modifier_internal, modifier_writes = {}, {}, {}, {}
+    direct_writes = {}
+    for num, node in nodes.items():
+        current = funcs[num]
+        if not current["implemented"]:
+            # Interfaces / abstract declarations have no body: never a source or sink.
+            continue
+        params = {p.get("id") for p in ((node.get("parameters") or {}).get("parameters") or [])
+                  if isinstance(p, dict)}
+        eff = _analyze_body(node.get("body") or {}, decls, funcs, params, state_info, libraries)
+        writes, reads, calls = set(eff["writes"]), set(eff["reads"]), set(eff["calls"])
+        callnames, eth_move = set(eff["callnames"]), eff["eth_move"]
+        internal = set(eff["internal"])
+        details = list(eff["sink_details"])
+        guards, guard_callees = set(eff["guard_tokens"]), set(eff["guard_callees"])
+        mod_internal, mod_writes = set(), set()
+        # Inherit the reads/writes/calls of every applied modifier (nonReentrant's
+        # write to `locked`, onlyOwner's read of `owner`, ...), and its guards.
+        for m in node.get("modifiers", []) or []:
+            if not isinstance(m, dict) or m.get("kind") == "baseConstructorSpecifier":
                 continue
-            current = funcs[node["id"]]
-            if not current["implemented"]:
-                # Interfaces / abstract declarations have no body: never a source or sink.
+            ref = m.get("modifierName") or {}
+            mid = ref.get("referencedDeclaration")
+            if mid in contracts:
+                continue  # a base constructor call written without its kind
+            meff = modifier_effects.get(mid)
+            if ref.get("name"):
+                guards.add(str(ref.get("name")).split(".")[-1])
+            if meff:
+                writes |= meff["writes"]
+                reads |= meff["reads"]
+                calls |= meff["calls"]
+                callnames |= meff["callnames"]
+                eth_move = eth_move or meff["eth_move"]
+                internal |= meff["internal"]
+                details.extend(meff["sink_details"])
+                guards |= meff["guard_tokens"]
+                guard_callees |= meff["guard_callees"]
+                mod_internal |= meff["internal"]
+                mod_writes |= meff["writes"]
+        current["writes"] = sorted(writes)
+        current["reads"] = sorted(reads)
+        current["calls"] = sorted(calls)
+        current["sink_details"] = details
+        # Classify from the function's OWN name and the names it calls, never the
+        # contract name or an emitted event identifier.
+        current["sinks"] = classify({current["short"]} | callnames, eth_move, details)
+        direct_writes[num] = writes
+        internal_edges[num] = internal
+        modifier_internal[num] = mod_internal
+        modifier_writes[num] = mod_writes
+        guard_base[num] = (guards, guard_callees)
+    # An internal call to a virtual function runs whichever override the deployed contract
+    # has: `upgradeToAndCall` reaches the `onlyOwner` of every `_authorizeUpgrade` override.
+    # Every override is followed, so a guard or write may come from a sibling contract's
+    # override - an over-approximation that hides an asymmetry rather than inventing one.
+    overriders = defaultdict(set)
+    for num, node in nodes.items():
+        for base_fn in node.get("baseFunctions") or []:
+            if isinstance(base_fn, int):
+                overriders[base_fn].add(num)
+    expanded = {}
+
+    def with_overrides(callee):
+        if callee not in expanded:
+            seen, todo = {callee}, [callee]
+            while todo:
+                for child in overriders.get(todo.pop(), ()):
+                    if child not in seen:
+                        seen.add(child)
+                        todo.append(child)
+            expanded[callee] = seen
+        return expanded[callee]
+
+    for table in (internal_edges, modifier_internal):
+        for num in table:
+            table[num] = {x for c in table[num] for x in with_overrides(c)}
+    # A condition that calls a getter (`owner()`, `hasRole(...)`) also depends on the state
+    # that getter reads, so `msg.sender == owner` and `owner() == _msgSender()` share a token.
+    base_tokens = {}
+    for num, (guards, guard_callees) in guard_base.items():
+        tokens = set(guards)
+        for callee in guard_callees:
+            if callee in funcs:
+                tokens |= set(funcs[callee]["reads"])
+        base_tokens[num] = tokens
+    guards_closed = _close_over(base_tokens, internal_edges)
+    writes_closed = _close_over(direct_writes, internal_edges)
+    for num in guard_base:
+        current = funcs[num]
+        current["guards"] = sorted(guards_closed[num])
+        current["internal_calls"] = sorted(funcs[c]["id"] for c in internal_edges[num]
+                                           if c in funcs)
+        current["writes_transitive"] = sorted(writes_closed[num])
+        via = set(modifier_writes[num])
+        for callee in modifier_internal[num]:
+            via |= writes_closed.get(callee, set())
+        current["writes_via_modifiers"] = sorted(via)
+    # A function a derived contract inherits without overriding is that contract's entry point
+    # too: `Vault.deposit` names `VaultBase.deposit` when Vault is VaultBase and does not
+    # redefine deposit.
+    defined = defaultdict(set)
+    for num, f in funcs.items():
+        defined[parent.get(num)].add(f["short"])
+    for num, f in funcs.items():
+        home = parent.get(num)
+        if f["function_kind"] == "constructor" or home not in contracts:
+            continue
+        heirs = []
+        for cid, info in contracts.items():
+            bases = info["bases"]
+            if cid == home or home not in bases:
                 continue
-            eff = _analyze_body(node.get("body") or {}, decls, funcs)
-            writes, reads, calls = set(eff["writes"]), set(eff["reads"]), set(eff["calls"])
-            callnames, eth_move = set(eff["callnames"]), eff["eth_move"]
-            # Inherit the reads/writes/calls of every applied modifier (nonReentrant's
-            # write to `locked`, onlyOwner's read of `owner`, ...).
-            for m in node.get("modifiers", []) or []:
-                if not isinstance(m, dict):
-                    continue
-                mid = (m.get("modifierName") or {}).get("referencedDeclaration")
-                meff = modifier_effects.get(mid)
-                if meff:
-                    writes |= meff["writes"]
-                    reads |= meff["reads"]
-                    calls |= meff["calls"]
-                    callnames |= meff["callnames"]
-                    eth_move = eth_move or meff["eth_move"]
-            current["writes"] = sorted(writes)
-            current["reads"] = sorted(reads)
-            current["calls"] = sorted(calls)
-            # Classify from the function's OWN name and the names it calls, never the
-            # contract name or an emitted event identifier.
-            current["sinks"] = classify({current["short"]} | callnames, eth_move)
+            closer = bases[:bases.index(home)]
+            if not any(f["short"] in defined[c] for c in closer):
+                heirs.append(info["name"])
+        f["inherited_by"] = sorted(set(heirs))
     for f in funcs.values():
         f.pop("short", None)
     return list(funcs.values())
 
 
-def classify(names, eth_move=False):
+def _name_words(name):
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(name))
+    return {w.lower() for w in re.split(r"[^A-Za-z0-9]+", spaced) if w}
+
+
+def classify(names, eth_move=False, details=None):
     joined = " ".join(str(n).lower() for n in names)
     sinks = {key for key, words in SINK_TERMS.items() if any(w in joined for w in words)}
+    words = set()
+    for n in names:
+        words |= _name_words(n)
+    sinks |= {family for word, family in SINK_WORDS.items() if word in words}
     if eth_move:
         sinks.add("asset-movement")
+    for detail in details or ():
+        sinks |= _detail_families(detail)
     return sorted(sinks)
+
 
 def attr_name(node):
     if isinstance(node, ast.Name):

@@ -4331,7 +4331,8 @@ class CoverageFloorTests(unittest.TestCase):
         result = self.floor()
         self.assertEqual(result['files_in_scope'], 4)
         self.assertEqual(result['examined_by_source'],
-                         {'coverage.md': 1, 'known-hypotheses.md': 0, 'findings.json': 0})
+                         {'coverage.md': 1, 'known-hypotheses.md': 0, 'findings.json': 0,
+                          'examined.json': 0})
         self.assertEqual(result['unexamined'],
                          ['src/Oracle.sol', 'src/Pool.sol', 'src/Router.sol'])
         self.assertEqual(result['examined_fraction'], 0.25)
@@ -4340,13 +4341,15 @@ class CoverageFloorTests(unittest.TestCase):
         self.known('| src/Pool.sol:Pool.swap | stale-index | closed | guarded |')
         result = self.floor()
         self.assertEqual(result['examined_by_source'],
-                         {'coverage.md': 0, 'known-hypotheses.md': 1, 'findings.json': 0})
+                         {'coverage.md': 0, 'known-hypotheses.md': 1, 'findings.json': 0,
+                          'examined.json': 0})
 
     def test_affected_paths_alone_marks_a_file_examined(self):
         self.records('src/Oracle.sol')
         result = self.floor()
         self.assertEqual(result['examined_by_source'],
-                         {'coverage.md': 0, 'known-hypotheses.md': 0, 'findings.json': 1})
+                         {'coverage.md': 0, 'known-hypotheses.md': 0, 'findings.json': 1,
+                          'examined.json': 0})
 
     def test_the_three_sources_add_up_without_double_counting(self):
         self.coverage('src/Vault.sol:Vault.withdraw', 'src/Pool.sol')
@@ -4362,11 +4365,14 @@ class CoverageFloorTests(unittest.TestCase):
         (self.repo / 'src-legacy/Vault.sol').write_text('contract C {}\n')
         commit(self.repo, 'legacy')
         self.coverage('src/')
-        # `src/` is a directory of the in-scope tree, so it covers all four; `src-legacy` is a
-        # different directory and was never in scope to begin with.
+        # `src/` is a directory of the in-scope tree, so it reaches all four - but it names none
+        # of them, so they are listed apart and do not count; `src-legacy` is a different
+        # directory and was never in scope to begin with.
         result = self.floor()
-        self.assertEqual(result['files_examined'], 4)
+        self.assertEqual(result['files_examined'], 0)
+        self.assertEqual(result['credited_by_directory_only_count'], 4)
         self.assertNotIn('src-legacy/Vault.sol', result['unexamined'])
+        self.assertNotIn('src-legacy/Vault.sol', result['credited_by_directory_only'])
         # A bare directory name with no separator is not credited: one such row would mark a
         # whole tree examined, and it reads the same as an invariant name.
         self.coverage('src')
@@ -4408,7 +4414,11 @@ class CoverageFloorTests(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue())['state'], 'below-floor')
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(bounty.main(argv + ['--min-fraction', '0.25']), 0)
+        # One directory row used to pass this gate at 100%; it names no file, so it fails.
         self.coverage('src/')
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(bounty.main(argv), 1)
+        self.coverage('src/Vault.sol', 'src/Pool.sol', 'src/Oracle.sol', 'src/Router.sol')
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(bounty.main(argv), 0)
 

@@ -206,8 +206,10 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
             symbols = kept
     graph = parsed.build(symbols)
     paths = load_impact_helper('impact_paths').rank(graph)
+    odd = load_impact_helper('odd_one_out').analyze(graph)
     dump(target / 'semantic-graph.json', graph)
     dump(target / 'impact-paths.json', paths)
+    dump(target / 'odd-one-out.json', odd)
     by_id = {sym.get('id'): sym for sym in graph.get('symbols', [])}
     in_scope_sinks = 0
     for ranked in paths.get('ranked', []):
@@ -225,7 +227,12 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
               'symbols_dropped_by_scope': dropped,
               'graph_truncated': bool(graph.get('truncated')),
               'ranked_sinks_in_scope': in_scope_sinks,
-              'notice': 'Prioritization only: graph edges and impact labels do not prove an exploit.'}
+              'odd_one_out': str(target / 'odd-one-out.json'),
+              'odd_one_out_leads': odd['counts'],
+              'notice': 'Prioritization only: graph edges and impact labels do not prove an exploit. '
+                        'odd-one-out.json holds unreviewed leads - a check or a paired write most '
+                        'comparable entry points carry and one does not - never findings; '
+                        'intentional asymmetries exist.'}
     if in_scope_sinks == 0 and paths.get('ranked'):
         result['warning'] = (
             'No ranked sink is in the in-scope sources: this queue aims at dependencies or tests '
@@ -1107,6 +1114,7 @@ def lead_queue(run):
         return {'state': 'invalid', 'errors': errors, 'leads': [],
                 'unread_bundles': unread_bundles, 'unverified_blockers': [],
                 'contradicted_blockers': [], 'coverage_floor': None,
+                'function_coverage': None, 'odd_one_out': None,
                 'audit_inventory': read_audit_inventory(run)}
     leads, weak_refusals, parked, possibly_parked = [], [], [], []
     unverified_blockers = []
@@ -1154,6 +1162,8 @@ def lead_queue(run):
             'unverified_blockers': sorted(unverified_blockers, key=lambda row: row['id']),
             'contradicted_blockers': contradicted_blockers(run, records),
             'coverage_floor': read_coverage_floor(run),
+            'function_coverage': read_function_coverage(run),
+            'odd_one_out': read_odd_one_out(run),
             'audit_inventory': read_audit_inventory(run),
             'notice': 'Every open lead needs a decisive next experiment. A listed experiment is '
                       'not evidence that it was run. untracked_leads are open rows in '
@@ -1675,6 +1685,12 @@ UNEXAMINED_SHOWN = 50
 # A surface cell reads `src/Vault.sol:Vault.withdraw`, sometimes two of them in one cell. Only
 # the path part is a path, and it is matched by whole segments.
 SURFACE_SPLIT = re.compile(r'[\s,;]+')
+# Languages whose source is deployed code. A hard-coded `--scope src/` silently drops a
+# `contracts/*.vy` tree or a `huff/` directory; these are reported when --scope leaves them out.
+# Rust is on-chain only by convention (`programs/` in an Anchor workspace).
+ONCHAIN_SUFFIXES = ('.sol', '.vy', '.yul', '.huff', '.move', '.cairo', '.fe', '.fc', '.func',
+                    '.tolk')
+EXAMINED_FILE = 'examined.json'
 
 
 def _is_vendored_path(path):
@@ -1702,26 +1718,145 @@ def _surface_paths(cell):
 
 def _examines(path, surface):
     """Whole-segment match only: `src` covers src/Vault.sol, `Vault.sol` covers it by name."""
-    if path == surface or path.startswith(surface + '/'):
-        return True
-    return '/' not in surface and bool(Path(surface).suffix) and Path(path).name == surface
+    return _credit_kind(path, surface) is not None
+
+
+def _credit_kind(path, surface):
+    """`file` when the surface names this file, `directory` when it only covers a tree that
+    holds it, None when it does not reach it."""
+    if path == surface:
+        return 'file'
+    if '/' not in surface and bool(Path(surface).suffix) and Path(path).name == surface:
+        return 'file'
+    if path.startswith(surface + '/'):
+        return 'directory'
+    return None
 
 
 def _examined_by(files, surfaces):
     return {path for path in files for surface in surfaces if _examines(path, surface)}
 
 
-def _coverage_md_surfaces(run):
-    surfaces = []
+def _credited_by(files, surfaces):
+    """(files a surface names, files only a directory surface covers)."""
+    named, under = set(), set()
+    for path in files:
+        for surface in surfaces:
+            kind = _credit_kind(path, surface)
+            if kind == 'file':
+                named.add(path)
+                break
+            if kind == 'directory':
+                under.add(path)
+    return named, under - named
+
+
+def _coverage_md_cells(run):
+    """The surface cell of every table row of coverage.md."""
+    cells = []
     path = Path(run) / 'coverage.md'
     if not path.is_file():
-        return surfaces
+        return cells
     for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
         # The header names the columns and the rule is dashes; neither is a surface examined.
         if line.count('|') < 3 or re.match(r'\s*\|?\s*:?-{3}', line):
             continue
-        surfaces.extend(_surface_paths(line.strip().strip('|').split('|')[0]))
+        cells.append(line.strip().strip('|').split('|')[0])
+    return cells
+
+
+def _coverage_md_surfaces(run):
+    surfaces = []
+    for cell in _coverage_md_cells(run):
+        surfaces.extend(_surface_paths(cell))
     return surfaces
+
+
+def _examined_record(run):
+    """What converge wrote to examined.json from readings' `EXAMINED | surface` lines.
+
+    Missing is no credit. Malformed is no credit too, and is reported as unparsed rather than
+    read as a run that examined nothing.
+    """
+    path = Path(run) / EXAMINED_FILE
+    empty = {'present': False, 'malformed': False, 'surfaces': [], 'not_reached': []}
+    if not path.is_file():
+        return empty
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return dict(empty, present=True, malformed=True)
+    if (not isinstance(data, dict) or not isinstance(data.get('examined', []), list)
+            or not isinstance(data.get('not_reached', []), list)):
+        return dict(empty, present=True, malformed=True)
+    surfaces = [row['surface'] for row in data.get('examined', [])
+                if isinstance(row, dict) and isinstance(row.get('surface'), str)]
+    not_reached = [row for row in data.get('not_reached', [])
+                   if isinstance(row, dict) and isinstance(row.get('surface'), str)]
+    return {'present': True, 'malformed': False, 'surfaces': surfaces,
+            'not_reached': not_reached}
+
+
+def _record_surface_cells(run):
+    records = read_json(run / 'findings.json') if (run / 'findings.json').is_file() else []
+    cells = []
+    for row in records if isinstance(records, list) else []:
+        paths = row.get('affected_paths') if isinstance(row, dict) else None
+        for item in paths if isinstance(paths, list) else []:
+            if isinstance(item, str):
+                cells.append(item)
+    return cells
+
+
+def _surface_cells_by_source(run):
+    """Every surface cell the run recorded, by the file that recorded it."""
+    return {'coverage.md': _coverage_md_cells(run),
+            'known-hypotheses.md': [row['surface'] for row in _known_hypothesis_rows(run)],
+            'findings.json': _record_surface_cells(run),
+            EXAMINED_FILE: _examined_record(run)['surfaces']}
+
+
+def _unparsed_coverage_files(run):
+    # A run that wrote prose over the table templates scores zero here and reads as having
+    # examined nothing. That happened on a five-pass run with 16 readings and 51 closed
+    # mechanisms: both files had been rewritten as narrative, so every gate saw an empty run.
+    # Say it, rather than returning a silent zero.
+    unparsed = []
+    for name, rows in (('coverage.md', _coverage_md_cells(run)),
+                       ('known-hypotheses.md', _known_hypothesis_rows(run))):
+        candidate = Path(run) / name
+        if not candidate.is_file() or rows:
+            continue
+        body = candidate.read_text(encoding='utf-8', errors='replace')
+        if len(body.splitlines()) > 12:
+            unparsed.append(name)
+    if _examined_record(run)['malformed']:
+        unparsed.append(EXAMINED_FILE)
+    return unparsed
+
+
+UNPARSED_WARNING = (
+    'Coverage is credited from TABLE rows, so prose written over the templates scores zero and '
+    'the run reads as having examined nothing. Keep the pipe-delimited table (coverage.md: '
+    '`| surface | lens | pass | experiment | result |`; known-hypotheses.md: '
+    '`surface | bug-class | status | why`) and put the narrative next to it, never instead of '
+    'it; examined.json must be the object converge writes, with an `examined` list. Until then '
+    'this fraction measures formatting, not coverage.')
+
+
+def _outside_scope_onchain(tracked, scope_prefixes):
+    """On-chain sources --scope left out: a warning, never a gate failure."""
+    if not scope_prefixes:
+        return []
+    found = []
+    for path in tracked:
+        suffix = Path(path).suffix.lower()
+        onchain = suffix in ONCHAIN_SUFFIXES or (
+            suffix == '.rs' and 'programs' in [p.lower() for p in Path(path).parts[:-1]])
+        if (onchain and not _is_test_path(path) and not _is_vendored_path(path)
+                and not path_in_scope(path, scope_prefixes)):
+            found.append(path)
+    return sorted(found)
 
 
 def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_DEFAULT):
@@ -1729,7 +1864,9 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
 
     `exhausted` was declared on one target after eight contracts were read, with nothing
     comparing that against scope. This is that comparison: a file counts as examined when a
-    coverage.md row, a known-hypotheses.md row or a record's affected_paths names it.
+    coverage.md row, a known-hypotheses.md row, a record's affected_paths or an examined.json
+    surface names it. A directory row (`src/`) covers a tree and names no file in it, so files
+    it alone reaches are listed apart and never count toward the fraction.
     """
     repo, run = Path(repo).resolve(), Path(run).resolve()
     root = Path(git(repo, 'rev-parse', '--show-toplevel').strip()).resolve()
@@ -1753,72 +1890,63 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
             continue
         in_scope.append(path)
     files = set(in_scope)
-    records = read_json(run / 'findings.json') if (run / 'findings.json').is_file() else []
-    records = records if isinstance(records, list) else []
-    record_surfaces = []
-    for row in records:
-        paths = row.get('affected_paths') if isinstance(row, dict) else None
-        for item in paths if isinstance(paths, list) else []:
-            record_surfaces.extend(_surface_paths(item if isinstance(item, str) else ''))
-    sources = {
-        'coverage.md': _examined_by(files, _coverage_md_surfaces(run)),
-        'known-hypotheses.md': _examined_by(
-            files, [s for row in _known_hypothesis_rows(run)
-                    for s in _surface_paths(row['surface'])]),
-        'findings.json': _examined_by(files, record_surfaces)}
-    examined = sorted(sources['coverage.md'] | sources['known-hypotheses.md']
-                      | sources['findings.json'])
-    unexamined = sorted(files - set(examined))
+    named, under = {}, set()
+    for name, cells in _surface_cells_by_source(run).items():
+        surfaces = [s for cell in cells for s in _surface_paths(cell)]
+        named[name], dir_only = _credited_by(files, surfaces)
+        under |= dir_only
+    examined = sorted(set().union(*named.values()))
+    by_directory = sorted(under - set(examined))
+    unexamined = sorted(files - set(examined) - set(by_directory))
     fraction = round(len(examined) / len(files), 4) if files else 0.0
     state = ('no-files-in-scope' if not files else
              'at-or-above-floor' if fraction >= min_fraction else 'below-floor')
-    # A run that wrote prose over the table templates scores zero here and reads as having
-    # examined nothing. That happened on a five-pass run with 16 readings and 51 closed
-    # mechanisms: both files had been rewritten as narrative, so every gate saw an empty run.
-    # Say it, rather than returning a silent zero.
-    unparsed = []
-    for name, rows in (('coverage.md', _coverage_md_surfaces(run)),
-                       ('known-hypotheses.md', [r['surface'] for r in
-                                                _known_hypothesis_rows(run)])):
-        candidate = run / name
-        if not candidate.is_file() or rows:
-            continue
-        body = candidate.read_text(encoding='utf-8', errors='replace')
-        if len(body.splitlines()) > 12:
-            unparsed.append(name)
+    unparsed = _unparsed_coverage_files(run)
+    outside = _outside_scope_onchain(tracked, scope_prefixes)
     result = {'state': state, 'scope': list(scope_prefixes or []),
               'files_in_scope': len(files), 'files_examined': len(examined),
               'examined_fraction': fraction, 'min_fraction': min_fraction,
-              'examined_by_source': {name: len(hit) for name, hit in sources.items()},
+              'examined_by_source': {name: len(hit) for name, hit in named.items()},
               'unparsed_coverage_files': unparsed,
               'unexamined_count': len(unexamined), 'unexamined': unexamined,
+              'credited_by_directory_only_count': len(by_directory),
+              'credited_by_directory_only': by_directory,
               'excluded_vendored_count': len(vendored), 'excluded_vendored': vendored[:50],
               'skipped_files': skipped,
+              'outside_scope_onchain_count': len(outside),
+              'outside_scope_onchain': outside[:UNEXAMINED_SHOWN],
               'notice': 'Recorded, not audited: a coverage.md row means somebody wrote a row, '
                         'never that the file is safe. A file counts as examined when a '
-                        'coverage.md surface, a known-hypotheses.md surface or a record\'s '
-                        'affected_paths names it by whole path segments; a surface ending in / '
-                        'is a directory and covers what is under it, a bare name with no '
-                        'separator is not credited. Vendored and test paths are excluded and '
-                        'counted; --scope is what actually decides the in-scope list, and an '
-                        'empty one measures nothing and never passes.'}
+                        'coverage.md surface, a known-hypotheses.md surface, a record\'s '
+                        'affected_paths or an examined.json surface names that file by whole '
+                        'path segments (or by its bare file name). A surface ending in / is a '
+                        'directory: the files only such a row reaches are listed under '
+                        'credited_by_directory_only and do not count toward examined_fraction '
+                        'or the gate, because one `src/` row would otherwise mark a whole tree '
+                        'examined. A bare name with no separator is not credited. Vendored and '
+                        'test paths are excluded and counted; --scope is what actually decides '
+                        'the in-scope list, and an empty one measures nothing and never passes. '
+                        'outside_scope_onchain lists deployed-language sources --scope left '
+                        'out; it warns and never fails the gate. File credit is not function '
+                        'credit: function-coverage measures entry points.'}
     if unparsed:
-        result['warning'] = (
-            'These files exist and hold content but yielded no parseable row: '
-            + ', '.join(unparsed)
-            + '. Coverage is credited from TABLE rows, so prose written over the templates '
-              'scores zero and the run reads as having examined nothing. Keep the pipe-delimited '
-              'table (coverage.md: `| surface | lens | pass | experiment | result |`; '
-              'known-hypotheses.md: `surface | bug-class | status | why`) and put the narrative '
-              'next to it, never instead of it. Until then this fraction measures formatting, '
-              'not coverage.')
+        result['warning'] = ('These files exist and hold content but yielded no parseable row: '
+                             + ', '.join(unparsed) + '. ' + UNPARSED_WARNING)
+    if outside:
+        suffixes = sorted({Path(p).suffix.lower() for p in outside})
+        result['outside_scope_warning'] = (
+            '%d on-chain source file(s) (%s) are tracked but outside --scope %s, so this floor '
+            'does not measure them. Add a --scope prefix for each, or record why the program '
+            'excludes them.' % (len(outside), ', '.join(suffixes),
+                                ' '.join(scope_prefixes or [])))
     path = run / 'coverage-floor.json'
     if path.is_symlink():
         raise ValueError(f'{path} is a symlink; refusing to write through it')
     dump(path, result)
     summary = dict(result, coverage_floor_file=str(path),
                    unexamined=unexamined[:UNEXAMINED_SHOWN],
-                   unexamined_truncated=len(unexamined) > UNEXAMINED_SHOWN)
+                   unexamined_truncated=len(unexamined) > UNEXAMINED_SHOWN,
+                   credited_by_directory_only=by_directory[:UNEXAMINED_SHOWN])
     return summary
 
 
@@ -1837,7 +1965,453 @@ def read_coverage_floor(run):
             'files_examined': data.get('files_examined'),
             'examined_fraction': data['examined_fraction'],
             'min_fraction': data.get('min_fraction'),
-            'unexamined_count': data.get('unexamined_count')}
+            'unexamined_count': data.get('unexamined_count'),
+            'credited_by_directory_only_count': data.get('credited_by_directory_only_count'),
+            'outside_scope_onchain_count': data.get('outside_scope_onchain_count')}
+
+
+# --------------------------------------------------------------------------- #
+# function coverage
+# --------------------------------------------------------------------------- #
+
+FUNCTION_COVERAGE_FILE = 'function-coverage.json'
+QUEUE_UNEXAMINED_FUNCTIONS = 10
+IDENTIFIER = re.compile(r'^[A-Za-z_$][A-Za-z0-9_$]*$')
+LEXICAL_SUFFIXES = {'.sol': 'solidity', '.vy': 'vyper', '.rs': 'rust', '.move': 'move',
+                    '.cairo': 'cairo'}
+FILE_LIKE_SUFFIXES = SOURCE_SUFFIXES | CONFIG_SUFFIXES | {'.md', '.txt'}
+
+
+def _function_refs(cell):
+    """(path, contract, function) triples one surface cell names; path and contract may be
+    None. Accepted: `path:Contract.function`, `Contract.function` (or `module::function`) and
+    `path:function`, an argument list ignored. A file or a directory alone names no function,
+    nor does a bare function name, which reads the same as an invariant."""
+    refs = []
+    for token in SURFACE_SPLIT.split(cell or ''):
+        raw = token.strip().strip('`*|"\'[]').lstrip('(').rstrip('.,;:)').replace('\\', '/')
+        while raw.startswith('./'):
+            raw = raw[2:]
+        if not raw or _is_placeholder(raw):
+            continue
+        parts = re.split(r'(?<!:):(?!:)', raw, maxsplit=1)
+        path, rest = (parts[0], parts[1]) if len(parts) == 2 else (None, parts[0])
+        if path is not None and not ('/' in path or Path(path).suffix):
+            continue
+        rest = rest.split('(', 1)[0]
+        if path is None and ('/' in rest or (
+                '::' not in rest and Path(rest).suffix.lower() in FILE_LIKE_SUFFIXES)):
+            continue  # a file or a directory: no function named
+        names = [n for n in re.split(r'::|\.', rest) if n]
+        if not names or not all(IDENTIFIER.match(n) for n in names[-2:]):
+            continue
+        if len(names) == 1:
+            if path is None:
+                continue
+            refs.append((path.rstrip('/'), None, names[0]))
+        else:
+            refs.append((path.rstrip('/') if path else None, names[-2], names[-1]))
+    return refs
+
+
+def _ref_matches(entry, ref):
+    path, contract, function = ref
+    if function != entry['function']:
+        return False
+    if contract is not None and contract != entry['contract']:
+        # `Vault.deposit` names `VaultBase.deposit` when Vault inherits it unchanged; the path
+        # given is then Vault's file, which this entry does not carry.
+        return contract in entry.get('inherited_by', ())
+    return path is None or _credit_kind(entry['path'], path) == 'file'
+
+
+def _excluded_reason(path, scope_prefixes):
+    first = Path(path).parts[0] if Path(path).parts else ''
+    if not path_in_scope(path, scope_prefixes):
+        return 'out-of-scope'
+    if _is_test_path(path) or path.endswith('.s.sol'):
+        return 'test-or-script'
+    if _is_vendored_path(path) or first.startswith('@'):
+        return 'vendored'
+    return None
+
+
+def _graph_entry_points(graph, scope_prefixes, excluded):
+    if not isinstance(graph, dict) or not isinstance(graph.get('symbols'), list):
+        raise ValueError('the semantic graph must be an object with a symbols list '
+                         '(semantic-graph.json from impact-plan)')
+    entries = []
+    for sym in graph['symbols']:
+        if not isinstance(sym, dict) or not sym.get('entry') or not sym.get('implemented', True):
+            continue
+        path = str(sym.get('path', ''))
+        reason = _excluded_reason(path, scope_prefixes)
+        if reason:
+            excluded[reason] = excluded.get(reason, 0) + 1
+            continue
+        name = str(sym.get('name', ''))
+        contract = sym.get('contract') or (name.rsplit('.', 1)[0] if '.' in name else '')
+        entries.append({'name': name, 'path': path, 'contract': contract,
+                        'function': name.rsplit('.', 1)[-1], 'source': 'semantic-graph',
+                        'language': sym.get('language', 'unknown'),
+                        'function_kind': sym.get('function_kind'),
+                        'read_only': sym.get('state_mutability') in ('view', 'pure'),
+                        'inherited_by': list(sym.get('inherited_by') or []),
+                        'sinks': list(sym.get('sinks') or []),
+                        # A lock only a modifier writes (nonReentrant) is not accounting.
+                        'writes': len(set(sym.get('writes_transitive', sym.get('writes')) or [])
+                                      - set(sym.get('writes_via_modifiers') or []))})
+    return entries
+
+
+def _blank_comments_and_strings(text, language):
+    """Comments and string contents blanked to spaces, newlines kept, so braces and `fn` in a
+    docstring cannot open a block and line numbers stay right."""
+    out, i, n = [], 0, len(text)
+    hash_comments = language == 'vyper'
+    quotes = ('"',) if language in ('rust', 'move') else ('"', "'")
+    while i < n:
+        c = text[i]
+        pair = text[i:i + 2]
+        if (hash_comments and c == '#') or (not hash_comments and pair == '//'):
+            j = text.find('\n', i)
+            j = n if j < 0 else j
+        elif not hash_comments and pair == '/*':
+            j = text.find('*/', i + 2)
+            j = n if j < 0 else j + 2
+        elif hash_comments and text[i:i + 3] in ('"""', "'''"):
+            j = text.find(text[i:i + 3], i + 3)
+            j = n if j < 0 else j + 3
+        elif c in quotes or (language == 'rust' and c == "'" and
+                             re.match(r"'(?:\\.[^'\n]{0,8}|[^\\'\n])'", text[i:i + 12])):
+            j = i + 1
+            while j < n and text[j] != c and not (c == "'" and text[j] == '\n'):
+                j += 2 if text[j] == '\\' else 1
+            j = min(n, j + 1)
+        else:
+            out.append(c)
+            i += 1
+            continue
+        out.append(re.sub(r'[^\n]', ' ', text[i:j]))
+        i = j
+    return ''.join(out)
+
+
+def _brace_blocks(clean):
+    """(header, offset, enclosing headers) for every `{` block. A header is the text since the
+    last `;`, `{` or `}` outside brackets, so `[u8; 32]` in a signature does not cut it."""
+    stack, blocks = [], []
+    last, depth = 0, 0
+    for i, c in enumerate(clean):
+        if c in '([':
+            depth += 1
+        elif c in ')]':
+            depth = max(0, depth - 1)
+        elif c == ';' and depth == 0:
+            last = i + 1
+        elif c == '{':
+            header = ' '.join(clean[last:i].split())
+            blocks.append((header, i, list(stack)))
+            stack.append(header)
+            last, depth = i + 1, 0
+        elif c == '}':
+            if stack:
+                stack.pop()
+            last, depth = i + 1, 0
+    return blocks
+
+
+def _enclosing(stack, pattern):
+    for header in reversed(stack):
+        m = re.search(pattern, header)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _lexical_functions(path, text, language, native_crate=False):
+    """(contract, function, line) entry points by source shape; never semantic."""
+    clean = _blank_comments_and_strings(text, language)
+    stem = Path(path).stem
+    found = []
+    if language == 'vyper':
+        decorators = []
+        for number, line in enumerate(clean.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith('@'):
+                decorators.append(stripped[1:].split('(', 1)[0].strip())
+                continue
+            m = re.match(r'def\s+([A-Za-z_]\w*)\s*\(', line)
+            if m and {'external', 'public', 'deploy'} & set(decorators):
+                found.append((stem, m.group(1), number))
+            if stripped:
+                decorators = []
+        return found
+    file_module = re.search(r'(?m)^\s*module\s+(?:[\w]+::)?(\w+)\s*;', clean)
+    for header, offset, stack in _brace_blocks(clean):
+        line = clean.count('\n', 0, offset) + 1
+        if language == 'solidity':
+            m = (re.search(r'\bfunction\s+([A-Za-z_$][\w$]*)\s*\(', header)
+                 or re.search(r'(?:^|\s)(constructor|receive|fallback)\s*\(', header))
+            if not m:
+                continue
+            contract = _enclosing(stack, r'\b(?:contract|library)\s+([A-Za-z_$][\w$]*)')
+            if contract and (m.group(1) == 'constructor'
+                             or re.search(r'\b(?:external|public)\b', header)):
+                found.append((contract, m.group(1), line))
+        elif language == 'rust':
+            m = re.search(r'\bfn\s+([A-Za-z_]\w*)', header)
+            if not m:
+                continue
+            public = re.search(r'(?:^|\s)pub(?:\([^)]*\))?\s+(?:(?:async|unsafe|const)\s+)*fn\b',
+                               header)
+            program = next((h for h in reversed(stack)
+                            if '#[program]' in h and re.search(r'\bmod\s+\w+', h)), None)
+            if program and public:
+                found.append((re.search(r'\bmod\s+(\w+)', program).group(1), m.group(1), line))
+            elif native_crate and (m.group(1) in native_crate or
+                                   (public and m.group(1).startswith('process_'))):
+                owner = _enclosing(stack, r'\bimpl(?:\s*<[^>]*>)?\s+(?:[\w:]+\s+for\s+)?(\w+)') \
+                    or _enclosing(stack, r'\bmod\s+(\w+)') or stem
+                found.append((owner, m.group(1), line))
+        elif language == 'move':
+            m = re.search(r'(?:^|\s)(?:public(?!\s*\()\s+(?:entry\s+)?|entry\s+)'
+                          r'(?:public\s+)?(?:native\s+)?fun\s+(\w+)', header)
+            if not m:
+                continue
+            module = _enclosing(stack, r'\bmodule\s+(?:[\w]+::)?(\w+)') or (
+                file_module.group(1) if file_module else stem)
+            found.append((module, m.group(1), line))
+        elif language == 'cairo':
+            legacy = re.search(r'@(?:external|l1_handler)\s+func\s+([A-Za-z_]\w*)', header)
+            m = legacy or re.search(r'\bfn\s+([A-Za-z_]\w*)', header)
+            if not m:
+                continue
+            embedded = any('#[abi(embed_v0)]' in h and re.search(r'\bimpl\b', h) for h in stack)
+            if legacy or embedded or '#[external(v0)]' in header:
+                found.append((_enclosing(stack, r'\bmod\s+(\w+)') or stem, m.group(1), line))
+    return found
+
+
+def _lexical_entry_points(root, scope_prefixes, excluded, skip=()):
+    tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
+    crates = {str(Path(p).parent) for p in tracked if Path(p).name.lower() == 'cargo.toml'}
+
+    def crate_of(path):
+        parents = [str(x) for x in Path(path).parents]
+        return next((x for x in parents if x in crates), '.')
+
+    texts = {}
+    for path in tracked:
+        language = LEXICAL_SUFFIXES.get(Path(path).suffix.lower())
+        if not language or Path(path).suffix.lower() in skip:
+            continue
+        # Counted in files, apart from the graph's entry points.
+        reason = _excluded_reason(path, scope_prefixes)
+        size = None if reason else target_file_size(root, path)
+        if not reason and (size is None or size > TARGET_FILE_MAX_BYTES):
+            reason = 'unreadable-or-too-large'
+        if reason:
+            key = 'lexical-files-' + reason
+            excluded[key] = excluded.get(key, 0) + 1
+            continue
+        texts[path] = (language, (Path(root) / path).read_text(encoding='utf-8',
+                                                                errors='replace'))
+    # Native Solana: the function `entrypoint!` names, and `pub fn process_*` in that crate.
+    native = {}
+    for path, (language, text) in texts.items():
+        if language == 'rust':
+            for m in re.finditer(r'\bentrypoint!\s*\(\s*(\w+)\s*\)', text):
+                native.setdefault(crate_of(path), set()).add(m.group(1))
+    classify = load_impact_helper('semantic_graph').classify
+    entries = []
+    for path in sorted(texts):
+        language, text = texts[path]
+        crate_names = native.get(crate_of(path)) if language == 'rust' else None
+        for contract, function, line in _lexical_functions(path, text, language,
+                                                           crate_names or False):
+            entries.append({'name': contract + '.' + function, 'path': path,
+                            'contract': contract, 'function': function, 'line': line,
+                            'source': 'lexical', 'language': language,
+                            'function_kind': None, 'inherited_by': [],
+                            'sinks': classify({function}),
+                            'writes': None})
+    return entries
+
+
+def _function_priority(entry, weights):
+    sink_weight = max([weights.get(s, 1) for s in entry['sinks']] or [0])
+    tier = ('value-moving-or-sink' if entry['sinks'] else
+            'state-writing' if entry['writes'] else
+            'unknown-writes' if entry['writes'] is None else 'no-state-write')
+    order = {'value-moving-or-sink': 0, 'state-writing': 1, 'unknown-writes': 2,
+             'no-state-write': 3}[tier]
+    return (order, -sink_weight, -(entry['writes'] or 0), entry['path'], entry['name']), tier
+
+
+def function_coverage(run, graph=None, repo=None, scope_prefixes=None,
+                      min_fraction=COVERAGE_FLOOR_DEFAULT):
+    """Count entry points a run's records name by function, against all entry points.
+
+    A coverage.md row reading `| src/ | read it, nothing here |` credited every file under
+    src/ at file level, so a contract with forty external functions passed after one row. Here
+    only a surface that names the function credits it.
+    """
+    run = _deployment_run(Path(run))
+    if not 0 <= min_fraction <= 1:
+        raise ValueError('--min-fraction must be between 0 and 1')
+    root = None
+    if repo:
+        root = Path(git(Path(repo).resolve(), 'rev-parse', '--show-toplevel').strip()).resolve()
+        require_private_output(run, root, what='function-coverage --run')
+    graph_path = Path(graph).resolve() if graph else run / 'semantic-graph.json'
+    if graph and not graph_path.is_file():
+        raise ValueError(f'--graph {graph_path} does not exist')
+    excluded = {}
+    entries, sources = [], []
+    graph_has_solidity = False
+    if graph_path.is_file():
+        data = read_json(graph_path)
+        entries = _graph_entry_points(data, scope_prefixes, excluded)
+        graph_has_solidity = any(isinstance(s, dict) and s.get('language') == 'solidity'
+                                 for s in data.get('symbols', []))
+        sources.append('semantic-graph')
+    elif root is None:
+        raise ValueError('no semantic-graph.json in the run: run impact-plan --solc <build-info> '
+                         '--out <run> first, or pass --repo for the lexical fallback')
+    if root is not None:
+        lexical = _lexical_entry_points(root, scope_prefixes, excluded,
+                                        skip=('.sol',) if graph_has_solidity else ())
+        if lexical:
+            sources.append('lexical')
+        entries.extend(lexical)
+    cells = _surface_cells_by_source(run)
+    refs = {name: [ref for cell in rows for ref in _function_refs(cell)]
+            for name, rows in cells.items()}
+    no_function = sorted({s for rows in cells.values() for cell in rows
+                          for s in _surface_paths(cell) if not _function_refs(cell)})
+    credited = {}
+    for index, entry in enumerate(entries):
+        for name, found in refs.items():
+            if any(_ref_matches(entry, ref) for ref in found):
+                credited.setdefault(index, set()).add(name)
+    weights = load_impact_helper('impact_paths').CLASS_WEIGHTS
+    examined, unexamined = [], []
+    for index, entry in enumerate(entries):
+        row = {key: entry[key] for key in ('name', 'path', 'contract', 'function', 'source',
+                                           'language', 'sinks', 'writes')}
+        if entry.get('line'):
+            row['line'] = entry['line']
+        if index in credited:
+            examined.append(dict(row, credited_by=sorted(credited[index])))
+        else:
+            key, row['priority_tier'] = _function_priority(entry, weights)
+            unexamined.append((key, row))
+    unexamined = [row for _, row in sorted(unexamined, key=lambda pair: pair[0])]
+    total = len(entries)
+    fraction = round(len(examined) / total, 4) if total else 0.0
+    state = ('no-entry-points' if not total else
+             'at-or-above-floor' if fraction >= min_fraction else 'below-floor')
+    not_reached = []
+    for row in _examined_record(run)['not_reached']:
+        ref_list = _function_refs(row['surface'])
+        hits = [u['name'] for u in unexamined
+                if any(_ref_matches(dict(u, inherited_by=[]), ref) for ref in ref_list)]
+        if hits:
+            not_reached.append({'surface': row['surface'], 'why': row.get('why'),
+                                'sources': row.get('sources'), 'entry_points': hits})
+    unparsed = _unparsed_coverage_files(run)
+    result = {'state': state, 'source': '+'.join(sources),
+              'graph': str(graph_path) if graph_path.is_file() else None,
+              'scope': list(scope_prefixes or []),
+              'entry_points': total, 'examined': len(examined), 'examined_fraction': fraction,
+              'min_fraction': min_fraction,
+              'examined_by_source': {name: sum(name in hit for hit in credited.values())
+                                     for name in cells},
+              'lexical_entry_points': sum(e['source'] == 'lexical' for e in entries),
+              'view_or_pure_entry_points': sum(bool(e.get('read_only')) for e in entries),
+              'excluded': dict(sorted(excluded.items())),
+              'unparsed_coverage_files': unparsed,
+              'surfaces_naming_no_function_count': len(no_function),
+              'surfaces_naming_no_function': no_function[:UNEXAMINED_SHOWN],
+              'unexamined_count': len(unexamined), 'unexamined': unexamined,
+              'not_reached': not_reached,
+              'examined_entry_points': examined,
+              'notice': 'Recorded, not audited: an entry point counts as examined only when a '
+                        'coverage.md surface, a known-hypotheses.md surface, a record\'s '
+                        'affected_paths or an examined.json surface names that function - '
+                        '`path:Contract.function`, `Contract.function` or `path:function`, '
+                        'matched on whole identifiers. A file or directory surface credits no '
+                        'function. Entry points come from the compiler-AST semantic graph '
+                        '(public/external implemented functions, constructors included); rows '
+                        'marked source "lexical" come from source shape only (Vyper @external, '
+                        'Anchor #[program] pub fn, Solana entrypoint!/process_*, Move public/'
+                        'entry fun, Cairo #[external(v0)] and #[abi(embed_v0)] impls) and can '
+                        'miss or invent entry points. unexamined is ordered value-moving or '
+                        'sink functions first, then state-writing ones. not_reached lists '
+                        'examined.json surfaces a reading said it did not reach that are still '
+                        'unexamined here, with the reason it gave.'}
+    if unparsed:
+        result['warning'] = ('These files exist and hold content but yielded no parseable row: '
+                             + ', '.join(unparsed) + '. ' + UNPARSED_WARNING)
+    if not total:
+        result['warning'] = (result.get('warning', '') + ' No entry point was found: the graph '
+                             'holds none in scope, or the lexical fallback recognised no entry '
+                             'shape. This measures nothing and never passes.').strip()
+    path = run / FUNCTION_COVERAGE_FILE
+    if path.is_symlink():
+        raise ValueError(f'{path} is a symlink; refusing to write through it')
+    dump(path, result)
+    summary = dict(result, function_coverage_file=str(path),
+                   unexamined=unexamined[:UNEXAMINED_SHOWN],
+                   unexamined_truncated=len(unexamined) > UNEXAMINED_SHOWN,
+                   examined_entry_points=[row['name'] for row in examined[:UNEXAMINED_SHOWN]])
+    return summary
+
+
+def read_function_coverage(run):
+    """The last function-coverage measurement of a run, or None when it never measured."""
+    path = Path(run) / FUNCTION_COVERAGE_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get('examined_fraction'), (int, float)):
+        return None
+    head = [{'name': row.get('name'), 'path': row.get('path'),
+             'priority_tier': row.get('priority_tier')}
+            for row in (data.get('unexamined') or [])[:QUEUE_UNEXAMINED_FUNCTIONS]
+            if isinstance(row, dict)]
+    return {'state': data.get('state'), 'source': data.get('source'),
+            'entry_points': data.get('entry_points'), 'examined': data.get('examined'),
+            'examined_fraction': data['examined_fraction'],
+            'min_fraction': data.get('min_fraction'),
+            'unexamined_count': data.get('unexamined_count'), 'unexamined_first': head}
+
+
+def read_odd_one_out(run):
+    """Counts of the odd-one-out leads impact-plan wrote, or None when there are none."""
+    path = Path(run) / 'odd-one-out.json'
+    if not path.is_file():
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get('leads'), list):
+        return None
+    by_kind = {}
+    for lead in data['leads']:
+        if isinstance(lead, dict):
+            kind = str(lead.get('kind'))
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+    return {'state': 'unreviewed-leads', 'total': sum(by_kind.values()),
+            'by_kind': dict(sorted(by_kind.items())),
+            'notice': 'Heuristic leads from the compiler AST (a check or paired write most '
+                      'comparable entry points carry and one does not). Unreviewed: read each '
+                      'one; none is a finding, and intentional asymmetries exist.'}
 
 
 # --------------------------------------------------------------------------- #
@@ -5905,6 +6479,21 @@ def build_parser():
                        help=f'examined fraction a run must reach before it may call itself '
                             f'exhausted; default {COVERAGE_FLOOR_DEFAULT}')
 
+    fcov = sub.add_parser('function-coverage',
+                          help='credit entry points only where the run names the function')
+    fcov.add_argument('--run', required=True)
+    fcov.add_argument('--graph', default=None,
+                      help='semantic-graph.json from impact-plan; default <run>/semantic-graph.json')
+    fcov.add_argument('--repo', default=None,
+                      help='checkout for the lexical fallback (Vyper, Anchor/Solana Rust, Move, '
+                           'Cairo, and Solidity when there is no graph)')
+    fcov.add_argument('--scope', action='append', default=None,
+                      help='path prefix to keep; repeatable')
+    fcov.add_argument('--gate', action='store_true',
+                      help='fail while the examined fraction is below --min-fraction')
+    fcov.add_argument('--min-fraction', type=float, default=COVERAGE_FLOOR_DEFAULT,
+                      help=f'examined fraction of entry points; default {COVERAGE_FLOOR_DEFAULT}')
+
     exp = sub.add_parser('experiment-gate', help='require paired execution on top queued leads before another hunt pass')
     exp.add_argument('--run', required=True)
     exp.add_argument('--limit', type=int, default=3)
@@ -6096,6 +6685,11 @@ def main(argv=None):
             return 0
         if args.action == 'coverage-floor':
             result = coverage_floor(args.repo, args.run, args.scope, args.min_fraction)
+            print(json.dumps(result, indent=2))
+            return 1 if args.gate and result['examined_fraction'] < args.min_fraction else 0
+        if args.action == 'function-coverage':
+            result = function_coverage(args.run, args.graph, args.repo, args.scope,
+                                       args.min_fraction)
             print(json.dumps(result, indent=2))
             return 1 if args.gate and result['examined_fraction'] < args.min_fraction else 0
         if args.action == 'audit-inventory':
