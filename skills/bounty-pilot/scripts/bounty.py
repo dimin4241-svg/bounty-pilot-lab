@@ -2291,7 +2291,8 @@ FAILURE_OUTPUT = re.compile(
     r'denied|forbidden|unauthori[sz]ed|not found|no such|unsupported|not supported|'
     r'not available|unavailable|refused|timed out|timeout|rate[ -]?limit(?:ed)?|'
     r'too many requests|reverted|cannot|can\'t|could not|couldn\'t|unable to|not allowed|'
-    r'insufficient|aborted|killed)\b|\b[45]\d\d (?:[A-Z][a-z]+)|"error"\s*:')
+    r'insufficient|aborted|killed)\b|\bHTTP/[\d.]+ [45]\d\d\b|'
+    r'\b(?:status|code)\W{1,3}[45]\d\d\b|"error"\s*:')
 SUCCESS_COUNTS = re.compile(r'(?i)\b(?:0|no|zero|without)\s+(?:errors?|failures?|failed)\b')
 
 
@@ -2300,7 +2301,8 @@ def blocker_reason(blocker):
     if not blocker_claim(blocker):
         return ''
     if not isinstance(blocker, dict):
-        return 'a bare sentence: record it as an object with claim, command, exit_code and output_excerpt'
+        return ('a bare sentence: record it as an object with claim, command, exit_code and '
+                'output_excerpt')
     if not (has_text(blocker.get('command')) and has_text(blocker.get('output_excerpt'))):
         return 'no command and output_excerpt: nobody can tell whether the obstacle is real'
     exit_code = blocker.get('exit_code')
@@ -2788,7 +2790,8 @@ def _check_verified_evidence(row, prefix, run, errors):
         # there. A non-zero exit is also what a compile error, a crash or a SIGKILL looks like.
         errors.append(prefix + f': evidence.exit_code is {exit_code}; a verified PoC is a test '
                       'that passes (exit 0) when the bug is demonstrated. A non-zero exit is also '
-                      'what a compile error, a crash or a kill (137) looks like, so it shows nothing')
+                      'what a compile error, a crash or a kill (137) looks like, so it shows '
+                      'nothing')
     resolved = {}
     for key in ('log_path', 'poc_path'):
         value = evidence.get(key)
@@ -5421,7 +5424,7 @@ def solana_executable_hash(program):
 
 
 def _solana_account(rpc, pubkey, opener):
-    """(context slot, account with its decoded data) at the finalized slot; account None if absent."""
+    """(context slot, account with decoded data) at the finalized slot; None when absent."""
     import base64
     reply = rpc_call(rpc, 'getAccountInfo',
                      [pubkey, {'encoding': 'base64', 'commitment': 'finalized'}], opener)
