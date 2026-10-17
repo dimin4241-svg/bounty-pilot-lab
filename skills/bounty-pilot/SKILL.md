@@ -138,8 +138,8 @@ python3 <skill-dir>/scripts/coverage_graph.py --graph <run>/state-graph.json --o
 ```
 
 `delta` ranks changed source, and also reports submodule bumps and build/config changes — a
-dependency bump that removed a check is a delta too. If it truncates, it says so and lists what it
-left out. If `--since` has no evidenced audit baseline, say so and review in full.
+dependency bump that removed a check is a delta too; config changed outside `--scope` is still
+listed under `config_outside_scope`. If it truncates, it says so and lists what it left out. If `--since` has no evidenced audit baseline, say so and review in full.
 
 For Solidity, build the compiler-resolved map from the exact pinned build
 (`forge build --build-info`, then the file under `out/build-info/`):
@@ -183,7 +183,8 @@ python3 $S bundle --repo <checkout> --run <run> --lens attack --include <run>/de
 
 Bundles automatically carry the run's mechanical outputs when they exist — `impact-paths.json`,
 `odd-one-out.json`, the unexamined entry points from `function-coverage.json` — to the lenses that
-use them, with any truncation stated.
+use them, with any truncation stated (`passes.md` lists which lens gets what). Credentials in bundled
+source are redacted.
 
 **Assembling a bundle and then reading it yourself is not a pass.** Independent contexts are the
 mechanism: one orchestrator reading eight bundles is one reading. `queue` lists bundles assembled and

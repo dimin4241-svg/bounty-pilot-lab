@@ -4,8 +4,8 @@ Two lists, used differently. **Part A** is EVM semantics that changed after most
 written, plus the classes `solidity-auditor` v4.1 is known to drop; no installed sweep covers all of
 it, so it runs on every EVM target. **Part B** is the
 classic bug-class sweep. When `solidity-auditor` ran on this revision, Part B is its ground: read
-its imported records in `findings.json` and spend this reading on Part A and on what its records
-do not name. When it did not run, Part B is yours.
+its imported records in the bundle section "Records already in this run" and spend this reading on
+Part A and on what those records do not name. When it did not run, Part B is yours.
 
 Work each item as a question against **this** code, not as a checklist to paste. An item that does
 not apply costs one line in `known-hypotheses.md`; an item skipped silently is the gap a later pass

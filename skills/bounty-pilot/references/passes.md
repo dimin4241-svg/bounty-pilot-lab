@@ -78,9 +78,13 @@ questions (`hunt-agents/classic-agent.md`). The `config` group is `live-reality`
 check what is true of the deployment rather than the source. Add `--lens anchor-account` for a
 Solana program. Each bundle carries the SOP, the shared rules, that lens's procedure, the impact
 ladder, the precedent catalogue, the run context, all in-scope source, and — when the run has them —
-the mechanical outputs that lens uses: `impact-paths.json` for `impact-first` and `seam`,
-`odd-one-out.json` for `privileged-path`, `accounting`, `business-logic`, `classic` and `seam`, and the
-unexamined entry points of `function-coverage.json` for `coverage-gap`, `classic` and `seam`.
+the mechanical outputs that lens uses: `impact-paths.json` for `impact-first` and `seam` (and every
+lens of the `high-impact` group when that group is bundled), `coverage-priority.json` and
+`state-graph.json` for `impact-first` and `seam` only, `odd-one-out.json` for `privileged-path`,
+`accounting`, `business-logic`, `classic` and `seam`, and the unexamined entry points of
+`function-coverage.json` for `coverage-gap`, `classic` and `seam`. The `classic` bundle also carries the
+records already in the run, so it can see what an imported `solidity-auditor` sweep covered. Credentials
+found in bundled source are redacted and listed in the result's `redacted_secrets`.
 
 **Pick one base group, then add to it.** The base groups are alternatives, not layers:
 
@@ -249,6 +253,13 @@ it, and a mechanism seen once in each pass is two readings. `--reset` starts the
 bugs of the same class in two functions of one file are two groups, never one: merging them would
 close the second as saturated ground. The **singletons** are the output to act on — `queue` lists
 the ones with no record as `unrecorded_singletons`.
+
+A reading whose file has since disappeared still counts, flagged in `missing_sources`
+(`--drop-missing` removes it); copies differing only in whitespace count once; raw `solidity-auditor`
+output saved beside its own `run-K.md` files is folded into them rather than counted twice. Header
+variants such as `**FINDING 1** |` or `### CANDIDATE 3 |` parse, and anything that looks like a
+header but does not is listed as skipped. A line whose record is an imported hypothesis nobody has
+triaged is marked UNTRIAGED in `saturated.md`, and is not closed ground either.
 
 That list goes into the next pass's bundles beside `known-hypotheses.md`, and `_shared.md` tells
 every lens to treat its recorded lines as closed ground. A line marked UNRECORDED is a mechanism

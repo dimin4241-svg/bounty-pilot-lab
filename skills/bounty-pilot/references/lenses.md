@@ -62,6 +62,9 @@ resource growth, synchronisation, and `unsafe`. Keep chain and runtime semantics
 
 ## Web and dApp frontend
 
+The `web` group bundles the web sources (`.ts`, `.tsx`, `.js`, `.jsx`, `.vue`, `.svelte`, `.html` and
+similar) and leaves out deploy, script, task and migration folders and tool configuration.
+
 When the program lists a website or an app next to the contracts, it is usually the only in-scope
 surface with no competent competition, and the aimed lens for it is
 `hunt-agents/web-frontend-agent.md`. The payable class is narrow — typically only script execution or

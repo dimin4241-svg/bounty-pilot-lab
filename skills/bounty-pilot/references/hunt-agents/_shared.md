@@ -40,7 +40,9 @@ and mechanisms it does not name.
 
 A bundle may also carry **`saturated.md`**: the mechanisms that two or more independent readings
 have already reported. A line that names its record is closed ground. A line marked **UNRECORDED**
-is not: several readings found it and nobody wrote it down, so it is a lead until it is recorded.
+is not: several readings found it and nobody wrote it down, so it is a lead until it is recorded. A
+line marked **UNTRIAGED** is not closed either: its record was imported from another tool and nobody
+has worked it yet.
 Re-deriving a saturated mechanism under a new label is the main way a multi-pass hunt wastes a
 reading, and it is measured: in a backtest of this skill, nine of twelve readings reported the same
 mechanism, and it was not a valid finding.
