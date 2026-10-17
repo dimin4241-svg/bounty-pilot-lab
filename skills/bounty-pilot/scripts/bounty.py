@@ -2819,8 +2819,8 @@ READING_MAX_BYTES = 2_000_000
 READINGS_LEDGER = 'readings-ledger.json'
 READINGS_LEDGER_VERSION = 1
 # The per-function coverage lines readings end with, accumulated through the same ledger. Other
-# commands credit functions from `examined`, so the file name and its keys are a contract.
-EXAMINED_FILE = 'examined.json'
+# commands credit functions from `examined`, so the file name (EXAMINED_FILE, above) and its keys
+# are a contract.
 EXAMINED_VERSION = 1
 # `FINDING` is the word the sibling solidity-auditor skill emits for the same block shape, and
 # its records get imported into a run, so it counts as a claim here.
@@ -6964,7 +6964,7 @@ def _redact_context_secrets(text):
 SOURCE_URL = re.compile(r'(?i)\b(?:https?|wss?)://[^\s"\'<>`]+')
 # A quoted 32-byte hex value given to a name that reads as a signing key - `const pk = "0x…"` in a
 # deploy script. A bytes32 constant in Solidity is written unquoted, so it is never touched.
-HEX_KEY_ASSIGNMENT = re.compile(
+QUOTED_HEX_KEY_ASSIGNMENT = re.compile(
     r'(?i)(\b[\w$]*(?:pk|priv|key|signer|deployer|wallet|secret|mnemonic)[\w$]*["\']?\s*'
     r'[:=]\s*)(["\'])(0x[0-9a-f]{64})(\2)')
 
@@ -7010,7 +7010,7 @@ def _redact_source_secrets(text):
                                         else m.group(0)), text)
     text = BEARER_VALUE.sub(counted(lambda m: m.group(1) + '<redacted>'
                                     if _opaque_secret(m.group(2)) else m.group(0)), text)
-    text = HEX_KEY_ASSIGNMENT.sub(counted(lambda m: m.group(1) + m.group(2) + '<redacted>'
+    text = QUOTED_HEX_KEY_ASSIGNMENT.sub(counted(lambda m: m.group(1) + m.group(2) + '<redacted>'
                                           + m.group(4)), text)
     return text, count[0]
 

@@ -547,7 +547,7 @@ def git(repo, *args):
 def commit(repo, message="fixture"):
     git(repo, "add", "-A")
     git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-        "commit", "-qm", message)
+        "-c", "commit.gpgsign=false", "commit", "-qm", message)
 
 
 class RunCase(unittest.TestCase):

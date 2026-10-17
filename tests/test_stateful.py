@@ -258,7 +258,7 @@ class NativeRoutingAndScaffoldTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
             subprocess.run(["git", "-C", str(repo),
                             "-c", "user.name=Test", "-c", "user.email=a@example.invalid",
-                            "commit", "-qm", "baseline"], check=True)
+                            "-c", "commit.gpgsign=false", "commit", "-qm", "baseline"], check=True)
             run = root / "private-run"
             result = bounty.bundle(repo, run, ["business-logic"])
             text = (run / "bundles/business-logic-bundle.md").read_text()

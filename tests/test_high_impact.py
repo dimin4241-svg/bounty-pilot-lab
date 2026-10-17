@@ -138,7 +138,7 @@ class SemanticTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(checkout), "add", "-A"], check=True)
             subprocess.run(["git", "-C", str(checkout), "-c", "user.name=Test",
                             "-c", "user.email=test@example.invalid",
-                            "commit", "-qm", "init"], check=True)
+                            "-c", "commit.gpgsign=false", "commit", "-qm", "init"], check=True)
             result = bounty.bundle(checkout, root / "private", ["high-impact"])
             self.assertEqual([x["lens"] for x in result["bundles"]],
                              list(bounty.HIGH_IMPACT_LENSES))
