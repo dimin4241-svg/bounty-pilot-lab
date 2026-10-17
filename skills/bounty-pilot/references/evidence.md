@@ -18,8 +18,9 @@ cause together.
   program's rubric in `severity_rationale` before assigning a final label.
 - `bug_class`: kebab-case, reused across passes and shared with the dup map, so the same mechanism
   keeps the same label (`aggregate-not-decremented`, `unvalidated-compose-sender`).
-- `revision`: the exact commit the record was established against. Without it a `verified` record
-  cannot be rechecked after the target moves, and findings outlive the revision that produced them.
+- `revision`: the exact commit the record was established against — 7 to 64 hex characters that are
+  a prefix of the run's recorded commit or of the experiment's revision. A branch name or "last
+  week" is refused. Without it a `verified` record cannot be rechecked after the target moves.
 - `scope_status`: `unknown` | `in-scope` | `out-of-scope`.
 - `deployment_status`: `unknown` | `exact` | `partial` | `mismatch` | `not-applicable`, as
   `verify-deployment` reported it. Never set `exact` by hand: the submission gate accepts it only
@@ -28,8 +29,11 @@ cause together.
   such as `deployments/0xabc….json`. One per address the finding depends on (proxy and token
   addresses alike).
 - `deployment_rationale`: required with `not-applicable` — why no deployed code is involved (an
-  off-chain service, an undeployed library). `not-applicable` is refused when any affected path is
-  `.sol` or `.vy` source.
+  off-chain service, an undeployed library). Affected paths are normalised first (`#L42`,
+  ` (withdraw)`, `:symbol` and `()` are stripped), a path that names no file is refused, and
+  `not-applicable` is refused for on-chain source: `.sol`, `.vy`, `.yul`, `.huff`, `.fe`, `.move`,
+  `.cairo`, `.fc`, `.func`, `.tolk`, Rust under `programs/`, and crates that depend on `anchor-lang`,
+  `solana-program`, `pinocchio`, `cosmwasm-std` or `ink`. Off-chain Rust and Go keep it.
 - `novelty.status`: `not-checked` | `no-public-match-found` | `matched-public-issue`, with
   `novelty.sources` listing URLs and the comparison you made at each.
 - `next_experiment`: required for `hypothesis` and `needs-evidence`; it must name a decisive
@@ -37,8 +41,10 @@ cause together.
   cannot run yet. `queue --run` lists these leads; a queued experiment is not an attempted test.
 - `next_experiment.blocker`: a plain string, or an object with `claim` (required, non-empty) and
   any of `command`, `exit_code`, `output_excerpt`, `recorded_at`, `attempted_alternative`. A
-  blocker counts as **reproduced** only when it carries both a `command` and an `output_excerpt`;
-  anything less is **unverified**, and `queue --run` lists it under `unverified_blockers`. Write
+  blocker counts as **reproduced** only when it carries a `command`, an integer `exit_code` and an
+  `output_excerpt` that shows failure — a non-zero exit, or exit 0 with error output such as an HTTP
+  403 or a JSON-RPC error. A command that succeeded is not a blocker. Anything less is
+  **unverified**, and `queue --run` lists it under `unverified_blockers` with the reason. Write
   what the shell printed, not your conclusion about it, and put in `attempted_alternative` the
   cheaper route you tried before giving up — another endpoint, another package manager, the
   monorepo root rather than the subdirectory you copied out of it. **A blocker is a claim and
@@ -52,9 +58,12 @@ cause together.
   `reached` or `blocked`. An unanchored `blocked` is an assumption, not a result. `ceiling` names
   the highest impact class the evidence actually reached and `ceiling_evidence` anchors it. The
   field is optional on a hypothesis; the submission gate requires every amplifier to carry a
-  result, and `queue --run` lists the missing ones for every open record.
+  result, an anchor for `not-applicable` too, and `ceiling` with `ceiling_evidence`. `queue --run`
+  lists the missing ones for every open record.
 - `history_review`: record the private-ledger comparison before submission. Use
-  `no-match` only after `history check` reports none; use `different-root-cause` with prior case IDs
+  `no-match` only after `history check` reports none against a ledger that exists — `history check`
+  no longer creates a missing ledger (pass `--create-ledger` to start one), and a `no-match` against
+  a missing ledger is refused; use `different-root-cause` with prior case IDs
   and a concrete mechanism comparison; use `regression` only with `evidence` citing how the issue
   was reintroduced in the current deployment. `same-mechanism` blocks submission. `unchecked` and
   `unavailable` also block it.
@@ -64,9 +73,17 @@ cause together.
 
 ## Evidence fields, required for `verified`
 
-- `command`: the exact reproduction command, with no credentials in it.
-- `exit_code`: the observed integer. For a test that asserts the bad outcome this is normally 0.
-- `log_path`, `poc_path`: existing files inside the private run directory, never symlinks out of it.
+- `command`: the exact reproduction command — it must equal the candidate argv of the record's
+  paired run, with `$VAR` or `<REDACTED>` standing in for secrets. A key, a private key or an RPC
+  URL with a key anywhere in evidence, blocker or experiment fields fails `check`.
+- `exit_code`: the observed integer; it must be 0 (the candidate test passes when the bug is
+  demonstrated) and equal the code the paired run observed.
+- `log_path`, `poc_path`: two different existing files inside the private run directory, never
+  symlinks out of it and never run bookkeeping (`findings.json`, `run.json`, `experiments.json`,
+  anything under `deployments/` or `bundles/`).
+- A `verified` record also needs an `executed` entry in `experiments.json` whose paired result
+  passes the experiment gate. A `blocked` or queued entry, or no `experiments.json` at all, fails
+  the submission gate.
 - `assertion`: the property that broke, and what the observed result establishes.
 - `negative_control`: the contrasting case you actually ran and its result — not a proposed test.
 - `source_integrity`: how unmodified production code and realistic dependency behaviour were kept.
@@ -131,7 +148,8 @@ submitted — and fails when there are none; refuted and open records stay in th
 structural check only. For each verified record it additionally refuses what programs actually
 reject: scope that is not established, a `deployment_status` other than `exact` (backed by
 `deployment_evidence`) or `not-applicable` (with `deployment_rationale`), an unassessed severity, a severity with no rubric citation, fewer than
-two checked novelty sources, missing impact quantification, a run with no dup map built, no triage
+two checked novelty sources, missing impact quantification, a run with no dup map built (an empty
+map needs `dup-check --empty-map-reason`), no `audit-inventory.json`, no triage
 exchange, an unchecked personal history review, a missing or stale personal-history result, a
 detected personal match that is not accounted for, a same-mechanism history match, open leads without
 their next experiment, and any sustained objection.

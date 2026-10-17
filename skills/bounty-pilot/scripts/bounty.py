@@ -8424,7 +8424,7 @@ def build_parser():
     fcov.add_argument('--min-fraction', type=float, default=COVERAGE_FLOOR_DEFAULT,
                       help=f'examined fraction of entry points; default {COVERAGE_FLOOR_DEFAULT}')
 
-    exp = sub.add_parser('experiment-gate', help='require paired execution on top queued leads before another hunt pass')
+    exp = sub.add_parser('experiment-gate', help='require paired execution on the top open records; run alongside the passes, mandatory before reporting')
     exp.add_argument('--run', required=True)
     exp.add_argument('--limit', type=int, default=3)
     exp.add_argument('--gate', action='store_true', help='fail when top leads remain untested or unblocked')

@@ -122,7 +122,7 @@ def shared_results(run, by_id):
 def check_entry(run, meta, finding, entry):
     """Validate one finding's ledger entry as (state, reason, runner result or None).
 
-    The before-next-reading-pass gate and the submission gate both call this, so a record can
+    The experiment gate and the submission gate both call this, so a record can
     never be held to a weaker standard at submission than it was between passes.
     """
     run = Path(run).resolve()
@@ -196,7 +196,7 @@ def review(run, limit=3):
         else:
             errors.append(ident + ": " + reason)
             details.append({"finding_id": ident, "state": state})
-    return {"gate": "before-next-reading-pass", "result": "failed" if errors else "passed",
+    return {"gate": "before-reporting", "result": "failed" if errors else "passed",
             "selected": details, "deferred": [f.get("id") for f in deferred],
             "errors": errors, "checked": len(selected),
             "notice": "This gate verifies recorded local test execution, not bug truth, economic impact, "

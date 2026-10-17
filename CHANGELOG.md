@@ -1,5 +1,99 @@
 # Changelog
 
+## 0.19.0
+
+A review of this package against its own claims found the evidence gates checking the shape of
+proof rather than proof, coverage that one directory row could satisfy, and a convergence step that
+merged distinct bugs into one "closed" line. This release fixes those, measures coverage per
+function, makes the odd one out mechanical, and turns the `solidity-auditor` integration from prose
+into a command.
+
+### Evidence that cannot be typed in
+
+- **A `verified` record needs an executed paired run.** `check --submission` now reads
+  `experiments.json`: a verified record whose experiment is `blocked`, queued or missing fails, and
+  so does a run with no `experiments.json` at all. The runner binds each result to its plan's
+  `finding_id`; candidate and control must differ; one result file cannot back two findings.
+- **Evidence fields are checked, not just present.** Log and PoC are two distinct files outside the
+  run's bookkeeping, `exit_code` is 0 and matches the paired run, `command` matches the candidate
+  argv, and `revision` is a hex prefix of the recorded commit.
+- **Deployment records carry provenance and a digest**, and the gate re-checks the compared artifact.
+  A hand-written `exact` no longer passes, nor does one whose artifact was deleted.
+- **`verify-deployment`** probes `implementation()` getters (a large Compound-style delegator read
+  as `exact` before), resolves OpenZeppelin and Solady clones including clones with immutable args
+  (patterns derived from their sources, hashes checked against Solady's published constants),
+  records linked-library code, and verifies Solana program ids against a `.so` build. Move and Cairo
+  `exact` is refused rather than accepted by hand.
+- **`not-applicable` deployment status** is refused for every on-chain stack and for a path that
+  names no file, after stripping `#L…`, `(fn)` and `:symbol` suffixes that used to slip past.
+- **Zero-test detection** was rewritten from the real output of forge, cargo, go, pytest, unittest,
+  mocha/Hardhat, anchor and the Move test runners.
+- **A blocker whose command succeeded is not a blocker**: `reproduced` needs an integer exit code and
+  output that shows failure. **Secrets** in evidence, blockers and experiments fail `check`.
+- **Weak submissions:** a `not-applicable` amplifier needs an anchor and the ladder needs a ceiling;
+  `history check` no longer creates a missing ledger (`--create-ledger`), and `no-match` against one
+  is refused; an empty dup map needs `dup-check --empty-map-reason`; `audit-inventory.json` is
+  required.
+
+### Coverage you can measure
+
+- **`function-coverage`** lists every external entry point (from the compiler AST, or lexically for
+  Vyper, Rust, Move and Cairo) and the ones no record names, ranked so value-moving and state-writing
+  functions come first, with `--gate`.
+- **Hunt readings end with `EXAMINED` and `NOT-REACHED` lines**; `converge` collects them into
+  `examined.json`, which is what credits a function.
+- **`coverage-floor`** no longer counts files credited only by a directory row, and reports on-chain
+  source outside `--scope` as `outside_scope_onchain`.
+
+### The odd one out, computed
+
+- `semantic_graph.py` records guards per function — modifiers, `require`/`revert` conditions and
+  checks in internal helpers — and new sinks: arbitrary calls with a caller-chosen target,
+  `delegatecall`, `selfdestruct`, `permit` and token pulls from a parameter address.
+- **`odd-one-out.json`** (written by `impact-plan`): `guard-asymmetry`, `paired-write-omission` and
+  `sibling-asymmetry` leads. On a planted-bug project it surfaced all six planted bugs with one noisy
+  lead; that is a fixture, not a measurement.
+- `impact_paths.py` ranks arbitrary calls highest, higher still when the contract also pulls tokens
+  from users' standing approvals.
+
+### Convergence and the solidity-auditor integration
+
+- **`converge` keys on file, function and bug class**, accumulates readings across passes in
+  `readings-ledger.json` (`--reset` to start over), keeps generic surfaces such as `Pool<T>::swap`,
+  parses numbered headers, and matches records on the full path. `queue` lists
+  `unrecorded_singletons`.
+- **`import-findings`** reads `solidity-auditor`'s raw agent blocks and its `run-K.md` files, maps
+  contracts to files, and writes untriaged `hypothesis` records; upstream confidence is never stored.
+  `queue` lists them as `imported_untriaged`.
+- **`compare.md`** now says how to run it so it helps: in a disposable copy, with `--loop N`, and
+  always with the explicit in-scope file list — its default discovery skips `src/lib/` and any file
+  named `*Test*`, and its judging rules treat explicit narrowing casts as safe although Solidity 0.8
+  truncates them silently.
+
+### Search
+
+- **`classic` lens**: Part A (EIP-7702 delegated EOAs, transient storage, Permit2, signatures, L2
+  differences, v4 hooks, ERC-4337, narrowing casts) on every EVM target; Part B, the classic sweep,
+  when `solidity-auditor` did not run. Appended to the `attack` group.
+- **`web-frontend` is a registered lens** (`--lens web`) and bundles web sources;
+  `high-impact` regains `accounting`, `external-call` and `integration-auth`; any messaging signal
+  selects `integration-auth`.
+- **Bundles carry the run's analysis** — `impact-paths.json`, `odd-one-out.json`, unexamined entry
+  points — to the lenses that use them, with explicit truncation.
+- **`delta`** reports submodule bumps and config changes, and says when it truncated.
+- **`score-target`** takes `approval_exposure_usd`: a router holding dust but spending users'
+  approvals is no longer forced to `deprioritise` while that exposure is unmeasured.
+- `.circom`, `.nr`, `.sw`, `.tact`, `.jsx`, `.mjs` and `.cjs` count as source; `scope-audit --gate`
+  no longer fails on stacks a bundle could never include.
+
+### Documentation
+
+- `SKILL.md` is shorter and states the coverage floor as a measurement. Invariant fuzzing is a
+  standard Stage 5 step on high-value targets (`verify-tools.md`). `backtest.md` adds a three-arm
+  comparison with contamination controls. `integrations.md` lists vetted skills and MCP servers by
+  stage, with what to disable, and the ones not to use. Duplicate section numbers and stale counts
+  were fixed.
+
 ## 0.18.0
 
 One version again. Four sessions had each been told, in their own chat, to "update the pilot";

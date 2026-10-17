@@ -22,19 +22,28 @@
 
 Bounty Pilot gives a coding agent a repeatable workflow for **Solidity/EVM audits, Rust/Solana review, local proof-of-concept validation, and bug bounty report preparation**. It keeps technical validity, severity, program eligibility, and known-issue checks separate.
 
-It has two halves, and both decide whether a hunt finds anything:
+Its parts each decide whether a hunt finds anything:
 
 - A **funnel** that settles where to look and what counts as evidence — which target is worth the week, which code the last audit never saw, which surfaces are already burned by published known issues, and whether the bytecode on chain is the code you are reading.
-- A **hunt** of twenty aimed lenses, chosen by protocol shape and dispatched from assembled bundles over differentiated passes, where generation and refutation are deliberately separate steps: an agent that refutes itself while hunting finds less, and an agent that never refutes itself files reports that triage kills.
+- A **hunt** of more than twenty aimed lenses, chosen by protocol shape and dispatched from assembled bundles over differentiated passes, where generation and refutation are deliberately separate steps: an agent that refutes itself while hunting finds less, and an agent that never refutes itself files reports that triage kills.
+- A **coverage floor computed from the code**: every external entry point from the compiler AST, credited only when a reading names it, plus a mechanical "odd one out" report — the writer missing a guard its siblings carry, the function that updates one of two variables always updated together.
 - A **two-round objection exchange** after the hunt, in which a triage agent is told to reject each finding and must anchor every objection in quoted code, quoted specification, a named test or a live chain read — and the answers must be anchored too. Both sides carry the same burden, because a one-round review rejects almost everything and you never learn which rejection was wrong.
 
 **It is an agent skill, not a hosted scanner.** Your agent reads the instructions, inspects the target, runs available tools, and records evidence. The included Python helpers organize results, read live chain state and check structure; they do not discover or prove vulnerabilities by themselves.
 
+## What changed in 0.19
+
+- **`verified` means a paired run executed.** The submission gate reads `experiments.json`, binds each runner result to its finding, and checks that evidence points at real, distinct files at the recorded commit. Hand-written deployment records, non-standard proxies read as `exact`, succeeded commands filed as blockers and secrets in evidence are all refused now.
+- **Coverage per function.** `function-coverage` and `EXAMINED` lines from every reading; a `src/` row no longer counts as reading `src/`.
+- **`odd-one-out.json`** from `impact-plan`: guard asymmetries, paired-write omissions, sibling asymmetries.
+- **`solidity-auditor` as a real stage**: `import-findings` turns its output into untriaged hypotheses; `compare.md` covers its known gaps.
+- **`classic` lens** for post-2023 EVM semantics (EIP-7702, transient storage, Permit2, L2 differences) and the classic sweep. Full list in the [changelog](CHANGELOG.md).
+
 ## Evidence-First execution (0.13)
 
-After the initial hunt pass, agents must execute decisive tests for the top
-open hypotheses (candidate plus negative control) **before** another broad
-reading pass. The new experiment-gate command checks actual local execution
+After the initial hunt pass, agents execute decisive tests for the top open
+hypotheses (candidate plus negative control) while the next pass reads, and
+before anything is reported. The experiment-gate command checks actual local execution
 records; a scope-audit warns when a narrowed source bundle silently omits
 an entire tracked language stack, e.g. a Rust relayer beside Solidity contracts.
 A passed gate is not proof of an exploit or a payout. See
@@ -95,7 +104,7 @@ Alternatively, copy `skills/bounty-pilot` into your agent's supported skills dir
 | **Duplicate map first** | Burns surfaces published in known-issue lists, past audits and contest findings *before* the first pass, then matches candidates against them mechanically |
 | **Deployed-code verification** | Compares on-chain runtime bytecode with a local build, resolves EIP-1967/1822 proxy slots, pins one block per run, and separates `exact` from `partial` honestly |
 | **Live-constant checks** | Reads a hardcoded index, address, decimal or feed id against live chain state, because a constant is a claim about the outside world |
-| **Twenty aimed lenses** | Hunts time, lineage, observability, aggregates, parameter authorization, persistence, live truth and the Solana account model |
+| **Twenty-plus aimed lenses** | Hunts time, lineage, observability, aggregates, parameter authorization, persistence, live truth and the Solana account model |
 | **Separated generation and refutation** | Hunt passes state claims at full strength; a later pass attacks each one against five triage gates plus a separate evidence check |
 | **Evidence requirements** | Verified findings need a reproducible PoC, negative control, impact numbers and source-integrity evidence; every open lead needs a decisive next experiment |
 | **Submission gate** | Checks deployment, scope, severity, novelty, impact, objections and a fresh personal-history comparison before a report is ready |
@@ -212,7 +221,7 @@ One bundle per lens, one agent per bundle, each in its own context. Recall is dr
 
 The default budget is **up to three stages**, roughly 18 readings plus triage. It stops at the budget, or after two consecutive passes yield neither a new mechanism nor new coverage. There is no infinite loop and no finding quota — zero verified findings after an honest run is a legitimate result.
 
-Twenty lenses are not twenty passes: [`passes.md`](skills/bounty-pilot/references/passes.md) has a selection table by protocol shape (lending, AMM, vault, bridge, router, staking, perps, governance, fork, upgradeable, Solana). Two run on nearly everything — `privileged-path`, because access control and initialization are the categories automated reviewers measurably miss most and the largest real losses came from them, and `coverage-gap`, because the tests record what the authors never checked.
+Twenty-odd lenses are not twenty passes: [`passes.md`](skills/bounty-pilot/references/passes.md) has a selection table by protocol shape (lending, AMM, vault, bridge, router, staking, perps, governance, fork, upgradeable, Solana). Two run on nearly everything — `privileged-path`, because access control and initialization are the categories automated reviewers measurably miss most and the largest real losses came from them, and `coverage-gap`, because the tests record what the authors never checked.
 
 ### Severity is the payout
 
@@ -277,14 +286,14 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | --- | --- |
 | [SKILL.md](skills/bounty-pilot/SKILL.md) | Agent entry point and orchestration |
 | [Target selection](skills/bounty-pilot/references/targets.md) | What makes a target worth a week, and the program facts file |
-| [Hunt agents](skills/bounty-pilot/references/hunt-agents) | The eight aimed lenses and their shared stance and output contract |
+| [Hunt agents](skills/bounty-pilot/references/hunt-agents) | The hunt lenses and their shared stance and output contract |
 | [Pass protocol](skills/bounty-pilot/references/passes.md) | What each pass aims at, dispatch, the known-hypotheses floor, stop rules |
 | [Reading SOP](skills/bounty-pilot/references/sop.md) | How to read code: plain restatement, obligation tracing, backward reads, escalation |
 | [Adjudication](skills/bounty-pilot/references/adjudicate.md) | The two-round exchange, the five gates, outcomes and promotions |
 | [Triage agent](skills/bounty-pilot/references/triage.md) | The agent paid to reject, and the anchors it must produce |
 | [Impact classes](skills/bounty-pilot/references/impact-classes.md) | What the payout is for, and where hunters leave money |
 | [Hack patterns](skills/bounty-pilot/references/hack-patterns.md) | Root causes that took real money, with the shape to grep for |
-| [Where hunts stop short](skills/bounty-pilot/references/misses.md) | Twenty-six near-misses to check against your own output before reporting |
+| [Where hunts stop short](skills/bounty-pilot/references/misses.md) | Thirty-one near-misses to check against your own output before reporting |
 | [Backtesting](skills/bounty-pilot/references/backtest.md) | The blind protocol for measuring rediscovery against published findings |
 | [Duplicate map](skills/bounty-pilot/references/dup-map.md) | Sources, format and what a collision means |
 | [Audit lenses](skills/bounty-pilot/references/lenses.md) | Classic bug-class checklists per stack |
@@ -294,7 +303,7 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [PoC templates](skills/bounty-pilot/templates) | Fork, local, invariant and Solana harnesses |
 | [bounty.py](skills/bounty-pilot/scripts/bounty.py) | Run scaffolding, delta, triage, on-chain checks, gates |
 | [keccak.py](skills/bounty-pilot/scripts/keccak.py) | Dependency-free Keccak-256, so proxy slots are derived, not pasted |
-| [Tests](tests/test_bounty.py) | 147 helper regression and workflow checks |
+| [Tests](tests) | 590 helper regression and workflow checks |
 
 ```sh
 S=skills/bounty-pilot/scripts/bounty.py
@@ -311,6 +320,13 @@ python3 $S score-target --repo /path/to/target --program /path/to/private/new-ru
 python3 $S bundle --repo /path/to/target --run run --lens attack --scope src/
 python3 $S bundle --repo /path/to/target --run run --lens seam
 python3 $S bundle --repo /path/to/target --run run --lens triage
+
+# Which entry points has no reading named yet? And which writer lacks its siblings' guard?
+python3 $S impact-plan --solc out/build-info/<build>.json --out run
+python3 $S function-coverage --run run --gate
+
+# Bring solidity-auditor's output in as untriaged hypotheses.
+python3 $S import-findings --run run --from <copy>/.solidity-auditor/runs/<stamp> --repo /path/to/target
 
 # Rank non-test source changed since the exact commit the last audit covered.
 python3 $S delta --repo /path/to/target --since <audited-commit> --scope src/ > run/delta.json

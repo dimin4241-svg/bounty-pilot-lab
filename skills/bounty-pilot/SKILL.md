@@ -93,7 +93,7 @@ Read `references/intake.md`. Before any pass reads code for bugs, produce:
 
 ```sh
 python3 $S history import --from-file <your export of this program's submissions>
-python3 $S history check --run <run>
+python3 $S history check --run <run>          # --create-ledger the first time
 python3 $S dup-harvest --run <run>
 python3 $S audit-inventory --repo <checkout> --run <run> --gate
 python3 $S verify-deployment --rpc <url> --address <addr> --artifact <build-artifact.json> --run <run>
@@ -104,15 +104,20 @@ Duplicate work comes first because `dup-map.json` travels in every bundle: groun
 first pass is ground the lenses skip.
 
 `verify-deployment --run` writes `<run>/deployments/<address>.json` with its own provenance (chain,
-block, compared artifact and hash). A finding claiming `deployment_status: exact` names that file in
+block, compared artifact and hash, and a digest of the record). It takes an EVM address or a base58
+Solana program id (compared with the `.so` build the way `solana-verify` hashes it); it resolves
+EIP-1967, beacon, `implementation()`-getter proxies and OpenZeppelin and Solady clones, including
+clones with immutable args, and records linked-library code. A finding claiming `deployment_status: exact` names that file in
 `deployment_evidence`; the gate re-checks the file and the artifact, so a typed status — or a file
 written by hand — is never enough. `not-applicable` needs a `deployment_rationale` and is refused
-for on-chain code. Without an RPC, a build or a network, record the step as **blocked** and leave the
-status unknown.
+for on-chain code. Move and Cairo deployments cannot be compared by this tool, so their status stays
+`unknown`. Without an RPC, a build or a network, record the step as **blocked** and leave the status
+unknown.
 
 `history check` returns your own prior reports on this project as review leads, never a reason to
-skip nearby code. A missing ledger is recorded as missing, and personal history without a ledger or
-a canonical project key is `unavailable`, never a clean `no-match`.
+skip nearby code. `history check` never creates a ledger silently — pass `--create-ledger` to start
+one — and a `no-match` against a missing ledger is refused: personal history without a ledger or a
+canonical project key is `unavailable`, never a clean `no-match`.
 
 If program rules cannot be found, continue with `scope_status: unknown`, claim no eligibility, and do
 no live testing beyond read-only reads the environment already permits.
@@ -302,7 +307,9 @@ python3 $S history check --run <run>
 python3 $S check --run <run> --submission
 ```
 
-A collision demands a written difference, not a drop: set `dup_review.status`, list the `entry_ids`,
+A program with no published issues still needs `dup-check --empty-map-reason "<what was searched>"`:
+an empty map is only accepted with the reason it is empty. A collision demands a written
+difference, not a drop: set `dup_review.status`, list the `entry_ids`,
 write the comparison (`references/dup-map.md`). `same-mechanism`, `unchecked`, an untriaged harvested
 issue, an unreviewed audit artifact or stale match files block submission. Set
 `history_review.status` to `no-match`, `different-root-cause` or `regression` and explain it; a

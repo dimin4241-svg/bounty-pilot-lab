@@ -1,4 +1,5 @@
 {
+  "finding_id": "BP-001",
   "cases": [
     {
       "id": "solidity-candidate",

@@ -72,6 +72,30 @@ Preserve these invariants when editing:
   writes `"endpoint": "not recorded"` and scrubs the URL and its bare hostname out of every error
   string it reports.
 
+- **Coverage is credited by name, never by directory.** A `coverage.md` row ending in `/` credits
+  no file toward `coverage-floor`, and a file-only row credits no function toward
+  `function-coverage`. A function counts only when `examined.json`, a coverage row, a hypothesis
+  surface or `affected_paths` names it on whole identifiers. One `src/` row once made a whole scope
+  read as examined.
+- **`converge` never merges two functions.** Its key is file, function and bug class, readings
+  accumulate across passes in `readings-ledger.json`, and singletons stay visible in `queue`.
+  Merging is the failure that hides a second bug as saturated ground; splitting only costs a
+  re-read.
+- **Imported upstream output is a hypothesis.** `import-findings` writes `hypothesis` records with
+  empty evidence and `origin.triage: untriaged`, and never stores an upstream confidence or agent
+  count.
+- **`verified` needs an executed, bound pair.** The submission gate requires an `executed`
+  experiment for every verified record whose runner result names that `finding_id`, whose
+  candidate and control differ, and whose result file backs no other finding. Evidence must point
+  at two distinct non-bookkeeping files, exit 0, and a revision that is a prefix of the recorded
+  commit. Legacy runs without `experiments.json` fail closed.
+- **A blocker whose command succeeded is not a blocker.** `reproduced` needs an integer exit code
+  and output that shows failure.
+- **Secrets in evidence fail `check`.** Commands, excerpts and experiment entries are scanned; the
+  error names the kind of secret and never echoes it.
+- **`odd-one-out.json` and lexical entry-point lists are leads.** They come from syntax, not
+  intent; never treat an asymmetry as a finding or a clean list as coverage of logic.
+
 - **This repository is the skill; the installed copy is a build artifact.** Edit here, run the
   tests, then install. Never edit `~/.claude/skills/bounty-pilot` directly: it is not a git
   repository, every session shares it, and nothing there survives a reinstall. On 2026-10-17 four

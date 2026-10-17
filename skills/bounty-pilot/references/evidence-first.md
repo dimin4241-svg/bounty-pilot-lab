@@ -39,9 +39,14 @@ python3 <skill-dir>/scripts/bounty.py queue --run <run>
 ~~~
 
 The review gate checks execution records from scenario_runner.py. It requires
-executed candidate and negative-control commands, no zero-test selectors or
-timeouts, matching exit codes, the observed Git checkout SHA matching the pinned revision,
-and a concrete observed outcome. A dirty worktree remains possible for local
+executed candidate and negative-control commands that differ (in argv or working
+directory), no zero-test selectors or timeouts, matching exit codes, the observed
+Git checkout SHA matching the pinned revision, and a concrete observed outcome.
+Each plan case names its `finding_id`; a result must belong to the finding that
+cites it, and one result file cannot back two findings. Zero-test detection reads
+the real output of forge, cargo, go, pytest, unittest, mocha/Hardhat, anchor and
+the Sui and Aptos Move test runners. The gate does not check that a command is a
+test runner at all — read the plan. A dirty worktree remains possible for local
 PoC test files; inspect the actual production sources for changes.
 It does not inspect correctness of test assertions, source integrity, economic
 impact or eligibility. A green gate never means "exploit verified".
