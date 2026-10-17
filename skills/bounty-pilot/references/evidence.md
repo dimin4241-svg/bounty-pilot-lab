@@ -18,8 +18,9 @@ cause together.
   program's rubric in `severity_rationale` before assigning a final label.
 - `bug_class`: kebab-case, reused across passes and shared with the dup map, so the same mechanism
   keeps the same label (`aggregate-not-decremented`, `unvalidated-compose-sender`).
-- `revision`: the exact commit the record was established against — 7 to 64 hex characters that are
-  a prefix of the run's recorded commit or of the experiment's revision. A branch name or "last
+- `revision`: the exact commit the record was established against — 7 to 64 hex characters, any case,
+  that are a prefix of the run's recorded commit, of the experiment's revision or of the commit the
+  runner observed. A deployed commit that differs from the run's must exist in the target checkout. A branch name or "last
   week" is refused. Without it a `verified` record cannot be rechecked after the target moves.
 - `scope_status`: `unknown` | `in-scope` | `out-of-scope`.
 - `deployment_status`: `unknown` | `exact` | `partial` | `mismatch` | `not-applicable`, as
@@ -27,13 +28,21 @@ cause together.
   with `deployment_evidence` (below).
 - `deployment_evidence`: the file(s) `verify-deployment --run <run>` wrote, as run-relative paths
   such as `deployments/0xabc….json`. One per address the finding depends on (proxy and token
-  addresses alike).
+  addresses alike). At submission the gate re-runs the bytecode comparison from the runtime the record
+  stored, requires the compared artifact to sit in the target's build output (`out/`, `artifacts/`,
+  `build/`, `.build/`, `target/`, `zkout/` or Foundry's configured `out`), refuses local development
+  chains, and — when `program.json` lists `in_scope_addresses` or `chain_ids` — refuses an address or
+  chain the program does not list. The record's digest detects accidental edits; it is not a
+  signature, and these checks stop shortcuts, not deliberate forgery of your own run.
 - `deployment_rationale`: required with `not-applicable` — why no deployed code is involved (an
   off-chain service, an undeployed library). Affected paths are normalised first (`#L42`,
   ` (withdraw)`, `:symbol` and `()` are stripped), a path that names no file is refused, and
   `not-applicable` is refused for on-chain source: `.sol`, `.vy`, `.yul`, `.huff`, `.fe`, `.move`,
-  `.cairo`, `.fc`, `.func`, `.tolk`, Rust under `programs/`, and crates that depend on `anchor-lang`,
-  `solana-program`, `pinocchio`, `cosmwasm-std` or `ink`. Off-chain Rust and Go keep it.
+  `.cairo`, `.fc`, `.func`, `.tolk`, `.tact`, `.sw`, and Rust crates whose manifest makes them a
+  program (`anchor-lang`, `pinocchio`, `cosmwasm-std` or `ink`, workspace and table forms included).
+  The manifest is read before the path, so an off-chain keeper under `programs/` keeps it, and a
+  client crate that uses `solana-program` without an entrypoint stays off-chain. Off-chain Rust and
+  Go keep it.
 - `novelty.status`: `not-checked` | `no-public-match-found` | `matched-public-issue`, with
   `novelty.sources` listing URLs and the comparison you made at each.
 - `next_experiment`: required for `hypothesis` and `needs-evidence`; it must name a decisive
@@ -74,13 +83,16 @@ cause together.
 ## Evidence fields, required for `verified`
 
 - `command`: the exact reproduction command — it must equal the candidate argv of the record's
-  paired run, with `$VAR` or `<REDACTED>` standing in for secrets. A key, a private key or an RPC
+  paired run. `$VAR` or `<REDACTED>` may stand in only for a value the runner itself shows redacted,
+  never for the executable or the test selector, and never for most of the command. A key, a private key or an RPC
   URL with a key anywhere in evidence, blocker or experiment fields fails `check`.
 - `exit_code`: the observed integer; it must be 0 (the candidate test passes when the bug is
   demonstrated) and equal the code the paired run observed.
 - `log_path`, `poc_path`: two different existing files inside the private run directory, never
-  symlinks out of it and never run bookkeeping (`findings.json`, `run.json`, `experiments.json`,
-  anything under `deployments/` or `bundles/`).
+  symlinks or hard links, and never run bookkeeping (`findings.json`, `run.json`, `experiments.json`,
+  anything under `deployments/` or `bundles/`). The runner writes `<out stem>.<case id>.log` for each
+  case, which `log_path` can cite. Each verified record needs its own PoC and log: two records
+  backed by identical content, or by the same candidate command, are refused.
 - A `verified` record also needs an `executed` entry in `experiments.json` whose paired result
   passes the experiment gate. A `blocked` or queued entry, or no `experiments.json` at all, fails
   the submission gate.

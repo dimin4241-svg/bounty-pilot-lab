@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.19.1
+
+Three independent reviews of 0.19.0, each by an agent that had not written the code, rebuilt the
+honest path end to end and then tried to break it. Everything they reproduced is fixed here, with a
+before-and-after re-run of their own repros.
+
+### Evidence gates
+
+- **Zero-test runs no longer pass.** An unrecognised runner is `unknown-runner` unless the case
+  declares `expect_tests_marker`; `env`/`timeout` wrappers are unwrapped, `forge t` and `cargo t`
+  recognised, and skipped, ignored, `-list`, `--collect-only`, `--dry-run` and `--no-run` runs count
+  as zero. `forge test --json` and `mocha --reporter json` are read correctly instead of refused.
+- **Deployment evidence is bound to the program**: addresses and chains from `program.json`
+  (`in_scope_addresses`, `chain_ids`), no local dev chains, the artifact inside the target's build
+  output, and the bytecode comparison re-run at gate time. The record digest is described as what it
+  is — it detects accidental edits and is not a signature.
+- **One PoC per finding**: two verified records with the same candidate command or identical PoC or
+  log content are refused; candidate and control are compared after resolving their directories;
+  placeholders can no longer stand in for the executable or most of a command.
+- A `blocked` experiment entry needs a command, exit code and failure output, like any blocker.
+- `not-applicable` reads the crate manifest before the path, detects workspace and table forms of
+  on-chain dependencies, and refuses `.tact` and `.sw`; off-chain keepers under `programs/` and
+  client crates keep it.
+- Vyper contracts with immutables can now reach `exact`; a short or upper-case revision is accepted
+  consistently by both gates; more secret shapes are caught; the runner writes per-case log files;
+  `dup-harvest --empty-reason` works without a tracker.
+
+### Coverage and the odd one out
+
+- Comparisons are per deployed contract, through its own linearisation; inherited functions appear
+  at the heir, so `upgradeToAndCall` and friends cannot be skipped while coverage reads 100%.
+- Modifier arguments count (`onlyRole(MINTER)` is not `onlyRole(PAUSER)`); a modifier is implied
+  only by its own checks; `msg.sender` passed as an argument is not a sender check; `_msgSender()` is.
+- New `unguarded-hook` lead for authorisation hooks that check nothing; impact paths cap rows per
+  sink, drop constructors and name-matched views, and rank unguarded entries first.
+- Overload-aware crediting, ambiguous and unparsed surfaces reported, oversized files skipped instead
+  of fatal, `stale` results flagged, and `odd-one-out-review.json` to close leads with an anchor.
+- On the reviewer's OpenZeppelin-based benchmark: planted bugs found 7/11 → 11/11 (one only at rank
+  67 of the impact queue), odd-one-out precision 4/29 → 8/31. A fixture, not a measurement.
+
+### Search
+
+- Bundles no longer tell agents to return only CANDIDATE and LEAD blocks, which had suppressed the
+  `EXAMINED` lines function coverage depends on.
+- Credentials in bundled source are redacted, not only in configs. The web bundle leaves out deploy
+  and script folders.
+- `classic` sees the records already in the run; analysis files reach only the lenses documented;
+  converge folds raw solidity-auditor output into its run files, accepts common header variants,
+  keeps comma-separated `EXAMINED` lists and full `why:` text, and marks untriaged imported records
+  UNTRIAGED; `import-findings` orders passes numerically.
+- Messaging detection by word boundary across LayerZero, IBC, CCTP, XCM, Wormhole, Hyperlane, CCIP
+  and Axelar; `delta` reports config outside `--scope`.
+
+### Tests
+
+- Two tests that searched JSON text for `'95'` failed at random on timestamps; they now check parsed
+  values. Fixture commits disable commit signing, so a developer's global signing setup cannot make
+  the suite slow or flaky. Two module-level names defined by two merged branches, one of which
+  silently replaced the other's secret pattern, were renamed apart.
+
 ## 0.19.0
 
 A review of this package against its own claims found the evidence gates checking the shape of
@@ -18,7 +78,8 @@ into a command.
   run's bookkeeping, `exit_code` is 0 and matches the paired run, `command` matches the candidate
   argv, and `revision` is a hex prefix of the recorded commit.
 - **Deployment records carry provenance and a digest**, and the gate re-checks the compared artifact.
-  A hand-written `exact` no longer passes, nor does one whose artifact was deleted.
+  A typed `exact` no longer passes, nor does one whose artifact was deleted (0.19.1 adds program
+  binding: in 0.19.0 a record written by hand with a recomputed digest still passed).
 - **`verify-deployment`** probes `implementation()` getters (a large Compound-style delegator read
   as `exact` before), resolves OpenZeppelin and Solady clones including clones with immutable args
   (patterns derived from their sources, hashes checked against Solady's published constants),

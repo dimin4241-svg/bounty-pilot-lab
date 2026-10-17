@@ -100,9 +100,15 @@ came from. Never infer a fact to make the score better.
   "value_at_rest_usd": 0,
   "pays_non_fund_impact": false,
   "upstream_fork": "aave-v3",
-  "deployment_addresses_url": "https://docs.example.com/contract-addresses"
+  "deployment_addresses_url": "https://docs.example.com/contract-addresses",
+  "in_scope_addresses": ["0x…", {"address": "0x…", "chain_id": 8453}],
+  "chain_ids": [1, 8453]
 }
 ```
+
+`in_scope_addresses` and `chain_ids` bind deployment evidence to the program: once they are filled
+in, `check --submission` refuses a `deployments/` record for an address or chain the program does not
+list, and it always refuses a local development chain (31337, 1337) as evidence of what is deployed.
 
 Two of those fields decide more than all the others, and both are measured, not read off a page:
 

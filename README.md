@@ -33,7 +33,7 @@ Its parts each decide whether a hunt finds anything:
 
 ## What changed in 0.19
 
-- **`verified` means a paired run executed.** The submission gate reads `experiments.json`, binds each runner result to its finding, and checks that evidence points at real, distinct files at the recorded commit. Hand-written deployment records, non-standard proxies read as `exact`, succeeded commands filed as blockers and secrets in evidence are all refused now.
+- **`verified` means a paired run executed.** The submission gate reads `experiments.json`, binds each runner result to its finding, and checks that evidence points at real, distinct files at the recorded commit. Deployment records for addresses the program does not list or for local dev chains, non-standard proxies read as `exact`, test runs that selected no tests, succeeded commands filed as blockers and secrets in evidence are refused. The gates stop shortcuts and mistakes, not deliberate forgery of your own run files.
 - **Coverage per function.** `function-coverage` and `EXAMINED` lines from every reading; a `src/` row no longer counts as reading `src/`.
 - **`odd-one-out.json`** from `impact-plan`: guard asymmetries, paired-write omissions, sibling asymmetries.
 - **`solidity-auditor` as a real stage**: `import-findings` turns its output into untriaged hypotheses; `compare.md` covers its known gaps.
@@ -303,7 +303,7 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [PoC templates](skills/bounty-pilot/templates) | Fork, local, invariant and Solana harnesses |
 | [bounty.py](skills/bounty-pilot/scripts/bounty.py) | Run scaffolding, delta, triage, on-chain checks, gates |
 | [keccak.py](skills/bounty-pilot/scripts/keccak.py) | Dependency-free Keccak-256, so proxy slots are derived, not pasted |
-| [Tests](tests) | 590 helper regression and workflow checks |
+| [Tests](tests) | 681 helper regression and workflow checks |
 
 ```sh
 S=skills/bounty-pilot/scripts/bounty.py

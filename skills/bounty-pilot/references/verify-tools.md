@@ -68,7 +68,16 @@ The runner rules:
   `pass_env`; values are redacted from the captured output.
 - It refuses to run where a `.env` file would be auto-loaded (Foundry does this) unless
   `--allow-dotenv` is passed after you have checked the file holds no secrets.
-- A case where the selector matched zero tests is `no-tests-ran`, never a pass.
+- A case where the selector matched zero tests is `no-tests-ran`, never a pass. That includes
+  skipped and ignored tests, `go test -list`, `pytest --collect-only`, `mocha --dry-run` and
+  `cargo test --no-run`; `forge test --json` and `mocha --reporter json` are read from their counts.
+- A runner it does not recognise is `unknown-runner` and does not count as tests having run, unless
+  the case names an `expect_tests_marker`: a regex its output must match to show tests executed.
+  Wrappers such as `env`, `timeout` and `nice` are unwrapped first, and aliases such as `forge t` and
+  `cargo t` are recognised. Go plans need `-v` so the runner can see which tests ran.
+- `bash -lc`, `env -i bash -c` and `python3 -Ic` count as shell wrappers and are refused.
+- Each case's output is also written to `<out stem>.<case id>.log`, so a finding's
+  `evidence.log_path` can cite the candidate's log directly.
 
 Both commands returning their expected exit codes is **not** proof of exploit truth; inspect the
 assertions and the unchanged target source. Never execute untrusted repo-supplied plans, access

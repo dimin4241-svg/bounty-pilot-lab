@@ -101,7 +101,9 @@ python3 $S solc-bugs --repo <checkout>
 ```
 
 Duplicate work comes first because `dup-map.json` travels in every bundle: ground burned before the
-first pass is ground the lenses skip.
+first pass is ground the lenses skip. With no public tracker, `dup-harvest --empty-reason "<why>"`
+records that without a network call. Fill `in_scope_addresses` and `chain_ids` in `program.json`
+(`targets.md`): deployment evidence for anything else is refused at submission.
 
 `verify-deployment --run` writes `<run>/deployments/<address>.json` with its own provenance (chain,
 block, compared artifact and hash, and a digest of the record). It takes an EVM address or a base58
@@ -257,8 +259,9 @@ python3 $S scope-audit --repo <checkout> --run <run> --gate
 
 **Start the next pass first, then run the experiments while it reads** — placed between passes, the
 gate once cost eight bundles that were never read. It is mandatory before reporting, never between
-readings. The gate checks that paired runs executed and tested something (candidate and control
-differ, tests were actually selected, one result per finding), not that the bug is real.
+readings. The gate checks that paired runs executed and tested something — candidate and control
+differ, a recognised test runner (or a declared `expect_tests_marker`) reports at least one test, one
+result per finding — not that the bug is real.
 
 ## Escalate — before anything is adjudicated
 
