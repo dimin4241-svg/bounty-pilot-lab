@@ -109,11 +109,14 @@ class RunnerTests(unittest.TestCase):
         self.repo = Path(self.temp.name)
         # Inline `-c` is rejected as a shell/interpreter wrapper, so run a real file.
         self.ok = self.repo / "exit0.py"
-        self.ok.write_text("raise SystemExit(0)\n")
+        self.ok.write_text("print('ok 1 - check')\nraise SystemExit(0)\n")
         argv = [sys.executable, "exit0.py"]
+        # A plain script is not a recognised test runner; the marker is what shows it ran.
         self.plan = {"cases": [
-            {"id": "poc", "pair_id": "one", "role": "candidate", "argv": list(argv)},
-            {"id": "control", "pair_id": "one", "role": "negative-control", "argv": list(argv)}
+            {"id": "poc", "pair_id": "one", "role": "candidate", "argv": list(argv),
+             "expect_tests_marker": "^ok 1 "},
+            {"id": "control", "pair_id": "one", "role": "negative-control", "argv": list(argv),
+             "expect_tests_marker": "^ok 1 "}
         ]}
 
     def test_dry_run_never_executes(self):

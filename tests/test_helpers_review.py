@@ -43,10 +43,16 @@ class RunnerConventionTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name)
 
-    def _pair(self, argv):
-        return {"cases": [
+    def _pair(self, argv, marker=None):
+        plan = {"cases": [
             {"id": "c", "pair_id": "p", "role": "candidate", "argv": list(argv)},
             {"id": "n", "pair_id": "p", "role": "negative-control", "argv": list(argv)}]}
+        if marker:
+            # A script is not a recognised test runner: its output counts only through a
+            # marker the plan names (scenario_runner fails closed on unknown runners).
+            for case in plan["cases"]:
+                case["expect_tests_marker"] = marker
+        return plan
 
     def test_rejects_inline_shell_and_interpreter(self):
         for argv in (["bash", "-c", "echo hi"], ["sh", "-c", "true"],
@@ -63,9 +69,9 @@ class RunnerConventionTests(unittest.TestCase):
             runner.execute("not-a-plan", self.repo)
 
     def test_timeout_cap_raised_to_1800(self):
-        plan = self._pair([sys.executable, "ok.py"])
+        plan = self._pair([sys.executable, "ok.py"], marker="^ok 1 ")
         plan["cases"][0]["timeout_sec"] = 1800
-        (self.repo / "ok.py").write_text("raise SystemExit(0)\n")
+        (self.repo / "ok.py").write_text("print('ok 1 - check')\nraise SystemExit(0)\n")
         # Under the old 120s cap this validated-out; now it is accepted.
         out = runner.execute(plan, self.repo, allow_exec=True)
         self.assertEqual(out["result"], "experiments-conformed")
@@ -108,8 +114,8 @@ class RunnerConventionTests(unittest.TestCase):
 
     def test_dotenv_blocks_unless_allowed(self):
         (self.repo / ".env").write_text("SECRET=xyz\n")
-        (self.repo / "ok.py").write_text("raise SystemExit(0)\n")
-        plan = self._pair([sys.executable, "ok.py"])
+        (self.repo / "ok.py").write_text("print('ok 1 - check')\nraise SystemExit(0)\n")
+        plan = self._pair([sys.executable, "ok.py"], marker="^ok 1 ")
         blocked = runner.execute(plan, self.repo, allow_exec=True)
         self.assertTrue(all(c["status"] == "blocked-dotenv" for c in blocked["cases"]))
         self.assertFalse(any(c["executed"] for c in blocked["cases"]))

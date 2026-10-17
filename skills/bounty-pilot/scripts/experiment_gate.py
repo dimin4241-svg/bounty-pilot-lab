@@ -6,7 +6,10 @@ unchanged production source can establish the factual claim.
 """
 import argparse
 import json
+import os
+import posixpath
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,6 +17,90 @@ FINDING_ID = re.compile(r"BP-[0-9]{3,}$")
 OPEN = {"hypothesis", "needs-evidence"}
 RANK = {"critical": 0, "high": 1, "unassessed": 2, "medium": 3,
         "low": 4, "informational": 5}
+# A commit is named by 7 to 64 hex characters, compared case-insensitively by prefix - the same
+# rule the structural check applies to a finding's `revision`.
+HEX_REVISION = re.compile(r"[0-9a-f]{7,64}")
+# What a failure looks like in an excerpt whose command still exited 0. bounty.py holds the
+# same two patterns for next_experiment.blocker; a test keeps them identical.
+FAILURE_OUTPUT = re.compile(
+    r'(?i)\b(?:error|errors|errored|fail|failed|failure|fatal|panic|panicked|exception|traceback|'
+    r'denied|forbidden|unauthori[sz]ed|not found|no such|unsupported|not supported|'
+    r'not available|unavailable|refused|timed out|timeout|rate[ -]?limit(?:ed)?|'
+    r'too many requests|reverted|cannot|can\'t|could not|couldn\'t|unable to|not allowed|'
+    r'insufficient|aborted|killed)\b|\bHTTP/[\d.]+ [45]\d\d\b|'
+    r'\b(?:status|code)\W{1,3}[45]\d\d\b|"error"\s*:')
+SUCCESS_COUNTS = re.compile(r'(?i)\b(?:0|no|zero|without)\s+(?:errors?|failures?|failed)\b')
+GIT_TIMEOUT = 30
+
+
+def revision_of(value):
+    """A commit hash, lowercased, or None when the value is not 7 to 64 hex characters."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    return text if HEX_REVISION.fullmatch(text) else None
+
+
+def same_revision(left, right):
+    """Two hex revisions name one commit when one is a prefix of the other."""
+    a, b = revision_of(left), revision_of(right)
+    return bool(a and b and (a.startswith(b) or b.startswith(a)))
+
+
+def _known_commit(target_root, revision):
+    """Whether the run's target checkout holds this commit (one fetched, not made locally)."""
+    if not target_root or not Path(target_root).is_dir():
+        return False
+    try:
+        done = subprocess.run(
+            ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+             "-c", "core.hooksPath=/dev/null", "-C", str(target_root), "rev-parse", "--verify",
+             "--quiet", revision + "^{commit}"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
+            env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    except (OSError, subprocess.SubprocessError):
+        return False
+    full = done.stdout.decode("utf-8", "replace").strip().lower()
+    return done.returncode == 0 and full.startswith(revision)
+
+
+def blocker_evidence_reason(blocker):
+    """Why a blocker is not a reproduced failure, or '' when it is one.
+
+    Reproduced means a command, the integer it exited with, and what it printed: a non-zero
+    exit, or exit 0 with output that shows the error (curl exits 0 on a 403).
+    """
+    command, excerpt, code = (blocker.get("command"), blocker.get("output_excerpt"),
+                              blocker.get("exit_code"))
+    if not (isinstance(command, str) and command.strip() and isinstance(excerpt, str)
+            and excerpt.strip()):
+        return "no command and output_excerpt: nobody can tell whether the obstacle is real"
+    if type(code) is not int:
+        return "no exit_code: record the integer the command returned"
+    if code != 0 or FAILURE_OUTPUT.search(SUCCESS_COUNTS.sub("", excerpt)):
+        return ""
+    return ("the command exited 0 and its output shows no error: a blocker is a failure "
+            "somebody observed, and this run succeeded")
+
+
+def _case_cwd(case):
+    """The directory a case ran in, normalised; older results carry only the typed `cwd`."""
+    resolved = case.get("cwd_resolved")
+    if isinstance(resolved, str) and resolved:
+        return resolved
+    typed = case.get("cwd", ".")
+    return posixpath.normpath(typed) if isinstance(typed, str) and typed else "."
+
+
+def candidate_signatures(data):
+    """(argv, cwd) of each candidate a runner result executed, as comparable strings."""
+    cases = data.get("cases") if isinstance(data, dict) else None
+    found = set()
+    for case in cases if isinstance(cases, list) else []:
+        if isinstance(case, dict) and case.get("role") == "candidate" and \
+                isinstance(case.get("argv"), list):
+            found.add(json.dumps([case["argv"], _case_cwd(case)], sort_keys=True))
+    return found
 
 
 def _read(path):
@@ -55,6 +142,10 @@ def _paired_result(data):
             return False, "missing pair or role"
         if (case.get("executed") is not True or case.get("tests_ran") is not True or
                 case.get("timed_out") is True or case.get("status") != "ran"):
+            if case.get("status") == "unknown-runner":
+                return False, ("the runner could not read this command's output (unknown-runner), "
+                               "so nothing shows a test executed; use a recognised test command or "
+                               "set expect_tests_marker on the case")
             return False, "test was skipped, timed out, or matched zero tests"
         if not isinstance(case.get("exit_code"), int) or isinstance(case["exit_code"], bool):
             return False, "missing observed exit code"
@@ -63,8 +154,9 @@ def _paired_result(data):
         if not isinstance(case.get("argv"), list) or not case["argv"]:
             return False, "missing executed argv"
         pairs.setdefault(ident, []).append(role)
+        # The resolved directory, not its spelling: "." and "./" are the same place.
         commands.setdefault(ident, []).append(
-            json.dumps([case["argv"], case.get("cwd", ".")], sort_keys=True))
+            json.dumps([case["argv"], _case_cwd(case)], sort_keys=True))
     if not pairs or any(sorted(roles) != ["candidate", "negative-control"]
                         for roles in pairs.values()):
         return False, "candidate and negative-control must both run exactly once per pair"
@@ -100,9 +192,13 @@ def load_ledger(run):
 
 
 def shared_results(run, by_id):
-    """Errors for one runner result cited by more than one executed finding."""
+    """Errors for one paired run standing behind more than one executed finding.
+
+    The same file cited twice is one case. The other is the same candidate - argv, directory
+    and observed commit - rerun under a second finding_id: two results, one experiment.
+    """
     run = Path(run).resolve()
-    cited = {}
+    cited, signatures = {}, {}
     for key, entry in sorted(by_id.items()):
         if entry.get("status") != "executed" or not isinstance(entry.get("result_path"), str):
             continue
@@ -111,11 +207,27 @@ def shared_results(run, by_id):
         except (OSError, RuntimeError, ValueError):
             continue
         cited.setdefault(path, []).append(key)
+        try:
+            data = read_result(run, entry["result_path"])
+        except (OSError, ValueError):
+            continue
+        observed = revision_of(data.get("source_revision")) if isinstance(data, dict) else None
+        for signature in candidate_signatures(data):
+            signatures.setdefault((signature, observed), set()).add(key)
     errors = []
     for path, keys in sorted(cited.items()):
         if len(keys) > 1:
             errors.append(", ".join(keys) + ": cite the same result_path; one paired run is the "
                           "evidence for one finding, so run and record each finding's own pair")
+    reported = set()
+    for (signature, _), keys in sorted(signatures.items()):
+        group = tuple(sorted(keys))
+        if len(group) > 1 and group not in reported:
+            reported.add(group)
+            argv = json.loads(signature)[0]
+            errors.append(", ".join(group) + ": their results ran the same candidate command ("
+                          + " ".join(str(word) for word in argv)[:160] + ") in the same directory "
+                          "at the same commit; one experiment is the evidence for one finding")
     return errors
 
 
@@ -133,19 +245,43 @@ def check_entry(run, meta, finding, entry):
         if (not isinstance(reason, str) or len(reason.strip()) < 20 or
                 not isinstance(alternative, str) or len(alternative.strip()) < 20):
             return "unsubstantiated-blocker", "blocker needs specific reason and attempted alternative", None
+        # A blocker is a claim every later pass reads as closed ground, so it carries the
+        # same evidence as next_experiment.blocker: the command, its exit code, its output.
+        missing = blocker_evidence_reason(entry)
+        if missing:
+            return ("unsubstantiated-blocker", "blocked entry is not a reproduced failure: " + missing
+                    + ". Record command, exit_code and output_excerpt as the shell printed them",
+                    None)
         return "blocked", reason, None
     if status != "executed":
         return "invalid", "status must be executed or blocked", None
-    if entry.get("revision") != meta.get("commit") or entry.get("revision") != finding.get("revision"):
-        return "stale-revision", "experiment revision differs from pinned run/finding revision", None
+    entry_revision, finding_revision = revision_of(entry.get("revision")), \
+        revision_of(finding.get("revision"))
+    if not entry_revision or not finding_revision or \
+            not same_revision(entry_revision, finding_revision):
+        return ("stale-revision", "experiment revision differs from the finding's revision (each is "
+                "7 to 64 hex characters naming the same commit)", None)
     if not isinstance(entry.get("observation"), str) or len(entry["observation"].strip()) < 20:
         return "missing-observation", "execution requires a concrete observed outcome", None
     result = None
     try:
         result = read_result(run, entry.get("result_path"))
         valid, reason = _paired_result(result)
-        if valid and result.get('source_revision') != entry['revision']:
+        observed = revision_of(result.get("source_revision")) if isinstance(result, dict) else None
+        if valid and not (observed and same_revision(observed, entry_revision)
+                          and same_revision(observed, finding_revision)):
             valid, reason = False, 'runner-observed checkout commit differs from pinned revision'
+        elif valid and not same_revision(observed, meta.get("commit")):
+            # The PoC ran at another commit than the one the run was opened at - the deployed
+            # revision, typically. The finding names it; it must be a commit the target
+            # checkout knows, not one made in the disposable copy.
+            if not _known_commit(meta.get("target_root"), observed):
+                valid, reason = False, ("the paired run observed commit " + observed[:12] + ", which "
+                                        "is neither the run's commit nor a commit in the target "
+                                        "checkout; run the PoC at a revision the project published")
+            else:
+                reason = (reason + "; ran at " + observed[:12] + ", the finding's revision, not the "
+                          "run's commit " + str(meta.get("commit"))[:12])
         bound = result.get("finding_id") if isinstance(result, dict) else None
         if valid and bound != ident:
             # A result names the finding it tests, or one passing pair would satisfy any record.
@@ -178,7 +314,7 @@ def review(run, limit=3):
                                   0 if f.get("status") == "needs-evidence" else 1,
                                   str(f.get("id", ""))))
     selected, deferred = queue[:limit], queue[limit:]
-    details = []
+    details, unverified = [], []
     for finding in selected:
         ident = finding.get("id", "<missing-id>")
         entry = by_id.get(ident)
@@ -187,6 +323,9 @@ def review(run, limit=3):
             details.append({"finding_id": ident, "state": "unattempted"})
             continue
         state, reason, _ = check_entry(run, meta, finding, entry)
+        if state == "unsubstantiated-blocker":
+            unverified.append({"finding_id": ident, "source": "experiments.json",
+                               "reason": reason})
         if state == "blocked":
             details.append({"finding_id": ident, "state": state, "reason": reason})
         elif state in ("executed", "incomplete"):
@@ -198,7 +337,7 @@ def review(run, limit=3):
             details.append({"finding_id": ident, "state": state})
     return {"gate": "before-reporting", "result": "failed" if errors else "passed",
             "selected": details, "deferred": [f.get("id") for f in deferred],
-            "errors": errors, "checked": len(selected),
+            "errors": errors, "checked": len(selected), "unverified_blockers": unverified,
             "notice": "This gate verifies recorded local test execution, not bug truth, economic impact, "
                       "eligibility, or novelty. Inspect unchanged source and test assertions separately."}
 

@@ -61,14 +61,15 @@ UNQUOTED_SECRET_KEY_VALUE = re.compile(
 AUTH_HEADER_VALUE = re.compile(
     r'(?i)(authorization["\']?\s*[:=]\s*["\']?(?:bearer|basic|token)?\s*)([^\s"\',]+)')
 BEARER_VALUE = re.compile(r'(?i)(\bbearer\s+)([A-Za-z0-9._~+/=-]{8,})')
-URL_USERINFO = re.compile(r'(?i)\b((?:https?|wss?)://)[^/\s:@"\']+:[^/\s@"\']+@')
+# `https://user:password@host`, and `https://:password@host` with no user at all.
+URL_USERINFO = re.compile(r'(?i)\b((?:https?|wss?)://)[^/\s:@"\']*:[^/\s@"\']+@')
 # Hosted RPC providers put the account key in the URL path (alchemy /v2/<key>, infura /v3/<key>,
 # quicknode /<token>/, ankr /eth/<key>). Any long opaque segment on such a host is a key.
 RPC_PROVIDER_URL = re.compile(
     r'(?i)\b((?:https?|wss?)://[^\s/"\'<>]*(?:alchemy\.com|alchemyapi\.io|infura\.io|'
     r'quiknode\.pro|quicknode\.com|ankr\.com|blastapi\.io|chainstack\.com|getblock\.io|'
     r'drpc\.org|nodereal\.io|tenderly\.co|llamarpc\.com|blockpi\.network|'
-    r'nodies\.app)[^\s/"\'<>]*)((?:/[^\s"\'<>]*)?)')
+    r'nodies\.app|p2pify\.com)[^\s/"\'<>]*)((?:/[^\s"\'<>]*)?)')
 VERSIONED_KEY_PATH = re.compile(r'(?i)(/v[0-9]+/)([A-Za-z0-9_-]{20,})')
 OPAQUE_PATH_SEGMENT = re.compile(r'(?<=/)[A-Za-z0-9_-]{16,}(?=/|$|\?|#)')
 TARGET_FILE_MAX_BYTES = 2_000_000
@@ -1032,7 +1033,9 @@ def history_check(run, ledger=None, project=None, create_ledger=False):
     if not project_key and target_root and Path(target_root).is_dir():
         project_key = project_for_repo(target_root)
     if not project_key:
-        raise ValueError('No canonical repository remote in run.json; pass --project owner/repo')
+        raise ValueError('The checkout has no origin remote, so this run has no project key: pass '
+                         '--project <host/owner/repo> taken from the repository URL you were given '
+                         '(for example --project github.com/owner/repo)')
     records = read_json(run / 'findings.json')
     if not isinstance(records, list):
         raise ValueError('findings.json must be an array')
@@ -1204,7 +1207,8 @@ def lead_queue(run):
             'parked': sorted(parked, key=lambda row: row['id']),
             'possibly_parked': sorted(possibly_parked, key=lambda row: row['id']),
             'weak_refusals': weak_refusals, 'unread_bundles': unread_bundles,
-            'unverified_blockers': sorted(unverified_blockers, key=lambda row: row['id']),
+            'unverified_blockers': sorted(unverified_blockers + _ledger_unverified_blockers(
+                run, records), key=lambda row: row['id']),
             'contradicted_blockers': contradicted_blockers(run, records),
             'coverage_floor': read_coverage_floor(run),
             'function_coverage': read_function_coverage(run),
@@ -1740,7 +1744,7 @@ SURFACE_SPLIT = re.compile(r'[\s,;]+')
 # `contracts/*.vy` tree or a `huff/` directory; these are reported when --scope leaves them out.
 # Rust is on-chain only by convention (`programs/` in an Anchor workspace).
 ONCHAIN_SUFFIXES = ('.sol', '.vy', '.yul', '.huff', '.move', '.cairo', '.fe', '.fc', '.func',
-                    '.tolk')
+                    '.tolk', '.tact', '.sw')
 EXAMINED_FILE = 'examined.json'
 
 
@@ -4664,6 +4668,13 @@ def _experiment_gate():
     return _HELPERS['experiment_gate']
 
 
+def _runner_helper():
+    """The bundled scenario runner, loaded once: the gate reads commands the way it ran them."""
+    if 'scenario_runner' not in _HELPERS:
+        _HELPERS['scenario_runner'] = load_impact_helper('scenario_runner')
+    return _HELPERS['scenario_runner']
+
+
 def _experiment_entry(run, finding_id):
     """This finding's experiments.json entry and the runner result it cites, read leniently.
 
@@ -4708,15 +4719,49 @@ def _same_command(command, argv):
     if len(typed) != len(ran):
         return False
     redacted = re.compile(re.escape('<REDACTED>'))
-    for mine, theirs in zip(typed, ran):
+    try:
+        command_start = len(ran) - len(_runner_helper().unwrap(ran))
+    except ValueError:
+        command_start = 0
+    stood_in = 0
+    for index, (mine, theirs) in enumerate(zip(typed, ran)):
         if mine == theirs:
             continue
-        if re.fullmatch(_token_pattern(mine, COMMAND_PLACEHOLDER), theirs, re.S):
+        if '<REDACTED>' in theirs and re.fullmatch(_token_pattern(theirs, redacted), mine, re.S):
+            continue    # the runner scrubbed a secret here; the record may name its variable
+        if not COMMAND_PLACEHOLDER.search(mine) or \
+                not re.fullmatch(_token_pattern(mine, COMMAND_PLACEHOLDER), theirs, re.S):
+            return False
+        if '<REDACTED>' in theirs:
             continue
-        if re.fullmatch(_token_pattern(theirs, redacted), mine, re.S):
-            continue
-        return False
-    return True
+        # A placeholder for a value the runner recorded in the clear: only an option's value
+        # shaped like an endpoint, a number or a hex word - never the executable, the
+        # subcommand or a test selector, which must be the literal tokens that ran.
+        if index <= command_start or not _placeholder_value(ran, index):
+            return False
+        stood_in += 1
+    return 2 * stood_in < len(ran)
+
+
+# Option values a placeholder may stand for when the runner kept them: endpoints, numbers and
+# hex words (an RPC URL, a fork block, an address). Selectors and paths are never among them.
+PLACEHOLDER_VALUE = re.compile(r'(?i)(?:https?|wss?)://\S+|0x[0-9a-f]+|[0-9]+')
+SELECTOR_OPTIONS = {'--match-test', '--mt', '--match-contract', '--mc', '--match-path', '--mp',
+                    '--no-match-test', '--nmt', '--no-match-contract', '--nmc',
+                    '--no-match-path', '--nmp', '-k', '--grep', '-g', '--fgrep', '-run', '--run',
+                    '--test', '--bin', '--lib', '--example', '--package', '-p', '--filter',
+                    '--exact', '--skip', '-m', '--testNamePattern', '-t'}
+
+
+def _placeholder_value(ran, index):
+    """Whether ran[index] is the value of a non-selector option and looks like a plain value."""
+    token = ran[index]
+    if token.startswith('-') and '=' in token:
+        option, value = token.split('=', 1)
+        return option not in SELECTOR_OPTIONS and bool(PLACEHOLDER_VALUE.fullmatch(value))
+    previous = ran[index - 1] if index > 0 else ''
+    return (previous.startswith('-') and '=' not in previous
+            and previous not in SELECTOR_OPTIONS and bool(PLACEHOLDER_VALUE.fullmatch(token)))
 
 
 # A secret handed to a tool on its command line: `--private-key 0x…`, `--etherscan-api-key …`.
@@ -4725,7 +4770,12 @@ SECRET_FLAG = re.compile(
     r'password|keystore-?password|unlocked-?password|api-?key|etherscan-?api-?key|'
     r'auth-?token|access-?token|secret(?:-?key)?)(?:=|\s+)(["\']?)([^\s"\']+)')
 QUERY_STRING_SECRET = re.compile(
-    r'(?i)[?&](?:api[_-]?key|apikey|key|token|secret|access[_-]?token|auth)=([^&\s"\'#]+)')
+    r'(?i)[?&](?:api[_-]?key|apikey|d?key|token|secret|access[_-]?token|auth)=([^&\s"\'#]+)')
+# A 32-byte hex value given to a key-like name: `ETH_KEY=0x…`, `DEPLOYER_PK: …`. A bare 32-byte
+# hex is as often a transaction hash or a storage slot, so only the name makes it a key.
+HEX_KEY_ASSIGNMENT = re.compile(
+    r'(?i)\b[A-Za-z0-9_]*(?:key|pk|priv|signer|deployer|wallet)[A-Za-z0-9_]*["\']?\s*[:=]\s*'
+    r'["\']?(?:0x)?[0-9a-f]{64}\b')
 SECRET_PLACEHOLDER = re.compile(
     r'\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<[^<>]*>|%[A-Za-z_]\w*%|\*+|\.\.\.|x{3,}|(?i:redacted)')
 
@@ -4765,6 +4815,8 @@ def secret_kinds(text):
         kinds.append('a key in a URL query string')
     if any(not _is_secret_placeholder(m.group(2)) for m in SECRET_FLAG.finditer(text)):
         kinds.append('a secret passed as a command-line flag')
+    if HEX_KEY_ASSIGNMENT.search(text):
+        kinds.append('a private key assigned to a key-named variable')
     if any(_opaque_secret(m.group(3)) for m in SECRET_KEY_VALUE.finditer(text)) or \
             any(_opaque_secret(m.group(2)) for m in UNQUOTED_SECRET_KEY_VALUE.finditer(text)):
         kinds.append('a secret assigned to a key-named variable')
@@ -4832,6 +4884,7 @@ def _check_verified_evidence(row, prefix, run, errors):
                       'what a compile error, a crash or a kill (137) looks like, so it shows '
                       'nothing')
     resolved = {}
+    bookkeeping = _bookkeeping_inodes(run)
     for key in ('log_path', 'poc_path'):
         value = evidence.get(key)
         if not has_text(value):
@@ -4850,6 +4903,11 @@ def _check_verified_evidence(row, prefix, run, errors):
                           'the run keeps about itself; point it at the PoC test and at the log '
                           'that test printed')
             continue
+        info = target.stat()
+        if (info.st_dev, info.st_ino) in bookkeeping:
+            errors.append(prefix + ': evidence.' + key + ' is a hard link to a file the run keeps '
+                          'about itself; point it at the PoC test and at the log that test printed')
+            continue
         resolved[key] = target
     if len(resolved) == 2 and resolved['log_path'] == resolved['poc_path']:
         errors.append(prefix + ': evidence.log_path and evidence.poc_path name the same file; the '
@@ -4867,9 +4925,11 @@ def _check_verified_evidence(row, prefix, run, errors):
         errors.append(prefix + ': verified requires revision to be the commit hash the PoC ran '
                       'against (7 to 64 hex characters), not ' + repr(row['revision'][:60]))
     elif revision:
-        pinned = [value.lower() for value in (commit, (entry or {}).get('revision'))
-                  if isinstance(value, str) and COMMIT_HASH.fullmatch(value.lower())]
-        if not any(value.startswith(revision) for value in pinned):
+        # The same rule as the experiment gate: a hex prefix of the run's commit, of the
+        # experiment's revision, or of the commit the paired run observed (a deployed revision
+        # other than the one the run was opened at).
+        pinned = (commit, (entry or {}).get('revision'), (result or {}).get('source_revision'))
+        if not any(_experiment_gate().same_revision(revision, value) for value in pinned):
             errors.append(prefix + ': revision ' + revision[:16] + ' is neither the run\'s commit ('
                           + (str(commit)[:12] if commit else 'none recorded') + ') nor the '
                           'revision of its executed experiment; a verified record names the '
@@ -4897,16 +4957,41 @@ def _check_verified_evidence(row, prefix, run, errors):
 
 DEPLOYMENT_EVIDENCE_DIR = 'deployments'
 DEPLOYMENT_TOOL = 'bounty.py verify-deployment'
+# What record_sha256 is for, written into every record so nobody reads more into it.
+DEPLOYMENT_DIGEST_MEANING = ('record_sha256 detects accidental edits to this file; it is not a '
+                             'signature, and a file rewritten deliberately can carry a matching one')
+# Local development chains. Code read there is a deployment the hunter made, so it can set up a
+# local reproduction but never show what the program deployed.
+DEV_CHAIN_IDS = {31337: 'anvil / hardhat', 1337: 'ganache / geth --dev'}
+# Where builds land: Foundry out/, Hardhat artifacts/, Truffle and Brownie build/, Ape .build/,
+# Cargo and Anchor target/ (target/deploy/*.so), zkSync zkout/ and artifacts-zk/.
+BUILD_OUTPUT_DIRS = ('out', 'artifacts', 'build', '.build', 'target', 'zkout', 'artifacts-zk')
 EVM_SOURCE_SUFFIXES = ('.sol', '.vy')
 # Source that is deployed as contract code on some chain. `not-applicable` says no deployed code
-# is involved, which is never true of these, whatever the path carries after the file name.
-ONCHAIN_SOURCE_SUFFIXES = EVM_SOURCE_SUFFIXES + ('.yul', '.huff', '.fe', '.move', '.cairo',
-                                                 '.fc', '.func', '.tolk')
+# is involved, which is never true of these, whatever the path carries after the file name. One
+# set, shared with the coverage floor, so the two can never disagree about what is on chain.
+ONCHAIN_SOURCE_SUFFIXES = ONCHAIN_SUFFIXES
 # Rust is contract code only in a crate built against an on-chain runtime; a relayer or a
-# keeper in Rust is off-chain and may keep `not-applicable`.
+# keeper in Rust is off-chain and may keep `not-applicable`. Cargo spells a dependency
+# `name = …`, `name.workspace = true`, `"name" = …`, `[dependencies.name]`, or renames it with
+# `package = "name"`; all of them count.
 ONCHAIN_RUST_CRATE = re.compile(
-    r'(?m)^\s*(?:\[(?:[\w.-]*\.)?dependencies\.)?(anchor-lang|solana-program|pinocchio|'
-    r'cosmwasm-std|ink|ink_lang)\s*[=\]]')
+    r'(?m)^\s*(?:\[(?:[\w.\'"-]*\.)?dependencies\.)?["\']?(anchor-lang|solana-program|pinocchio|'
+    r'cosmwasm-std|ink|ink_lang)["\']?\s*[=\].]|\bpackage\s*=\s*["\'](anchor-lang|solana-program|'
+    r'pinocchio|cosmwasm-std|ink)["\']')
+# What makes a crate the program itself rather than a client of one: an entrypoint, the
+# Anchor `#[program]` module, a CosmWasm or ink! entry, or a cdylib build.
+PROGRAM_ENTRY_MARKER = re.compile(
+    r'\bentrypoint!\s*\(|\bprogram_entrypoint!\s*\(|\blazy_program_entrypoint!\s*\(|'
+    r'#\[\s*program\s*\]|#\[\s*(?:cfg_attr\([^)]*,\s*)?entry_point\b|'
+    r'#\[\s*ink(?:::|_lang::)contract\b|#\[\s*ink\s*\(\s*storage\s*\)')
+CDYLIB = re.compile(r'(?m)^\s*crate-type\s*=\s*\[[^\]]*["\']cdylib["\']')
+# Dependencies only an off-chain client has: an RPC client, an async runtime, an HTTP client.
+OFFCHAIN_CLIENT_CRATE = re.compile(
+    r'(?m)^\s*(?:\[(?:[\w.\'"-]*\.)?dependencies\.)?["\']?(solana-client|solana-rpc-client|'
+    r'solana-rpc-client-api|anchor-client|tokio|reqwest|cosmrs|tonic|hyper|axum|actix-web|'
+    r'subxt|ethers|alloy)["\']?\s*[=\].]')
+CRATE_SCAN_MAX_FILES = 400
 ONCHAIN_RUST_LABELS = {'anchor-lang': 'Solana (Anchor)', 'solana-program': 'Solana',
                        'pinocchio': 'Solana', 'cosmwasm-std': 'CosmWasm', 'ink': 'ink!',
                        'ink_lang': 'ink!'}
@@ -4952,16 +5037,40 @@ def _affected_file(entry):
     return ''
 
 
-def _crate_manifest(root, rel):
-    """The Cargo.toml of the crate a Rust file belongs to, read from the target checkout."""
+def _crate_of(root, rel):
+    """(crate directory, Cargo.toml text) of the crate a Rust file belongs to, or (None, None)."""
     if not root or not Path(root).is_dir():
-        return None
+        return None, None
     for parent in Path(rel).parents:
         text = read_target_file(root, parent / 'Cargo.toml', errors='replace',
                                 max_bytes=200_000)
         if text is not None and '[package]' in text:
-            return text
-    return None
+            return parent, text
+    return None, None
+
+
+def _crate_manifest(root, rel):
+    """The Cargo.toml of the crate a Rust file belongs to, read from the target checkout."""
+    return _crate_of(root, rel)[1]
+
+
+def _crate_has_entry(root, crate_dir):
+    """Whether any Rust source of the crate declares a program entrypoint."""
+    base = Path(root).resolve() / crate_dir
+    seen = 0
+    for folder, dirs, files in os.walk(base):
+        dirs[:] = sorted(d for d in dirs if d not in ('target', '.git', 'node_modules'))
+        for name in sorted(files):
+            if not name.endswith('.rs'):
+                continue
+            seen += 1
+            if seen > CRATE_SCAN_MAX_FILES:
+                return False
+            rel = (Path(folder) / name).resolve().relative_to(Path(root).resolve())
+            text = read_target_file(root, rel, errors='replace', max_bytes=500_000)
+            if text and PROGRAM_ENTRY_MARKER.search(text):
+                return True
+    return False
 
 
 def _onchain_source(path, target_root):
@@ -4971,14 +5080,24 @@ def _onchain_source(path, target_root):
         return 'contract source'
     if suffix != '.rs':
         return ''
-    if 'programs' in [part.lower() for part in Path(path).parts[:-1]]:
-        return 'a Solana program: programs/ is the Anchor workspace layout'
-    manifest = _crate_manifest(target_root, path)
-    found = ONCHAIN_RUST_CRATE.search(manifest.lower()) if manifest else None
-    if found:
-        return 'a ' + ONCHAIN_RUST_LABELS[found.group(1)] + ' contract crate (its Cargo.toml ' \
-               'depends on ' + found.group(1) + ')'
-    return ''
+    crate_dir, manifest = _crate_of(target_root, path)
+    if manifest is None:
+        # No manifest to read: the Anchor layout is the only evidence left.
+        if 'programs' in [part.lower() for part in Path(path).parts[:-1]]:
+            return 'a Solana program: programs/ is the Anchor workspace layout'
+        return ''
+    found = ONCHAIN_RUST_CRATE.search(manifest.lower())
+    if not found:
+        # A keeper under programs/ whose manifest names no on-chain runtime is off-chain code.
+        return ''
+    runtime = found.group(1) or found.group(2)
+    if not CDYLIB.search(manifest) and not _crate_has_entry(target_root, crate_dir) and \
+            OFFCHAIN_CLIENT_CRATE.search(manifest.lower()):
+        # A relayer that uses solana-program's types next to an RPC client and declares no
+        # entrypoint is a client of the program, not the program.
+        return ''
+    return 'a ' + ONCHAIN_RUST_LABELS[runtime] + ' contract crate (its Cargo.toml depends on ' \
+        + runtime + '; a client crate also depends on an RPC client and declares no entrypoint)'
 
 
 def _check_not_applicable(row, prefix, run, errors):
@@ -5016,12 +5135,19 @@ def _check_not_applicable(row, prefix, run, errors):
 
 
 def _check_deployment_evidence(row, prefix, run, errors):
-    """`exact` must be backed by verify-deployment output saved in this run, never typed in.
+    """`exact` must be backed by verify-deployment output saved in this run, not a typed status.
 
-    A file is evidence only as verify-deployment wrote it: its tool marker, the chain and block
-    (or slot) the code was read at, a comparison that came back exact, and a digest over the
-    whole record, so a hand-typed or hand-edited file is refused. The artifact it compared must
-    still exist with the bytes it had, or the match cannot be rechecked.
+    A file counts as verify-deployment wrote it: its tool marker, the chain and block (or slot)
+    the code was read at, a comparison that came back exact, and a digest over the whole record.
+    The gate then reruns the comparison: the runtime code the record stored against the artifact,
+    which must be a build in the target checkout's own build output and still hold the bytes it
+    had. The address must be one program.json lists, on a chain it lists, and never a local
+    development chain.
+
+    Threat model: this stops a hunter - or an agent - from typing a status, editing partial into
+    exact, citing a local deployment or an unrelated contract, or comparing against a file that
+    is not a build. It cannot stop a deliberate forgery inside the hunter's own private run: the
+    digest detects accidental edits, it is not a signature, and nothing here re-reads the chain.
     """
     status = row['deployment_status']
     if status == 'not-applicable':
@@ -5036,7 +5162,18 @@ def _check_deployment_evidence(row, prefix, run, errors):
         errors.append(prefix + ': deployment_status exact requires deployment_evidence naming the '
                       'file(s) verify-deployment --run wrote under deployments/')
         return
+    if (run / DEPLOYMENT_EVIDENCE_DIR).is_symlink():
+        errors.append(prefix + ': the run\'s deployments/ folder is a symlink; verify-deployment '
+                      'writes a real folder inside the run, so rerun it with --run')
+        return
     folder = (run / DEPLOYMENT_EVIDENCE_DIR).resolve()
+    listed, chains, program_problem = _program_bindings(run)
+    if program_problem:
+        errors.append(prefix + ': program.json ' + program_problem)
+    try:
+        meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
+    except (OSError, ValueError):
+        meta = {}
     for name in files:
         label = prefix + ': deployment_evidence ' + repr(name)
         rel = Path(name)
@@ -5069,8 +5206,28 @@ def _check_deployment_evidence(row, prefix, run, errors):
         if data.get('tool') != DEPLOYMENT_TOOL or data.get('record_sha256') != \
                 deployment_digest(data):
             errors.append(label + ' was not written by verify-deployment --run, or was edited '
-                          'after it was; rerun verify-deployment --address ' + address
-                          + ' --artifact <build> --run <run>')
+                          'after it was (its record_sha256 no longer matches - a check for '
+                          'accidental edits, not a signature); rerun verify-deployment --address '
+                          + address + ' --artifact <build> --run <run>')
+            continue
+        stem = _evidence_stem(address)
+        if listed is not None and stem not in listed:
+            errors.append(label + ': ' + address + ' is not among program.json\'s '
+                          'in_scope_addresses; deployment evidence is about an address the '
+                          'program lists, so compare that one (or add it to program.json from the '
+                          'program\'s published address list)')
+            continue
+        chain_id = data.get('chain_id')
+        if EVM_ADDRESS.fullmatch(address) and type(chain_id) is int and chain_id in DEV_CHAIN_IDS:
+            errors.append(label + ' was read on chain id ' + str(chain_id) + ' ('
+                          + DEV_CHAIN_IDS[chain_id] + '), a local development chain: that is a '
+                          'deployment you made, which can set up a local reproduction but never '
+                          'shows what the program deployed. Verify the program\'s own address on '
+                          'its own chain, or leave deployment_status unknown')
+            continue
+        if chains is not None and EVM_ADDRESS.fullmatch(address) and chain_id not in chains:
+            errors.append(label + ' was read on chain id ' + str(chain_id) + ', which program.json\'s '
+                          'chain_ids does not list')
             continue
         if data.get('deployment_status') != 'exact':
             errors.append(label + ' reports ' + str(data.get('deployment_status'))
@@ -5098,9 +5255,118 @@ def _check_deployment_evidence(row, prefix, run, errors):
             errors.append(label + ': the compared artifact ' + artifact['path'] + ' no longer '
                           'exists, so the match cannot be rechecked; keep the build artifact and '
                           'rerun verify-deployment')
-        elif _sha256_file(built) != artifact['sha256']:
+            continue
+        if _sha256_file(built) != artifact['sha256']:
             errors.append(label + ': the artifact changed after it was compared; rerun '
                           'verify-deployment')
+            continue
+        where = _artifact_location_problem(meta, built)
+        if where:
+            errors.append(label + ': the compared artifact ' + artifact['path'] + ' ' + where
+                          + '. Build the target in its checkout (run.json target_root) and pass '
+                          'the artifact the build wrote, not a file assembled from chain code')
+            continue
+        problem = _recompare_deployment(data, built)
+        if problem:
+            errors.append(label + ': ' + problem)
+
+
+def _program_bindings(run):
+    """(listed addresses, chain ids, problem) from program.json; None where it lists nothing.
+
+    `in_scope_addresses` holds addresses or {"address", "chain_id"} objects; `chain_ids` holds
+    integers. A program.json that lists neither binds nothing - the gate cannot invent a scope.
+    """
+    path = Path(run) / 'program.json'
+    if not path.is_file():
+        return None, None, ''
+    try:
+        program = read_json(path)
+    except (OSError, ValueError):
+        return None, None, 'is not valid JSON'
+    if not isinstance(program, dict):
+        return None, None, 'must be an object'
+    listed, chains = set(), set()
+    addresses = program.get('in_scope_addresses')
+    if addresses is not None and not isinstance(addresses, list):
+        return None, None, 'in_scope_addresses must be an array'
+    for item in addresses or []:
+        address = item.get('address') if isinstance(item, dict) else item
+        chain = item.get('chain_id') if isinstance(item, dict) else None
+        stem = _evidence_stem(address.strip()) if isinstance(address, str) else None
+        if stem is None:
+            return None, None, ('in_scope_addresses holds ' + repr(item)[:80] + ', which is neither '
+                                'an EVM address nor a base58 program id')
+        listed.add(stem)
+        if type(chain) is int:
+            chains.add(chain)
+    chain_ids = program.get('chain_ids')
+    if chain_ids is not None and (not isinstance(chain_ids, list)
+                                  or not all(type(c) is int for c in chain_ids)):
+        return None, None, 'chain_ids must be an array of integers'
+    chains.update(chain_ids or [])
+    return (listed or None), (chains or None), ''
+
+
+def _build_output_dirs(root):
+    """Build output directory names for this checkout, Foundry's configured `out` included."""
+    names = set(BUILD_OUTPUT_DIRS)
+    text = read_target_file(root, 'foundry.toml', errors='replace', max_bytes=200_000) or ''
+    for match in re.finditer(r'(?m)^\s*out\s*=\s*["\']([^"\']+)["\']', text):
+        first = Path(match.group(1).strip()).parts
+        if first and first[0] not in ('.', '..', '/'):
+            names.add(first[0])
+    return names
+
+
+def _artifact_location_problem(meta, built):
+    """Why an artifact is not a build of the target, or '' when it sits in its build output."""
+    root = meta.get('target_root') if isinstance(meta, dict) else None
+    if not has_text(root) or not Path(root).is_dir():
+        return 'cannot be placed: run.json records no target checkout'
+    if built.is_symlink():
+        return 'is a symlink'
+    root, resolved = Path(root).resolve(), built.resolve()
+    if root not in resolved.parents:
+        return 'is not inside the target checkout ' + str(root)
+    parts = resolved.relative_to(root).parts[:-1]
+    if not any(part in _build_output_dirs(root) for part in parts):
+        return ('is not under a build output directory of the target ('
+                + ', '.join(sorted(BUILD_OUTPUT_DIRS)) + ')')
+    return ''
+
+
+def _recompare_deployment(data, built):
+    """Rerun the recorded comparison from the record's stored code; '' when it is still exact."""
+    address = data.get('address', '')
+    if not EVM_ADDRESS.fullmatch(address):
+        try:
+            local = built.read_bytes()
+        except OSError as exc:
+            return 'the program build cannot be read again: ' + str(exc)
+        if solana_executable_hash(local) != data.get('executable_hash'):
+            return ('rehashing the program build does not give the executable_hash the record '
+                    'holds; rerun verify-deployment')
+        return ''
+    stored = data.get('compared_code')
+    if not isinstance(stored, dict) or not has_text(stored.get('hex')):
+        return ('the record stores no compared runtime code, so the comparison cannot be rerun '
+                '(a record from before this check); rerun verify-deployment --run')
+    try:
+        code = _code_bytes(stored['hex'])
+        if load_keccak().keccak_hex(code) != stored.get('keccak256'):
+            return 'the stored runtime code does not hash to the keccak256 recorded beside it'
+        details = read_artifact_details(built)
+        comparison = compare_bytecode(stored['hex'], details['code'],
+                                      details['immutable_references'], details['link_references'],
+                                      appended_immutables=details.get('appended_immutables'))
+    except (OSError, ValueError) as exc:
+        return 'rerunning the comparison failed: ' + str(exc)
+    if comparison.get('status') != 'exact':
+        return ('rerunning the comparison between the stored runtime and the artifact gives '
+                + str(comparison.get('status')) + ' (' + str(comparison.get('reason', ''))[:200]
+                + '), not exact')
+    return ''
 
 
 def _check_escalation_submission(row, prefix, errors):
@@ -5381,6 +5647,94 @@ def _check_lead_ledger(run, records, errors):
                       'document')
 
 
+def _bookkeeping_inodes(run):
+    """(device, inode) of every file the run keeps about itself, to see through hard links."""
+    found = set()
+    paths = [run / name for name in RUN_BOOKKEEPING]
+    for folder in RUN_BOOKKEEPING_DIRS:
+        if (run / folder).is_dir() and not (run / folder).is_symlink():
+            paths.extend(path for path in (run / folder).rglob('*'))
+    for path in paths:
+        try:
+            if path.is_file() and not path.is_symlink():
+                info = path.stat()
+                found.add((info.st_dev, info.st_ino))
+        except OSError:
+            continue
+    return found
+
+
+def _check_distinct_evidence(run, records, errors):
+    """One PoC per finding: two verified records never stand on the same PoC or the same log.
+
+    Compared by content, so a copy under another name is the same file. A second record built
+    on one experiment is a second report of one demonstration.
+    """
+    seen = {}
+    for i, row in enumerate(records):
+        if not isinstance(row, dict) or row.get('status') != SUBMISSION_STATUS:
+            continue
+        evidence = row.get('evidence') if isinstance(row.get('evidence'), dict) else {}
+        for key in ('poc_path', 'log_path'):
+            value = evidence.get(key)
+            if not has_text(value) or Path(value).is_absolute():
+                continue
+            target = (run / value).resolve()
+            if run not in target.parents or not target.is_file():
+                continue
+            try:
+                digest = _sha256_file(target)
+            except OSError:
+                continue
+            seen.setdefault((key, digest), []).append(f'finding[{i}] ({row.get("id")})')
+    for (key, _), where in sorted(seen.items()):
+        if len(where) > 1:
+            errors.append(', '.join(where) + ': evidence.' + key + ' files have identical content; '
+                          'each verified finding stands on its own PoC and its own log')
+
+
+def _check_ledger_blockers(run, meta, records, errors):
+    """An open record parked behind an experiments.json blocker nobody reproduced."""
+    gate = _experiment_gate()
+    try:
+        by_id = gate.load_ledger(run)[0]
+    except (OSError, ValueError, json.JSONDecodeError):
+        return
+    for i, row in enumerate(records):
+        if not isinstance(row, dict) or row.get('status') not in OPEN_STATUSES:
+            continue
+        entry = by_id.get(row.get('id')) if isinstance(row.get('id'), str) else None
+        if not isinstance(entry, dict) or entry.get('status') != 'blocked':
+            continue
+        state, reason, _ = gate.check_entry(run, meta, row, entry)
+        if state == 'unsubstantiated-blocker':
+            errors.append(f'finding[{i}]: experiments.json records a blocker for {row.get("id")} '
+                          'that is not evidence: ' + reason)
+
+
+def _ledger_unverified_blockers(run, records):
+    """Open records whose experiments.json entry is a blocker without its evidence."""
+    gate = _experiment_gate()
+    try:
+        by_id = gate.load_ledger(run)[0]
+        meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+    found = []
+    for row in records:
+        if not isinstance(row, dict) or row.get('status') not in OPEN_STATUSES:
+            continue
+        entry = by_id.get(row.get('id')) if isinstance(row.get('id'), str) else None
+        if not isinstance(entry, dict) or entry.get('status') != 'blocked':
+            continue
+        state, reason, _ = gate.check_entry(run, meta, row, entry)
+        if state == 'unsubstantiated-blocker':
+            found.append({'id': row['id'], 'surface': _record_surface(row),
+                          'claim': str(entry.get('reason', ''))[:300], 'reason': reason,
+                          'source': 'experiments.json'})
+    return found
+
+
 def _check_submission_experiments(run, meta, records, errors):
     """Every verified record stands on its own executed, paired experiment.
 
@@ -5450,6 +5804,8 @@ def validate(run, submission=False, ledger=True):
         _check_blocked_leads(records, errors)
         _check_audit_inventory(run, errors)
         _check_submission_experiments(run, meta, records, errors)
+        _check_ledger_blockers(run, meta, records, errors)
+        _check_distinct_evidence(run, [row for row in records if isinstance(row, dict)], errors)
     seen, targets = set(), 0
     for i, row in enumerate(records):
         prefix = f'finding[{i}]'
@@ -5748,7 +6104,8 @@ def _harvest_slug(repo, meta, require_github=True):
         if not key and root and Path(root).is_dir():
             key = project_for_repo(root)
     if not key:
-        raise ValueError('No repository to harvest: pass --repo owner/repo')
+        raise ValueError('No repository to harvest: pass --repo owner/repo, or --empty-reason '
+                         '"<why>" when the project has no public issue tracker to search')
     if not require_github:
         # A saved search is already retrieved, so the host it came from need not be GitHub.
         return key
@@ -5844,7 +6201,15 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
     """
     run = Path(run).resolve()
     meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
-    slug = _harvest_slug(repo, meta, require_github=not from_file)
+    no_tracker = None
+    try:
+        slug = _harvest_slug(repo, meta, require_github=not from_file)
+    except ValueError as exc:
+        # No repository to search, or one on a host this cannot query: with a stated reason
+        # that is a recorded result, made without a network call; without one it is an error.
+        if from_file or not has_text(empty_reason):
+            raise
+        slug, no_tracker = None, str(exc)
     token = os.environ.get(token_env) if token_env else None
     skipped = []
     by_number, truncated = {}, False
@@ -5857,7 +6222,9 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
             if how not in row['matched_by']:
                 row['matched_by'].append(how)
 
-    if from_file:
+    if no_tracker is not None:
+        used = sorted(set(name for name in labels or [] if has_text(name)), key=str.lower)
+    elif from_file:
         payload = read_json(Path(from_file).expanduser())
         items = payload.get('items') if isinstance(payload, dict) else payload
         if not isinstance(items, list):
@@ -5888,7 +6255,8 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
     kept = previous['triage'] if isinstance(previous.get('triage'), dict) else {}
     reason = empty_reason if has_text(empty_reason) else previous.get('empty_reason', '')
     result = {
-        'repo': slug, 'source': 'from-file' if from_file else 'github-search',
+        'repo': slug, 'source': ('no-tracker' if no_tracker is not None else
+                                 'from-file' if from_file else 'github-search'),
         'harvested_at': datetime.now(timezone.utc).isoformat(),
         'labels': used, 'labels_skipped': skipped, 'not_planned': bool(include_not_planned),
         'candidate_count': len(candidates), 'truncated': truncated,
@@ -7635,8 +8003,37 @@ def evm_instructions(raw):
         pc += 1 + width
 
 
+# Instructions after which execution never falls through: STOP, JUMP, RETURN, REVERT, INVALID,
+# SELFDESTRUCT. What follows one is reachable only through a JUMPDEST.
+TERMINATING_OPCODES = {0x00, 0x56, 0xf3, 0xfd, 0xfe, 0xff}
+OP_JUMPDEST = 0x5b
+
+
+def reachable_instructions(raw):
+    """Instructions that can execute: from pc 0, and after a terminator only from a JUMPDEST.
+
+    A linear sweep also decodes data - Solidity's embedded creation code and constants, the
+    immutables Vyper appends, a metadata hash - and an 0xf4 byte there reads as DELEGATECALL.
+    Skipping to the next JUMPDEST after a terminator drops those bytes; code that can run is
+    never skipped, because a jump can only land on a JUMPDEST.
+    """
+    pc, live = 0, True
+    while pc < len(raw):
+        op = raw[pc]
+        if not live:
+            if op != OP_JUMPDEST:
+                pc += 1
+                continue
+            live = True
+        width = op - 0x5f if 0x60 <= op <= 0x7f else 0
+        yield pc, op, raw[pc + 1:pc + 1 + width]
+        pc += 1 + width
+        if op in TERMINATING_OPCODES:
+            live = False
+
+
 def has_delegatecall(raw):
-    return any(op == OP_DELEGATECALL for _, op, _ in evm_instructions(raw))
+    return any(op == OP_DELEGATECALL for _, op, _ in reachable_instructions(raw))
 
 
 def pushes_selector(raw, selector_hex):
@@ -7805,8 +8202,91 @@ def _zero_hex_ranges(code_hex, ranges):
     return prefix + body
 
 
-def compare_bytecode(onchain_hex, artifact_hex, immutable_references=None, link_references=None):
-    """Decide exact / partial / mismatch, masking only what the compiler says is variable."""
+def _cbor_item(blob, pos, depth=0):
+    """One CBOR item at pos as (value, next pos): the subset Vyper's metadata footer uses."""
+    if depth > 8 or pos >= len(blob):
+        raise ValueError('cbor item out of range')
+    head = blob[pos]
+    major, info = head >> 5, head & 0x1f
+    pos += 1
+    if info < 24:
+        arg = info
+    elif info in (24, 25, 26, 27):
+        width = 1 << (info - 24)
+        if pos + width > len(blob):
+            raise ValueError('cbor length out of range')
+        arg = int.from_bytes(blob[pos:pos + width], 'big')
+        pos += width
+    else:
+        raise ValueError('indefinite or reserved cbor length')
+    if major == 0:
+        return arg, pos
+    if major == 1:
+        return -1 - arg, pos
+    if major in (2, 3):
+        if pos + arg > len(blob):
+            raise ValueError('cbor string out of range')
+        data = blob[pos:pos + arg]
+        return (bytes(data) if major == 2 else data.decode('utf-8')), pos + arg
+    if major in (4, 5):
+        if arg > len(blob):
+            raise ValueError('cbor container larger than its input')
+        if major == 4:
+            items = []
+            for _ in range(arg):
+                item, pos = _cbor_item(blob, pos, depth + 1)
+                items.append(item)
+            return items, pos
+        mapping = {}
+        for _ in range(arg):
+            key, pos = _cbor_item(blob, pos, depth + 1)
+            value, pos = _cbor_item(blob, pos, depth + 1)
+            if isinstance(key, (str, int)):
+                mapping[key] = value
+        return mapping, pos
+    raise ValueError('unsupported cbor type')
+
+
+def vyper_metadata(creation_hex):
+    """The footer Vyper >= 0.3.10 appends to initcode, or None.
+
+    It is CBOR - [runtime size, data section sizes, immutables size, {"vyper": version}], with an
+    integrity hash first in later releases - followed by its own length in two bytes, the two
+    included. The immutables size is how many bytes Vyper writes after the runtime at deployment.
+    """
+    try:
+        raw = _code_bytes(creation_hex)
+    except ValueError:
+        return None
+    if len(raw) < 6:
+        return None
+    length = int.from_bytes(raw[-2:], 'big')
+    if not 6 <= length <= len(raw):
+        return None
+    blob = raw[-length:-2]
+    try:
+        value, end = _cbor_item(blob, 0)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if end != len(blob) or not isinstance(value, list) or len(value) < 4:
+        return None
+    tag, immutables, data_sizes, runtime = value[-1], value[-2], value[-3], value[-4]
+    if not isinstance(tag, dict) or 'vyper' not in tag or type(immutables) is not int or \
+            type(runtime) is not int or not isinstance(data_sizes, list) or immutables < 0:
+        return None
+    version = tag['vyper']
+    return {'version': '.'.join(str(part) for part in version) if isinstance(version, list)
+            else str(version), 'runtime_size': runtime, 'immutables_size': immutables}
+
+
+def compare_bytecode(onchain_hex, artifact_hex, immutable_references=None, link_references=None,
+                     appended_immutables=None):
+    """Decide exact / partial / mismatch, masking only what the compiler says is variable.
+
+    `appended_immutables` is the size Vyper's own metadata gives for the immutables it writes
+    after the runtime; those bytes are recorded in masked_ranges, and every byte of the runtime
+    itself is still compared.
+    """
     live_raw = _code_bytes(onchain_hex)
     ranges, problems = [], []
     for kind, refs in (('immutable', immutable_references), ('library', link_references)):
@@ -7841,6 +8321,20 @@ def compare_bytecode(onchain_hex, artifact_hex, immutable_references=None, link_
         extra['masking_skipped'] = problems
     if not live:
         return {'status': 'mismatch', 'reason': 'no runtime code at the address'}
+    tail = len(live) - len(local)
+    # Vyper's runtime carries no solc metadata; with a solc tail stripped this is not Vyper.
+    vyper_shaped = tail > 0 and not live_meta and not local_meta and live[:len(local)] == local
+    if (type(appended_immutables) is int and appended_immutables > 0
+            and tail == appended_immutables and vyper_shaped):
+        masked.append({'kind': 'vyper-immutables', 'start': len(local), 'length': tail,
+                       'onchain_value': '0x' + live[len(local):].hex()})
+        return dict({'status': 'exact', 'bytes': len(local),
+                     'reason': ('runtime bytecode matches; the ' + str(tail) + ' bytes after it are '
+                                'the immutables Vyper writes at deployment, sized by the '
+                                'artifact\'s Vyper metadata - check masked_ranges holds the '
+                                'values you expect'),
+                     'metadata_stripped': [live_meta, local_meta]},
+                    **dict(extra, masked_ranges=masked))
     if live == local:
         reason = 'runtime bytecode matches after metadata strip'
         if masked:
@@ -7848,6 +8342,14 @@ def compare_bytecode(onchain_hex, artifact_hex, immutable_references=None, link_
                        'declared; check masked_ranges holds the on-chain values you expect')
         return dict({'status': 'exact', 'reason': reason, 'bytes': len(live),
                      'metadata_stripped': [live_meta, local_meta]}, **extra)
+    if vyper_shaped and tail % 32 == 0:
+        return dict({'status': 'partial', 'bytes': len(live), 'local_bytes': len(local),
+                     'reason': (f'the deployed runtime is this build followed by {tail} more '
+                                'bytes - the way Vyper appends immutables at deployment - but the '
+                                'artifact carries no Vyper metadata stating their size. Pass an '
+                                'artifact that holds the creation bytecode of a Vyper >= 0.3.10 '
+                                'build (Foundry and `vyper -f bytecode,bytecode_runtime` both '
+                                'give it) so the tail can be checked')}, **extra)
     if len(live) == len(local):
         differing = sum(1 for a, b in zip(live, local) if a != b)
         return dict({'status': 'partial', 'bytes': len(live), 'differing_bytes': differing,
@@ -7879,13 +8381,35 @@ def read_artifact_details(path):
                        ('evm.bytecode', evm.get('bytecode'))):
         runtime = key.endswith('deployedBytecode')
         if isinstance(value, dict) and has_text(value.get('object')):
-            return {'code': value['object'], 'field': key,
-                    'immutable_references': value.get('immutableReferences') if runtime else None,
-                    'link_references': value.get('linkReferences') if runtime else None}
+            return _with_vyper(data, evm, runtime, {
+                'code': value['object'], 'field': key,
+                'immutable_references': value.get('immutableReferences') if runtime else None,
+                'link_references': value.get('linkReferences') if runtime else None})
         if has_text(value):
-            return {'code': value, 'field': key, 'immutable_references': None,
-                    'link_references': data.get('deployedLinkReferences') if runtime else None}
+            return _with_vyper(data, evm, runtime, {
+                'code': value, 'field': key, 'immutable_references': None,
+                'link_references': data.get('deployedLinkReferences') if runtime else None})
     raise ValueError('no deployedBytecode/bytecode found in the artifact')
+
+
+def _with_vyper(data, evm, runtime, details):
+    """Add the Vyper footer of the artifact's creation code, when it has one, to its details."""
+    details.update(vyper=None, appended_immutables=None)
+    if not runtime:
+        return details
+    for value in (data.get('bytecode'), evm.get('bytecode')):
+        creation = value.get('object') if isinstance(value, dict) else value
+        meta = vyper_metadata(creation) if has_text(creation) else None
+        if meta:
+            try:
+                size = len(_code_bytes(details['code']))
+            except ValueError:
+                return details
+            # Only the footer of this very build: its runtime size must be the runtime's.
+            if meta['runtime_size'] == size:
+                details.update(vyper=meta, appended_immutables=meta['immutables_size'] or None)
+            return details
+    return details
 
 
 def read_artifact(path):
@@ -7912,9 +8436,11 @@ def record_deployment(run, result):
     if path.is_symlink():
         raise ValueError(f'{path} is a symlink; refusing to write through it')
     record = dict(result, recorded_at=datetime.now(timezone.utc).isoformat(),
-                  tool=DEPLOYMENT_TOOL, skill_version=skill_version())
-    # The submission gate recomputes this: a status edited from partial to exact by hand, or a
-    # file typed from scratch, no longer matches it.
+                  tool=DEPLOYMENT_TOOL, skill_version=skill_version(),
+                  record_sha256_meaning=DEPLOYMENT_DIGEST_MEANING)
+    # The submission gate recomputes this, so a status edited from partial to exact, or a file
+    # typed in without the digest, no longer matches. It detects accidental edits; it is not a
+    # signature, and anyone who recomputes it can rewrite the file on purpose.
     record['record_sha256'] = deployment_digest(record)
     dump(path, record)
     return path
@@ -8092,6 +8618,13 @@ def verify_solana_program(rpc, address, artifact=None, block='latest', opener=No
     return finish()
 
 
+def _stored_code(code_hex):
+    """The runtime a comparison read, kept so the submission gate can rerun the comparison."""
+    raw = _code_bytes(code_hex)
+    return {'hex': '0x' + raw.hex(), 'bytes': len(raw),
+            'keccak256': load_keccak().keccak_hex(raw)}
+
+
 def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, run=None):
     keccak = load_keccak()
     if not re.fullmatch(r'0x[0-9a-fA-F]{40}', address):
@@ -8133,6 +8666,13 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
             result['evidence_file'] = str(record_deployment(run, result))
         return result
 
+    if result['chain_id'] in DEV_CHAIN_IDS:
+        result['local_chain'] = True
+        result['local_chain_note'] = (
+            'chain id ' + str(result['chain_id']) + ' is a local development chain ('
+            + DEV_CHAIN_IDS[result['chain_id']] + '): this compares a deployment you made. It '
+            'can set up a local reproduction; the submission gate never accepts it as the '
+            'program\'s deployment')
     if result['runtime_code_bytes'] == 0:
         result['deployment_status'] = 'mismatch'
         result['reason'] = ('no code at this address on this chain at this block - '
@@ -8167,6 +8707,9 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
     elif looks_like_minimal_clone(code):
         result['proxy']['eip1167-pattern'] = 'detected-but-unresolved'
     body = strip_metadata(code)[0]
+    appended = (details or {}).get('appended_immutables')
+    if appended and len(body) == details['vyper']['runtime_size'] + appended:
+        body = body[:-appended]     # Vyper's immutables are data, never code
     delegates = has_delegatecall(body)
     resolution_errors = []
     if not result['proxy']:
@@ -8250,7 +8793,10 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
     if details:
         artifact_code = details['code']
         refs = {'immutable_references': details['immutable_references'],
-                'link_references': details['link_references']}
+                'link_references': details['link_references'],
+                'appended_immutables': details.get('appended_immutables')}
+        if details.get('vyper'):
+            result['artifact_vyper'] = details['vyper']
         result['artifact'] = {'path': str(Path(artifact).resolve()), 'field': details['field'],
                               'sha256': _sha256_file(artifact)}
         if implementation and not resolution_errors:
@@ -8258,6 +8804,7 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
             # A proxy whose own runtime matches proves nothing about the code that runs.
             impl_comparison = compare_bytecode(impl_code, artifact_code, **refs)
             result['compared'] = 'implementation'
+            result['compared_code'] = _stored_code(impl_code)
             result['comparison'] = impl_comparison
             result['deployment_status'] = impl_comparison['status']
             result['comparison']['reason'] += (
@@ -8274,6 +8821,7 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
         else:
             comparison = compare_bytecode(code, artifact_code, **refs)
             result['compared'] = 'address runtime'
+            result['compared_code'] = _stored_code(code)
             result['comparison'] = comparison
             result['deployment_status'] = comparison['status']
             if result['proxy']:
