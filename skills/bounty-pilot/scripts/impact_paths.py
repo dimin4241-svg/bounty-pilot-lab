@@ -9,10 +9,47 @@ import json
 from collections import defaultdict, deque
 from pathlib import Path
 
+# `arbitrary-call` leads: a caller-chosen call target with users' standing approvals is the
+# most repeated production exploit class in references/hack-patterns.md. A low-level call to a
+# fixed or caller-own address is plumbing and ranks last.
 CLASS_WEIGHTS = {
-    "asset-movement": 6, "debt-solvency": 6, "privileged-power": 6,
-    "settlement": 5, "price-oracle": 4
+    "arbitrary-call": 7, "asset-movement": 6, "debt-solvency": 6, "privileged-power": 6,
+    "delegatecall": 6, "self-destruct": 6, "token-pull": 6,
+    "settlement": 5, "permit": 5, "price-oracle": 4, "low-level-call": 3
 }
+
+
+def _contract_of(sym):
+    return sym.get("contract") or str(sym.get("name", "")).rsplit(".", 1)[0]
+
+
+def approval_holders(symbols):
+    """(path, contract) pairs that pull tokens with transferFrom or permit: users hold standing
+    approvals to these."""
+    return {(s.get("path"), _contract_of(s)) for s in symbols.values()
+            if {"token-pull", "permit"} & set(s.get("sinks") or [])}
+
+
+def priority(sink, holders):
+    """Family weight plus the AST facts that make a sink worse. Returns (score, reasons)."""
+    score = max(CLASS_WEIGHTS.get(x, 0) for x in sink["sinks"])
+    reasons = []
+    details = [d for d in sink.get("sink_details") or [] if isinstance(d, dict)]
+    if "arbitrary-call" in sink["sinks"]:
+        if any(d.get("target_source") == "parameter" for d in details):
+            score += 1
+            reasons.append("call target is a parameter of this function")
+        if (sink.get("path"), _contract_of(sink)) in holders:
+            score += 1
+            reasons.append("the same contract pulls tokens with transferFrom/permit, so users' "
+                           "standing approvals point at it")
+    if any(d.get("kind") == "token-pull" and d.get("from_source") not in (
+            "msg.sender", "this", "literal", "constant", "immutable") for d in details):
+        score += 1
+        reasons.append("transferFrom pulls from an address that is not msg.sender")
+    if any(d.get("kind") == "permit" and d.get("owner_source") == "parameter" for d in details):
+        reasons.append("permit owner is a parameter: front-run or replayed signatures")
+    return score, reasons
 
 def rank(graph, max_depth=5, limit=120):
     if max_depth < 1 or max_depth > 12 or limit < 1 or limit > 500:
@@ -23,10 +60,11 @@ def rank(graph, max_depth=5, limit=120):
         if edge["to"] in symbols and edge["from"] in symbols:
             incoming[edge["to"]].append(edge)
     findings = []
+    holders = approval_holders(symbols)
     for sink in sorted(symbols.values(), key=lambda s: s["id"]):
         if not sink.get("sinks"):
             continue
-        priority = max(CLASS_WEIGHTS.get(x, 0) for x in sink["sinks"])
+        score, reasons = priority(sink, holders)
         queue = deque([(sink["id"], [sink["id"]], [], False)])
         candidate = []
         steps_checked = 0
@@ -62,7 +100,8 @@ def rank(graph, max_depth=5, limit=120):
                           "includes_state_candidate_edge": False}]
         for row in candidate[:20]:
             findings.append({"sink": sink["id"], "impact_families": sink["sinks"],
-                             "priority_heuristic": priority,
+                             "priority_heuristic": score,
+                             "priority_reasons": reasons,
                              "entry": row["entry"], "path": row["path"],
                              "edges": row["edges"],
                              "confidence": ("unverified-no-public-entry" if row["entry"] is None
