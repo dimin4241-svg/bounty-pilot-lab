@@ -47,7 +47,8 @@ CALLER_SOURCES = ("msg.sender", "tx.origin")
 ENV_TOKENS = {("msg", "sender"): "msg.sender", ("tx", "origin"): "tx.origin",
               ("block", "timestamp"): "block.timestamp", ("block", "number"): "block.number",
               ("msg", "value"): "msg.value"}
-SENDER_ALIASES = ("_msgsender", "msgsender")
+# `_msgSender()` (OpenZeppelin Context and ERC-2771) and the relay-SDK spellings return the caller.
+SENDER_ALIASES = ("_msgsender", "msgsender", "_getmsgsender")
 # Builtins whose call in a condition says nothing about who or when: hashing, ABI coding.
 GUARD_SKIPPED_BASES = ("abi", "bytes", "string")
 GUARD_KEPT_BUILTINS = ("ecrecover",)
@@ -58,6 +59,14 @@ GUARD_SKIPPED_CALLS = ("transfer", "transferFrom", "safeTransfer", "safeTransfer
 MAX_AST_BYTES = 256_000_000
 MAX_NODES = 150_000
 EDGE_CAP = 7500
+# Directories a checkout carries but does not own (bounty.py VENDOR_PARTS, kept in step by hand).
+VENDOR_PARTS = {'node_modules', 'vendor', 'third_party', 'thirdparty', 'lib', 'libs',
+                'dependencies', 'submodules', 'target', 'dist', 'build', 'out', 'artifacts',
+                'cache', 'generated', 'venv', '.venv'}
+# A view or pure function moves nothing: its name says what it reports, not what it does. Only a
+# price read keeps its family, because a manipulable price is read, never moved.
+READ_ONLY_NAME_FAMILIES = ("price-oracle",)
+DATA_LOCATION = re.compile(r"\s+(?:memory|calldata|storage)(?:\s+(?:pointer|ref|slice))?\b")
 
 def walk_json(node):
     todo = [node]
@@ -72,6 +81,28 @@ def walk_json(node):
             todo.extend(reversed([v for v in x.values() if isinstance(v, (dict, list))]))
         elif isinstance(x, list):
             todo.extend(reversed(x))
+
+
+def _node_count(node, limit):
+    """Nodes under `node`, stopping one past `limit`."""
+    todo, count = [node], 0
+    while todo and count <= limit:
+        x = todo.pop()
+        count += 1
+        if isinstance(x, dict):
+            todo.extend(v for v in x.values() if isinstance(v, (dict, list)))
+        elif isinstance(x, list):
+            todo.extend(x)
+    return count
+
+
+class SourceTrees(list):
+    """The SourceUnit ASTs load_solc returns, plus the sources it skipped and why."""
+
+    def __init__(self, trees=(), skipped=()):
+        super().__init__(trees)
+        self.skipped = list(skipped)
+
 
 BUILD_INFO_HINT = (
     "Foundry build-info without AST: a plain `forge build` writes a minimal build-info "
@@ -95,7 +126,7 @@ def load_solc(path, max_ast_bytes=MAX_AST_BYTES):
     if not sources and (isinstance(raw.get("source_id_to_path"), dict)
                         or ("language" in raw and "output" not in raw)):
         raise ValueError(BUILD_INFO_HINT)
-    trees = []
+    trees, skipped = [], []
     saw_source_entry = False
     for filename, desc in sorted(sources.items()):
         if not isinstance(desc, dict):
@@ -103,13 +134,22 @@ def load_solc(path, max_ast_bytes=MAX_AST_BYTES):
         saw_source_entry = True
         tree = desc.get("ast")
         if isinstance(tree, dict) and tree.get("nodeType") == "SourceUnit":
+            # One flattened file over the node cap is skipped and named, not fatal: the rest of
+            # the build still has a graph, and the skipped file is reported for reading by hand.
+            if _node_count(tree, MAX_NODES) > MAX_NODES:
+                skipped.append({"path": str(filename),
+                                "reason": "AST over %d nodes; not analysed" % MAX_NODES})
+                continue
             trees.append((filename, tree))
     if not trees:
+        if skipped:
+            raise ValueError("every source AST is over the %d-node cap: %s"
+                             % (MAX_NODES, ", ".join(x["path"] for x in skipped[:5])))
         if saw_source_entry:
             # sources present but none carry an AST → the AST output was not requested.
             raise ValueError(BUILD_INFO_HINT)
         raise ValueError("no Solidity SourceUnit AST; " + BUILD_INFO_HINT)
-    return trees
+    return SourceTrees(trees, skipped)
 
 ETH_MOVE_MEMBERS = ("send", "transfer")
 
@@ -153,6 +193,8 @@ def _value_source(expr, params, state_info, depth=0):
     if nt == "FunctionCall" and expr.get("kind") == "typeConversion":
         args = [a for a in expr.get("arguments") or [] if isinstance(a, dict)]
         return _value_source(args[0], params, state_info, depth + 1) if args else "expression"
+    if nt == "FunctionCall" and _sender_call(expr):
+        return "msg.sender"
     if nt == "Identifier":
         rid = expr.get("referencedDeclaration")
         if expr.get("name") == "this" and _builtin(expr):
@@ -175,6 +217,70 @@ def _value_source(expr, params, state_info, depth=0):
         root = _value_source(expr.get("baseExpression"), params, state_info, depth + 1)
         return root if root in ("parameter", "state") else "expression"
     return "expression"
+
+
+def _sender_call(call):
+    """`_msgSender()` with no arguments: the caller, through Context or an ERC-2771 forwarder."""
+    if call.get("kind", "functionCall") != "functionCall" or call.get("arguments"):
+        return False
+    callee = _callee(call)
+    name = callee.get("name") if callee.get("nodeType") == "Identifier" else (
+        callee.get("memberName") if callee.get("nodeType") == "MemberAccess" else None)
+    return isinstance(name, str) and name.lower() in SENDER_ALIASES
+
+
+def _render(expr, depth=0):
+    """Short source-like text of a modifier argument: `MINTER_ROLE`, `Roles.ADMIN`, `1`."""
+    if not isinstance(expr, dict) or depth > 6:
+        return "?"
+    nt = expr.get("nodeType")
+    if nt == "Identifier":
+        return str(expr.get("name") or "?")
+    if nt == "MemberAccess":
+        return _render(expr.get("expression"), depth + 1) + "." + str(expr.get("memberName") or "?")
+    if nt == "Literal":
+        return str(expr.get("value") if expr.get("value") is not None else expr.get("hexValue") or "?")
+    if nt == "IndexAccess":
+        return "%s[%s]" % (_render(expr.get("baseExpression"), depth + 1),
+                           _render(expr.get("indexExpression"), depth + 1))
+    if nt == "FunctionCall":
+        args = [a for a in expr.get("arguments") or [] if isinstance(a, dict)]
+        return "%s(%s)" % (_render(_callee(expr), depth + 1),
+                           ",".join(_render(a, depth + 1) for a in args))
+    if nt == "TupleExpression":
+        parts = [c for c in expr.get("components") or [] if isinstance(c, dict)]
+        return _render(parts[0], depth + 1) if len(parts) == 1 else "?"
+    return "?"
+
+
+def _param_types(node):
+    """[(source type, ABI type)] of a function's parameters, or None when the AST has no types.
+
+    `contract IERC20 memory` reads IERC20 in source and address in the ABI; an enum is uint8."""
+    found = []
+    for p in ((node.get("parameters") or {}).get("parameters") or []):
+        if not isinstance(p, dict):
+            continue
+        text = (p.get("typeDescriptions") or {}).get("typeString")
+        if not isinstance(text, str) or not text.strip():
+            return None
+        text = DATA_LOCATION.sub("", text.strip())
+        if text.startswith("address payable"):
+            text = "address" + text[len("address payable"):]
+        kind = text.split(" ", 1)[0]
+        source = text.split(" ", 1)[1] if kind in ("contract", "struct", "enum", "library",
+                                                   "interface") and " " in text else text
+        suffix = re.search(r"(?:\[\d*\])*$", source).group(0)  # array dimensions only
+        abi = ("address" + suffix if kind in ("contract", "interface") else
+               "uint8" + suffix if kind == "enum" else source)
+        found.append((source.replace(" ", ""), abi.replace(" ", "")))
+    return found
+
+
+def _vendored_path(path):
+    parts = Path(str(path)).parts
+    return bool(parts) and (parts[0].startswith("@") or
+                            any(part.lower() in VENDOR_PARTS for part in parts[:-1]))
 
 
 def _empty_literal(expr):
@@ -304,7 +410,7 @@ def _condition_tokens(condition, decls, funcs, local_ptr):
     check, not an identity check, so it is not a token there.
     """
     tokens, callees = set(), set()
-    keyed, receivers = set(), set()
+    keyed, receivers, passed = set(), set(), set()
     for x in walk_json(condition):
         if x.get("nodeType") == "IndexAccess" and isinstance(x.get("indexExpression"), dict):
             keyed.update(id(y) for y in walk_json(x["indexExpression"]))
@@ -315,12 +421,19 @@ def _condition_tokens(condition, decls, funcs, local_ptr):
                 # `asset` in `require(asset.transferFrom(...))` is where value moves, not a
                 # check; the arguments still count.
                 receivers.update(id(y) for y in walk_json(expression.get("expression") or {}))
+            if x.get("kind", "functionCall") == "functionCall":
+                # `_healthy(msg.sender)` asks about the caller; it does not restrict who calls.
+                # The callee and the state it reads stay tokens, so `hasRole(r, msg.sender)` is
+                # still a guard through hasRole.
+                for arg in x.get("arguments") or []:
+                    if isinstance(arg, dict):
+                        passed.update(id(y) for y in walk_json(arg))
     for x in walk_json(condition):
         nt = x.get("nodeType")
         if id(x) in receivers:
             continue
         env = _env_token(x)
-        if env and id(x) not in keyed:
+        if env and id(x) not in keyed and not (env in CALLER_SOURCES and id(x) in passed):
             tokens.add(env)
         if nt in ("Identifier", "MemberAccess"):
             rid = x.get("referencedDeclaration")
@@ -346,7 +459,11 @@ def _condition_tokens(condition, decls, funcs, local_ptr):
             continue
         if not isinstance(name, str) or not name or name in GUARD_SKIPPED_CALLS:
             continue
-        tokens.add("msg.sender" if name.lower() in SENDER_ALIASES else name)
+        if name.lower() in SENDER_ALIASES:
+            if id(x) not in passed and id(x) not in keyed:
+                tokens.add("msg.sender")
+            continue
+        tokens.add(name)
         if rid in funcs:
             callees.add(rid)
     return tokens, callees
@@ -357,7 +474,7 @@ def _analyze_body(body, decls, funcs, params=(), state_info=None, libraries=()):
     conditions and call sinks from a function or modifier body. Returns a dict of sets."""
     state_info = state_info or {}
     reads, writes, calls, callnames = set(), set(), set(), set()
-    internal = set()
+    internal, via_super = set(), set()
     sink_details = []
     eth_move = False
     # Pass 1: map local storage pointers (`Pos storage p = pos[x];`) to their state var.
@@ -427,10 +544,12 @@ def _analyze_body(body, decls, funcs, params=(), state_info=None, libraries=()):
                 # An internal call runs in this contract's context, so its checks and writes
                 # are this function's: a plain identifier, `super.f()`, or any library function.
                 base = expression.get("expression") or {}
+                is_super = base.get("nodeType") == "Identifier" and base.get("name") == "super"
                 if (expression.get("nodeType") == "Identifier"
-                        or funcs[target].get("contract_kind") == "library"
-                        or (base.get("nodeType") == "Identifier" and base.get("name") == "super")):
+                        or funcs[target].get("contract_kind") == "library" or is_super):
                     internal.add(target)
+                    if is_super:
+                        via_super.add(target)
             detail = _call_sink(x, params, state_info, libraries)
             if detail:
                 detail["src"] = x.get("src")
@@ -444,7 +563,7 @@ def _analyze_body(body, decls, funcs, params=(), state_info=None, libraries=()):
         guard_callees |= callees
     return {"reads": reads, "writes": writes, "calls": calls,
             "callnames": callnames, "eth_move": eth_move, "internal": internal,
-            "guard_tokens": guard_tokens, "guard_callees": guard_callees,
+            "super": via_super, "guard_tokens": guard_tokens, "guard_callees": guard_callees,
             "sink_details": sink_details}
 
 
@@ -473,7 +592,42 @@ def _close_over(base, edges):
     return value
 
 
+def _transitive(table, root, cache):
+    """`root` and everything `table` reaches from it (overriders, or base functions)."""
+    if root not in cache:
+        seen, todo = {root}, [root]
+        while todo:
+            for child in table.get(todo.pop(), ()):
+                if child not in seen:
+                    seen.add(child)
+                    todo.append(child)
+        cache[root] = seen
+    return cache[root]
+
+
+def _function_key(node, types):
+    """What makes two functions one entry point: the selector, else the name and its types."""
+    kind = node.get("kind", "function")
+    if kind in ("receive", "fallback"):
+        return kind
+    selector = node.get("functionSelector")
+    if isinstance(selector, str) and selector:
+        return selector
+    params = (node.get("parameters") or {}).get("parameters") or []
+    shape = ",".join(t[0] for t in types) if types is not None else "?%d" % len(params)
+    return "%s(%s)" % (node.get("name") or kind, shape)
+
+
 def solidity_symbols(trees):
+    """One symbol per function declaration, plus one per function a deployable contract
+    inherits (an "heir symbol", `Heir.f`, carrying `inherits`).
+
+    Virtual calls, `super` and overridden modifiers are resolved in one contract's
+    linearization at a time: a declaration in a deployable contract is analysed in that
+    contract, an heir symbol in its heir. A declaration in an abstract contract has no
+    deployment of its own; there an unresolved virtual call follows every override, an
+    over-approximation its heir symbols do not share.
+    """
     decls, parent = {}, {}
     state_info = {}
     modifier_defs = {}
@@ -491,18 +645,28 @@ def solidity_symbols(trees):
                                          else "state")
             if nt == "ContractDefinition":
                 cname = node.get("name", "")
+                children = [c for c in node.get("nodes") or [] if isinstance(c, dict)]
                 if isinstance(node.get("id"), int):
+                    kind = node.get("contractKind", "contract")
+                    bases = [b for b in node.get("linearizedBaseContracts") or []
+                             if isinstance(b, int)]
+                    # solc marks `abstract`; a hand-built or partial AST may only show a
+                    # function declared without a body.
+                    abstract = (node.get("abstract") is True
+                                or node.get("fullyImplemented") is False
+                                or any(c.get("nodeType") == "FunctionDefinition"
+                                       and c.get("implemented", True) is False
+                                       for c in children))
                     contracts[node["id"]] = {
-                        "name": str(cname), "kind": node.get("contractKind", "contract"),
-                        "bases": [b for b in node.get("linearizedBaseContracts") or []
-                                  if isinstance(b, int)]}
-                for child in node.get("nodes", []):
-                    if isinstance(child, dict):
-                        parent[child.get("id")] = node.get("id")
+                        "name": str(cname), "kind": kind, "path": str(path),
+                        "bases": bases if node["id"] in bases else [node["id"]] + bases,
+                        "deployable": kind == "contract" and not abstract}
+                for child in children:
+                    parent[child.get("id")] = node.get("id")
             if nt == "ModifierDefinition" and isinstance(node.get("id"), int):
                 modifier_defs[node["id"]] = node
     libraries = {cid for cid, c in contracts.items() if c["kind"] == "library"}
-    funcs, nodes = {}, {}
+    funcs, nodes, types_of = {}, {}, {}
     for path, tree in trees:
         for node in walk_json(tree):
             if node.get("nodeType") != "FunctionDefinition":
@@ -512,7 +676,9 @@ def solidity_symbols(trees):
                 continue
             short = str(node.get("name") or node.get("kind") or "unnamed")
             owner = contracts.get(parent.get(num), {})
+            types = _param_types(node)
             nodes[num] = node
+            types_of[num] = types
             funcs[num] = {"id": "solc:" + str(num), "path": str(path),
                           "name": str(owner.get("name", "")) + "." + short, "short": short,
                           "declaration": num, "language": "solidity",
@@ -522,7 +688,7 @@ def solidity_symbols(trees):
                           "visibility": node.get("visibility", "unknown"),
                           "line": None, "source_span": node.get("src"),
                           "modifiers_unverified": [str((m.get("modifierName") or {}).get("name", "unknown"))
-                              for m in node.get("modifiers", []) if isinstance(m, dict)],
+                              for m in node.get("modifiers") or [] if isinstance(m, dict)],
                           "writes": [], "reads": [],
                           "calls": [], "sinks": [], "source": "compiler-ast",
                           "contract": str(owner.get("name", "")),
@@ -531,112 +697,241 @@ def solidity_symbols(trees):
                           "state_mutability": node.get("stateMutability", "unknown"),
                           "guards": [], "internal_calls": [], "writes_transitive": [],
                           "writes_via_modifiers": [], "sink_details": [],
-                          "inherited_by": []}
-    # Pre-compute each modifier's own effects so a function inherits them.
+                          "inherited_by": [],
+                          "contract_deployable": bool(owner.get("deployable")),
+                          "vendored_declaration": _vendored_path(path),
+                          "parameter_types": None if types is None else [t[0] for t in types],
+                          "abi_parameter_types": None if types is None else [t[1] for t in types],
+                          "signature": "%s(%s)" % (short, "?" if types is None
+                                                   else ",".join(t[0] for t in types)),
+                          "modifier_guards": {}, "resolution": []}
+    implemented = {num for num, f in funcs.items() if f["implemented"]}
+    # Each body once: its own reads, writes, calls, conditions and sinks.
+    effects = {}
+    for num in sorted(implemented):
+        node = nodes[num]
+        params = {p.get("id") for p in ((node.get("parameters") or {}).get("parameters") or [])
+                  if isinstance(p, dict)}
+        effects[num] = _analyze_body(node.get("body") or {}, decls, funcs, params, state_info,
+                                     libraries)
     modifier_effects = {}
     for mid, node in modifier_defs.items():
         params = {p.get("id") for p in ((node.get("parameters") or {}).get("parameters") or [])
                   if isinstance(p, dict)}
         modifier_effects[mid] = _analyze_body(node.get("body") or {}, decls, funcs, params,
                                               state_info, libraries)
-    guard_base, internal_edges, modifier_internal, modifier_writes = {}, {}, {}, {}
-    direct_writes = {}
+    # Applied modifiers, with their arguments: `onlyRole(MINTER_ROLE)` and
+    # `onlyRole(PAUSER_ROLE)` are different checks under one modifier name.
+    invocations = {}
     for num, node in nodes.items():
-        current = funcs[num]
-        if not current["implemented"]:
-            # Interfaces / abstract declarations have no body: never a source or sink.
-            continue
-        params = {p.get("id") for p in ((node.get("parameters") or {}).get("parameters") or [])
-                  if isinstance(p, dict)}
-        eff = _analyze_body(node.get("body") or {}, decls, funcs, params, state_info, libraries)
-        writes, reads, calls = set(eff["writes"]), set(eff["reads"]), set(eff["calls"])
-        callnames, eth_move = set(eff["callnames"]), eff["eth_move"]
-        internal = set(eff["internal"])
-        details = list(eff["sink_details"])
-        guards, guard_callees = set(eff["guard_tokens"]), set(eff["guard_callees"])
-        mod_internal, mod_writes = set(), set()
-        # Inherit the reads/writes/calls of every applied modifier (nonReentrant's
-        # write to `locked`, onlyOwner's read of `owner`, ...), and its guards.
-        for m in node.get("modifiers", []) or []:
+        rows = []
+        for m in node.get("modifiers") or []:
             if not isinstance(m, dict) or m.get("kind") == "baseConstructorSpecifier":
                 continue
             ref = m.get("modifierName") or {}
             mid = ref.get("referencedDeclaration")
-            if mid in contracts:
+            name = str(ref.get("name") or "").split(".")[-1]
+            if mid in contracts or not name:
                 continue  # a base constructor call written without its kind
-            meff = modifier_effects.get(mid)
-            if ref.get("name"):
-                guards.add(str(ref.get("name")).split(".")[-1])
+            args = [a for a in m.get("arguments") or [] if isinstance(a, dict)]
+            arg_decls = set()
+            for arg in args:
+                for x in walk_json(arg):
+                    rid = x.get("referencedDeclaration")
+                    if x.get("nodeType") in ("Identifier", "MemberAccess") and rid in decls:
+                        arg_decls.add(decls[rid])
+            rows.append({"mid": mid, "name": name, "arg_decls": arg_decls,
+                         "token": ("%s(%s)" % (name, ",".join(_render(a) for a in args))
+                                   if args else None)})
+        invocations[num] = rows
+    # Declaration-level facts: what the body and its declared modifiers touch.
+    for num in sorted(implemented):
+        current = funcs[num]
+        eff = effects[num]
+        writes, reads, calls = set(eff["writes"]), set(eff["reads"]), set(eff["calls"])
+        callnames, eth_move = set(eff["callnames"]), eff["eth_move"]
+        details = list(eff["sink_details"])
+        for inv in invocations.get(num, ()):
+            meff = modifier_effects.get(inv["mid"])
             if meff:
                 writes |= meff["writes"]
                 reads |= meff["reads"]
                 calls |= meff["calls"]
                 callnames |= meff["callnames"]
                 eth_move = eth_move or meff["eth_move"]
-                internal |= meff["internal"]
                 details.extend(meff["sink_details"])
-                guards |= meff["guard_tokens"]
-                guard_callees |= meff["guard_callees"]
-                mod_internal |= meff["internal"]
-                mod_writes |= meff["writes"]
         current["writes"] = sorted(writes)
         current["reads"] = sorted(reads)
         current["calls"] = sorted(calls)
         current["sink_details"] = details
         # Classify from the function's OWN name and the names it calls, never the
         # contract name or an emitted event identifier.
-        current["sinks"] = classify({current["short"]} | callnames, eth_move, details)
-        direct_writes[num] = writes
-        internal_edges[num] = internal
-        modifier_internal[num] = mod_internal
-        modifier_writes[num] = mod_writes
-        guard_base[num] = (guards, guard_callees)
-    # An internal call to a virtual function runs whichever override the deployed contract
-    # has: `upgradeToAndCall` reaches the `onlyOwner` of every `_authorizeUpgrade` override.
-    # Every override is followed, so a guard or write may come from a sibling contract's
-    # override - an over-approximation that hides an asymmetry rather than inventing one.
-    overriders = defaultdict(set)
+        current["sinks"] = classify({current["short"]} | callnames, eth_move, details,
+                                    read_only=current["state_mutability"] in ("view", "pure"))
+    overriders, bases_of, modifier_overriders = defaultdict(set), defaultdict(set), defaultdict(set)
     for num, node in nodes.items():
         for base_fn in node.get("baseFunctions") or []:
             if isinstance(base_fn, int):
                 overriders[base_fn].add(num)
-    expanded = {}
+                bases_of[num].add(base_fn)
+    for mid, node in modifier_defs.items():
+        for base_mod in node.get("baseModifiers") or []:
+            if isinstance(base_mod, int):
+                modifier_overriders[base_mod].add(mid)
+    down, up, mod_down = {}, {}, {}
+    by_contract = defaultdict(list)
+    for num in sorted(funcs):
+        by_contract[parent.get(num)].append(num)
 
-    def with_overrides(callee):
-        if callee not in expanded:
-            seen, todo = {callee}, [callee]
-            while todo:
-                for child in overriders.get(todo.pop(), ()):
-                    if child not in seen:
-                        seen.add(child)
-                        todo.append(child)
-            expanded[callee] = seen
-        return expanded[callee]
+    def resolve_call(ref, owner, positions, lin, is_super, union):
+        """The implementation an internal call to `ref` runs in this linearization."""
+        if ref not in funcs:
+            return ()
+        home = parent.get(ref)
+        if home not in contracts or home in libraries or home not in positions:
+            # a library or free function, or another contract's function named in a
+            # condition: a static reference, not dispatched here
+            return (ref,) if ref in implemented else ()
+        family = _transitive(overriders, ref, down)
+        start = positions[owner] + 1 if is_super and owner in positions else 0
+        best, best_at = None, None
+        for candidate in family:
+            at = positions.get(parent.get(candidate))
+            if candidate in implemented and at is not None and at >= start and (
+                    best_at is None or at < best_at):
+                best, best_at = candidate, at
+        if best is not None:
+            return (best,)
+        if union:
+            return tuple(sorted(c for c in family if c in implemented))
+        return ()
 
-    for table in (internal_edges, modifier_internal):
-        for num in table:
-            table[num] = {x for c in table[num] for x in with_overrides(c)}
-    # A condition that calls a getter (`owner()`, `hasRole(...)`) also depends on the state
-    # that getter reads, so `msg.sender == owner` and `owner() == _msgSender()` share a token.
-    base_tokens = {}
-    for num, (guards, guard_callees) in guard_base.items():
-        tokens = set(guards)
-        for callee in guard_callees:
-            if callee in funcs:
-                tokens |= set(funcs[callee]["reads"])
-        base_tokens[num] = tokens
-    guards_closed = _close_over(base_tokens, internal_edges)
-    writes_closed = _close_over(direct_writes, internal_edges)
-    for num in guard_base:
-        current = funcs[num]
-        current["guards"] = sorted(guards_closed[num])
-        current["internal_calls"] = sorted(funcs[c]["id"] for c in internal_edges[num]
-                                           if c in funcs)
-        current["writes_transitive"] = sorted(writes_closed[num])
-        via = set(modifier_writes[num])
-        for callee in modifier_internal[num]:
-            via |= writes_closed.get(callee, set())
-        current["writes_via_modifiers"] = sorted(via)
+    def resolve_modifier(mid, positions):
+        best, best_at = mid, None
+        for candidate in _transitive(modifier_overriders, mid, mod_down):
+            at = positions.get(parent.get(candidate))
+            if at is not None and (best_at is None or at < best_at):
+                best, best_at = candidate, at
+        return best
+
+    def context(cid):
+        """Guards, writes and resolution of every function a linearization holds."""
+        if cid in contracts:
+            lin = contracts[cid]["bases"]
+            union = not contracts[cid]["deployable"]
+        else:
+            lin, union = [], False
+        positions = {c: i for i, c in enumerate(lin)}
+        members = [n for c in (lin or [None]) for n in by_contract.get(c, ()) if n in implemented]
+        edges, applied, modifier_targets = {}, {}, {}
+        reach, todo = set(members), list(members)
+        while todo:
+            g = todo.pop()
+            owner = parent.get(g)
+            eff = effects[g]
+            targets, via_modifiers = set(), set()
+            for ref in eff["internal"]:
+                targets.update(resolve_call(ref, owner, positions, lin, ref in eff["super"],
+                                            union))
+            resolved = []
+            for inv in invocations.get(g, ()):
+                mid = resolve_modifier(inv["mid"], positions) if inv["mid"] in modifier_defs \
+                    else inv["mid"]
+                resolved.append((inv, mid))
+                meff = modifier_effects.get(mid)
+                if meff:
+                    for ref in meff["internal"]:
+                        via_modifiers.update(resolve_call(ref, parent.get(mid), positions, lin,
+                                                          ref in meff["super"], union))
+            edges[g] = targets | via_modifiers
+            modifier_targets[g] = via_modifiers
+            applied[g] = resolved
+            for t in edges[g]:
+                if t not in reach and t in effects:
+                    reach.add(t)
+                    todo.append(t)
+
+        def callee_reads(ref, owner):
+            found = set()
+            for t in resolve_call(ref, owner, positions, lin, False, union):
+                found |= set(funcs[t]["reads"])
+            return found
+
+        base_guard, base_write, modifier_write, base_reach = {}, {}, {}, {}
+        own_checks = {}
+        for g in reach:
+            eff = effects[g]
+            tokens = set(eff["guard_tokens"])
+            for ref in eff["guard_callees"]:
+                tokens |= callee_reads(ref, parent.get(g))
+            writes, by_modifier = set(eff["writes"]), set()
+            checks = []
+            for inv, mid in applied[g]:
+                tokens.add(inv["name"])
+                if inv["token"]:
+                    tokens.add(inv["token"])
+                tokens |= inv["arg_decls"]
+                meff = modifier_effects.get(mid)
+                mine = set()
+                if meff:
+                    mine |= meff["guard_tokens"]
+                    for ref in meff["guard_callees"]:
+                        mine |= callee_reads(ref, parent.get(mid))
+                    writes |= meff["writes"]
+                    by_modifier |= meff["writes"]
+                tokens |= mine
+                checks.append((inv, mid, mine))
+            base_guard[g] = tokens
+            base_write[g] = writes
+            modifier_write[g] = by_modifier
+            base_reach[g] = set(edges[g]) | {"modifier:%s" % mid for _, mid in applied[g]}
+            own_checks[g] = checks
+        guards = _close_over(base_guard, edges)
+        writes = _close_over(base_write, edges)
+        reached = _close_over(base_reach, edges)
+        values = {}
+        for g in reach:
+            via = set(modifier_write[g])
+            for t in modifier_targets[g]:
+                via |= writes.get(t, set())
+            own = {}
+            for inv, mid, mine in own_checks[g]:
+                meff = modifier_effects.get(mid)
+                checks = set(mine)
+                if meff:
+                    for ref in meff["internal"]:
+                        for t in resolve_call(ref, parent.get(mid), positions, lin,
+                                              ref in meff["super"], union):
+                            checks |= guards.get(t, set())
+                # A modifier's own checks: what its body and its helpers test. The bare name
+                # does not carry the arguments; `onlyRole(MINTER_ROLE)` does.
+                keyed = [(inv["name"], checks - {inv["name"]}),
+                         (inv["token"], (checks | inv["arg_decls"]) - {inv["name"]})]
+                for key, value in keyed:
+                    if key:
+                        own[key] = (own[key] & value) if key in own else set(value)
+            values[g] = {"guards": sorted(guards[g]), "writes_transitive": sorted(writes[g]),
+                         "writes_via_modifiers": sorted(via),
+                         "internal_calls": sorted(funcs[t]["id"] for t in edges[g] if t in funcs),
+                         "modifier_guards": {k: sorted(v) for k, v in sorted(own.items())},
+                         "resolution": sorted(funcs[x]["id"] if x in funcs else str(x)
+                                              for x in reached[g])}
+        return values
+
+    contexts = {}
+
+    def values_in(cid, num):
+        if cid not in contexts:
+            contexts[cid] = context(cid)
+        return contexts[cid].get(num)
+
+    fields = ("guards", "writes_transitive", "writes_via_modifiers", "internal_calls",
+              "modifier_guards", "resolution")
+    for num in sorted(implemented):
+        home = parent.get(num)
+        found = values_in(home if home in contracts else None, num)
+        if found:
+            funcs[num].update({key: found[key] for key in fields})
     # A function a derived contract inherits without overriding is that contract's entry point
     # too: `Vault.deposit` names `VaultBase.deposit` when Vault is VaultBase and does not
     # redefine deposit.
@@ -656,9 +951,51 @@ def solidity_symbols(trees):
             if not any(f["short"] in defined[c] for c in closer):
                 heirs.append(info["name"])
         f["inherited_by"] = sorted(set(heirs))
-    for f in funcs.values():
+    # Which deployable contracts deploy an abstract contract's entry points, inherited or
+    # overridden: such a declaration is read through them, not as a surface of its own.
+    deployers = defaultdict(list)
+    for cid in sorted(contracts):
+        if contracts[cid]["deployable"]:
+            for base in contracts[cid]["bases"][1:]:
+                deployers[base].append(contracts[cid]["path"] + ":" + contracts[cid]["name"])
+    for num, f in funcs.items():
+        home = parent.get(num)
+        if f["entry"] and home in contracts and not contracts[home]["deployable"]:
+            f["deployed_by"] = sorted(set(deployers.get(home, ())))
+    # Heir symbols: the deployed surface of each deployable contract, resolved there.
+    heir_symbols = []
+    keys = {num: _function_key(nodes[num], types_of[num]) for num in funcs}
+    for cid in sorted(contracts):
+        info = contracts[cid]
+        if not info["deployable"]:
+            continue
+        seen, hidden = set(), set()
+        for owner_cid in info["bases"]:
+            for num in by_contract.get(owner_cid, ()):
+                f = funcs[num]
+                if (not f["entry"] or f["function_kind"] == "constructor" or keys[num] in seen
+                        or num in hidden):
+                    continue
+                seen.add(keys[num])
+                hidden |= _transitive(bases_of, num, up)
+                if owner_cid == cid:
+                    continue
+                found = values_in(cid, num) or {}
+                f = dict(f)
+                f.pop("deployed_by", None)
+                heir = dict(f, id=f["id"] + "@" + str(cid), path=info["path"],
+                            name=info["name"] + "." + f["short"], contract=info["name"],
+                            contract_kind=info["kind"], contract_deployable=True,
+                            writes=[], reads=[], calls=[], sink_details=[], inherited_by=[],
+                            inherits=f["id"], inherited_from=f["contract"],
+                            declaration_path=f["path"])
+                heir.update({key: found.get(key, f[key]) for key in fields})
+                heir["resolution_differs"] = heir["resolution"] != f["resolution"]
+                heir_symbols.append(heir)
+    out = list(funcs.values()) + heir_symbols
+    for f in out:
         f.pop("short", None)
-    return list(funcs.values())
+    return out
 
 
 def _name_words(name):
@@ -666,13 +1003,17 @@ def _name_words(name):
     return {w.lower() for w in re.split(r"[^A-Za-z0-9]+", spaced) if w}
 
 
-def classify(names, eth_move=False, details=None):
+def classify(names, eth_move=False, details=None, read_only=False):
+    """Impact families of a function: from its own and called names, ETH movement and AST sink
+    details. A view or pure function keeps only the AST families and a price read."""
     joined = " ".join(str(n).lower() for n in names)
     sinks = {key for key, words in SINK_TERMS.items() if any(w in joined for w in words)}
     words = set()
     for n in names:
         words |= _name_words(n)
     sinks |= {family for word, family in SINK_WORDS.items() if word in words}
+    if read_only:
+        sinks &= set(READ_ONLY_NAME_FAMILIES)
     if eth_move:
         sinks.add("asset-movement")
     for detail in details or ():
@@ -743,7 +1084,7 @@ def py_symbols(root):
                          "source": "python-ast"})
     return defs
 
-def build(symbols):
+def build(symbols, skipped_sources=None):
     symbols = sorted(symbols, key=lambda x: x["id"])
     known = {x["id"] for x in symbols}
     edges = []
@@ -753,6 +1094,16 @@ def build(symbols):
                 edges.append({"from": s["id"], "to": callee,
                               "kind": "static-call-reference", "confidence": "ast-reference"})
     call_edges = len(edges)
+    # An heir symbol runs its declaration's code: one edge to it, so a path that ends at a
+    # vendored declaration still reaches the in-scope contract that deploys it.
+    for s in symbols:
+        if s.get("inherits") in known:
+            edges.append({"from": s["id"], "to": s["inherits"], "kind": "inherited-entry",
+                          "confidence": "ast-reference"})
+    inherited_edges = len(edges) - call_edges
+    # The cap bounds the writer-reader overlaps only: a static reference is never dropped.
+    budget = max(0, EDGE_CAP - len(edges))
+    overlaps = 0
     truncated = False
     readers = defaultdict(list)
     for s in symbols:
@@ -761,30 +1112,41 @@ def build(symbols):
     for s in symbols:
         for name in s["writes"]:
             for other in readers[name][:150]:
-                if other != s["id"]:
-                    edges.append({"from": s["id"], "to": other,
-                                  "kind": "writer-reader-overlap", "state": name,
-                                  "confidence": "candidate-only"})
-                if len(edges) >= EDGE_CAP:
+                if other == s["id"]:
+                    continue
+                if overlaps >= budget:
                     truncated = True
                     break
+                edges.append({"from": s["id"], "to": other,
+                              "kind": "writer-reader-overlap", "state": name,
+                              "confidence": "candidate-only"})
+                overlaps += 1
             if truncated:
                 break
         if truncated:
             break
-    edges = edges[:EDGE_CAP]
-    return {"schema": 1, "method": "compiler-ast-plus-python-ast",
-            "symbols": symbols, "edges": edges,
-            "truncated": truncated,
-            "edge_counts": {"total": len(edges), "static_call_reference": call_edges,
-                            "writer_reader_overlap": len(edges) - call_edges, "cap": EDGE_CAP},
-            "semantic_scope": "Solidity compiler-resolved declarations and calls; Python syntax only",
-            "reachable_verified": False,
-            "warning": "Solidity calls are static references, not full dynamic dispatch. Writer-reader "
-                       "overlap is NOT an executable path. Python entrypoints/calls can be unresolved. "
-                       "No Rust/Move/Cairo semantics are claimed."
-                       + (" Edge cap reached: graph is TRUNCATED and some overlaps are omitted."
-                          if truncated else "")}
+    heirs = sum(1 for s in symbols if s.get("inherits"))
+    report = {"schema": 1, "method": "compiler-ast-plus-python-ast",
+              "symbols": symbols, "edges": edges,
+              "truncated": truncated,
+              "edge_counts": {"total": len(edges), "static_call_reference": call_edges,
+                              "inherited_entry": inherited_edges,
+                              "writer_reader_overlap": overlaps, "cap": EDGE_CAP},
+              "heir_symbols": heirs,
+              "skipped_sources": list(skipped_sources or []),
+              "semantic_scope": "Solidity compiler-resolved declarations and calls; Python syntax only",
+              "reachable_verified": False,
+              "warning": "Solidity calls are static references, not full dynamic dispatch. Writer-reader "
+                         "overlap is NOT an executable path. Python entrypoints/calls can be unresolved. "
+                         "No Rust/Move/Cairo semantics are claimed. A symbol carrying `inherits` is a "
+                         "function a deployable contract inherits, resolved in that contract; a "
+                         "declaration in an abstract contract follows every override of an "
+                         "unresolved virtual call."
+                         + (" Edge cap reached: graph is TRUNCATED and some overlaps are omitted."
+                            if truncated else "")
+                         + (" %d source file(s) were over the AST node cap and were NOT analysed: "
+                            "see skipped_sources." % len(skipped_sources) if skipped_sources else "")}
+    return report
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
@@ -799,12 +1161,14 @@ def main(argv=None):
     if args.max_ast_mb < 1 or args.max_ast_mb > 4096:
         ap.error("--max-ast-mb must be between 1 and 4096")
     try:
-        symbols = []
+        symbols, skipped = [], []
         if args.solc:
-            symbols += solidity_symbols(load_solc(args.solc, args.max_ast_mb * 1_000_000))
+            trees = load_solc(args.solc, args.max_ast_mb * 1_000_000)
+            skipped = getattr(trees, "skipped", [])
+            symbols += solidity_symbols(trees)
         if args.repo:
             symbols += py_symbols(args.repo)
-        report = build(symbols)
+        report = build(symbols, skipped)
     except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         ap.error(str(exc))
     payload = json.dumps(report, indent=2, ensure_ascii=False) + "\n"

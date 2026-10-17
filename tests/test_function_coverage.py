@@ -607,13 +607,16 @@ class FunctionCoverageTests(RunCase):
                       "src/Vault.sol:borrow", "Vault.exec", "Vaul.relay", "multicall",
                       "Vault.permitAndSwapX", "lib/Other.sol:repay")
         self.measure()
+        # VaultBase is abstract: its withdraw is counted as Vault's, and naming the declaring
+        # contract credits the heir that resolves it the same way.
         self.assertEqual(sorted(self.examined_names()),
-                         ["Vault.borrow", "Vault.execute", "Vault.kill", "VaultBase.withdraw"])
+                         ["Vault.borrow", "Vault.execute", "Vault.kill", "Vault.withdraw"])
 
     def test_an_heir_names_an_inherited_function(self):
+        # The abstract VaultBase is deployed only as Vault: its deposit is Vault's entry point.
         self.coverage("src/Vault.sol:Vault.deposit")
         self.measure()
-        self.assertEqual(self.examined_names(), ["VaultBase.deposit"])
+        self.assertEqual(self.examined_names(), ["Vault.deposit"])
 
     def test_every_source_credits_and_is_counted(self):
         self.coverage("Vault.execute")
