@@ -44,6 +44,22 @@ generation stance deliberately suppresses self-refutation, which is right for re
 paid for by a real adjudication pass afterwards, or the report arrives at the program full of
 confident candidates that a triage engineer kills in one reading.
 
+## Known gaps in v4.1, and what covers them
+
+Checked against its source at the v4.1 commit; recheck when you upgrade.
+
+- **Its default scan skips in-scope code.** The discovery `find` excludes `*/lib/*`, which also
+  removes a project's own `src/lib/`, and any file named `*Test*.sol` or `*Mock*.sol`, which also
+  removes production files such as `TestnetOracle.sol`. Always pass the in-scope file list from
+  `scope.md` explicitly — in `$filename` mode its exclude pattern does not apply.
+- **Its judge treats narrowing casts as safe.** `judging.md` lists "explicit narrowing casts in 0.8+
+  (reverts on overflow)" among patterns not to flag. Solidity 0.8 does not check conversions — the
+  high bits are cut off silently — so a real downcast found by its own math agent can be discarded.
+  The `classic` lens checks narrowing casts on every EVM target.
+- **No post-2023 semantics.** Nothing on EIP-7702 delegated EOAs, L2 sequencer uptime or Permit2;
+  `classic` Part A covers them.
+- **Solidity only**, and it writes into the directory it scans (see below).
+
 ## When it is not installed
 
 Bounty Pilot's own `attack` group does not replace twelve specialists. Its `classic` lens carries the
@@ -61,9 +77,10 @@ say so in `coverage.md`. On a Solidity target worth a week, installing it is the
    question, which an orchestrated run cannot answer.
 3. **Aim it with file names, not prose.** It has no input channel for a ranked list or a dup map:
    its agents receive bundles assembled by shell from fixed files. What it does accept is a list of
-   files — `$filename ...` mode scans exactly those. Name the top of `delta.json` and the files that
-   `impact-paths.json` and `odd-one-out.json` point at. A default scan of everything is fine on a
-   small codebase.
+   files — `$filename ...` mode scans exactly those, with no exclude pattern. Always pass the full
+   in-scope list from `scope.md` (its default discovery skips some in-scope files, below), ordered
+   with the top of `delta.json` and the files `impact-paths.json` and `odd-one-out.json` point at
+   first; on a large scope, run the ranked subset first.
 4. **Run Bounty Pilot's own lenses that it does not have** — `delta`, `upstream-diff`,
    `coverage-gap`, `live-reality`, `accounting` (as writer enumeration), `integration-auth`,
    `liveness`, `classic` Part A (post-2023 EVM semantics it does not cover: EIP-7702, L2 sequencer

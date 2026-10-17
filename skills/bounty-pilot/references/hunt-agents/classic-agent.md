@@ -1,7 +1,8 @@
 # Classic agent — the shapes every reviewer knows and still misses
 
 Two lists, used differently. **Part A** is EVM semantics that changed after most checklists were
-written; no installed sweep covers all of it, so it runs on every EVM target. **Part B** is the
+written, plus the classes `solidity-auditor` v4.1 is known to drop; no installed sweep covers all of
+it, so it runs on every EVM target. **Part B** is the
 classic bug-class sweep. When `solidity-auditor` ran on this revision, Part B is its ground: read
 its imported records in `findings.json` and spend this reading on Part A and on what its records
 do not name. When it did not run, Part B is yours.
@@ -60,6 +61,16 @@ cannot see.
 - **Receiver callbacks.** `_safeMint`, `safeTransferFrom`, `onERC721Received`,
   `onERC1155Received`/`BatchReceived` and ERC-777 `tokensReceived` hand control to the receiver
   before the caller's state is final.
+
+- **Explicit narrowing casts.** In Solidity 0.8 checked arithmetic does not cover conversions:
+  `uint128(x)`, `uint64(x)`, `int128(int256(x))` silently drop the high bits. `solidity-auditor` v4.1
+  lists "explicit narrowing casts in 0.8+ (reverts on overflow)" as a safe pattern in its judging
+  rules, so its judge can discard a real downcast its own math agent found. Grep every narrowing
+  cast without `SafeCast` and ask whether an attacker can make the value exceed the target type.
+- **Files a default `solidity-auditor` scan never reads.** Its default `find` excludes every path
+  containing `/lib/` — the project's own `src/lib/` too, not only dependencies — and every file whose
+  name contains `Test` or `Mock`. If the run delegated to it without an explicit file list, the
+  in-scope files matching those patterns had no classic sweep; read them here.
 
 ## Part B — the classic sweep
 

@@ -188,8 +188,9 @@ Every `CANDIDATE` and `LEAD` carries `next_experiment` (`question`, `method`, `e
 and `blocker` when it cannot run yet). Hunt agents never refute themselves; that is Stage 4.
 
 **`solidity-auditor` (pashov/skills).** On Solidity, delegate the classic sweep to it when installed
-— in a disposable copy of the checkout, with `--loop 3` so it does not stop to ask, aimed by naming
-the delta's top files — then import its output as hypotheses:
+— in a disposable copy of the checkout, with `--loop 3` so it does not stop to ask, and always with
+the explicit in-scope file list from `scope.md`, ranked by the delta (its default discovery skips
+`src/lib/` and any file named `*Test*`) — then import its output as hypotheses:
 
 ```sh
 python3 $S import-findings --run <run> --from <copy>/.solidity-auditor/runs/<stamp> --repo <checkout>
