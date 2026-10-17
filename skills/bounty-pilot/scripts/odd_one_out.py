@@ -36,14 +36,22 @@ SIBLING_VERBS = (
     ("freeze", "unfreeze"), ("enable", "disable"), ("activate", "deactivate"),
     ("subscribe", "unsubscribe"), ("allocate", "deallocate"), ("pause", "unpause"),
 )
+# An authorization hook the base contract leaves to its heir: an empty override (UUPS
+# `_authorizeUpgrade(address) internal override {}`) lets anyone through.
+AUTH_HOOK = re.compile(r"^_?authori[sz]e", re.I)
+MAX_HOOK_ENTRIES = 5
+PARAMETERIZED = re.compile(r"^([A-Za-z_$][\w$]*)\(")
 INITIALIZER_MODIFIERS = ("initializer", "reinitializer", "onlyInitializing")
 INITIALIZER_NAME = re.compile(r"^_*(?:initiali[sz]e|init)(?:[A-Z0-9_]|$)")
 NOTICE = ("Heuristic over the compiler AST: each row is a lead to read, not a finding. "
           "Intentional asymmetries exist (an emergency exit without a pause check, a transfer "
           "that leaves totalSupply alone), guards are syntactic (require/assert/if-revert "
-          "conditions, applied modifiers and internal calls, every override of a virtual call "
-          "followed) and writes include internal call chains. Confirm reachability, the "
-          "deployed revision and real loss before any severity.")
+          "conditions, applied modifiers with their arguments, and internal calls, virtual "
+          "calls resolved in each deployable contract) and writes include internal call chains. "
+          "Functions are compared only within one contract's deployed surface, inherited "
+          "functions included; a lead on an inherited vendored function says so in "
+          "function_inherited_from. Confirm reachability, the deployed revision and real loss "
+          "before any severity.")
 
 
 def _short(sym):
@@ -56,7 +64,24 @@ def _contract(sym):
 
 
 def _ref(sym):
-    return {"id": sym.get("id"), "name": sym.get("name"), "path": sym.get("path")}
+    ref = {"id": sym.get("id"), "name": sym.get("name"), "path": sym.get("path")}
+    if sym.get("inherits"):
+        ref["inherited_from"] = sym.get("inherited_from")
+        ref["declaration_path"] = sym.get("declaration_path")
+    return ref
+
+
+def _surface(sym):
+    """The deployed contract a symbol belongs to: its own contract, at its own path."""
+    return (str(sym.get("path", "")), _contract(sym))
+
+
+def _modifier_tokens(symbols):
+    """Every guard token that names a modifier: `onlyOwner`, and `onlyRole(MINTER_ROLE)`."""
+    names = {str(m) for s in symbols for m in s.get("modifiers_unverified") or []}
+    for s in symbols:
+        names.update((s.get("modifier_guards") or {}).keys())
+    return names
 
 
 def _lead_id(kind, *parts):
@@ -98,9 +123,18 @@ def _effective_writes(symbols):
 
 
 def _candidates(symbols):
-    """Implemented entry points that can change state."""
+    """Implemented entry points that can change state, one contract surface at a time.
+
+    A declaration in an abstract contract is represented by its heir symbols when it has any;
+    a symbol impact-plan kept only as a dependency of the scope is not compared."""
+    represented = {s.get("inherits") for s in symbols if s.get("inherits")}
+    surfaces = {"%s:%s" % _surface(s) for s in symbols
+                if s.get("contract_deployable") and s.get("scope_role") != "dependency"}
     return [s for s in symbols if s.get("entry") and s.get("implemented", True)
-            and s.get("state_mutability") not in ("view", "pure")]
+            and s.get("state_mutability") not in ("view", "pure")
+            and not (s.get("contract_deployable") is False and (
+                s.get("id") in represented or surfaces & set(s.get("deployed_by") or ())))
+            and s.get("scope_role") != "dependency"]
 
 
 def guard_asymmetry(symbols, writes):
@@ -108,11 +142,12 @@ def guard_asymmetry(symbols, writes):
     writers, setup = defaultdict(list), defaultdict(list)
     for sym in entries:
         for var in writes.get(sym.get("id"), ()):
-            (writers if role(sym) == "entry" else setup)[var].append(sym)
-    modifier_names = {str(m) for s in symbols for m in s.get("modifiers_unverified") or []}
+            (writers if role(sym) == "entry" else setup)[(_surface(sym), var)].append(sym)
+    modifier_names = _modifier_tokens(symbols)
     grouped = {}
-    for var in sorted(writers):
-        group = writers[var]
+    for where in sorted(writers):
+        var = where[1]
+        group = writers[where]
         if len(group) < GUARD_MIN_CARRIERS + 1:
             continue
         for sym in group:
@@ -124,22 +159,47 @@ def guard_asymmetry(symbols, writes):
                 if token in mine or carried < GUARD_MIN_CARRIERS or carried * 2 <= len(others):
                     continue
                 if token in modifier_names:
-                    # `onlyOwner` against an inline `_checkOwner()`: the modifier's carriers all
-                    # share its inner tokens; a writer holding every one of them performs the
-                    # same check under another name.
-                    carriers = [set(o.get("guards") or []) for o in others
-                                if token in (o.get("guards") or [])]
-                    core = set.intersection(*carriers) - modifier_names - {var}
+                    # `onlyOwner` against an inline `_checkOwner()`: a writer that holds every
+                    # check the modifier itself performs does the same check under another
+                    # name. Only the modifier's own checks count - not whatever else its
+                    # carriers share (`nonReentrant` beside `updateReward`) - and a modifier
+                    # that checks nothing (`updateReward`) is never implied.
+                    carriers = [o for o in others if token in (o.get("guards") or [])]
+                    owns = [set((o.get("modifier_guards") or {}).get(token, ()))
+                            for o in carriers if "modifier_guards" in o]
+                    core = (set.intersection(*owns) - modifier_names - {var}) if owns and \
+                        len(owns) == len(carriers) else set()
                     if core and core <= mine:
                         continue
                     implied |= core
                 missing.append((token, carried, len(others)))
+            basis = {}
+            # `onlyRole(PAUSER_ROLE)` where the other writers applying onlyRole use
+            # `onlyRole(MINTER_ROLE)`: compared among the writers that apply the same modifier,
+            # so unguarded writers of the same variable do not outvote the role.
+            for token in sorted({t for o in others for t in o.get("guards") or []
+                                 if PARAMETERIZED.match(t)} - mine):
+                bare = PARAMETERIZED.match(token).group(1)
+                if bare not in mine or any(t == token for t, _, _ in missing):
+                    continue
+                peers = [o for o in others if bare in (o.get("guards") or [])]
+                carried = sum(1 for o in peers if token in (o.get("guards") or []))
+                if carried >= GUARD_MIN_CARRIERS and carried * 2 > len(peers):
+                    missing.append((token, carried, len(peers)))
+                    basis[token] = bare
+                    implied |= set(((peers[0].get("modifier_guards") or {}).get(token) or ())) \
+                        - set(mine)
+            for token, _, _ in missing:
+                match = PARAMETERIZED.match(token)
+                if match:
+                    implied.add(match.group(1))  # `updateReward` is named by updateReward(x)
             if not missing:
                 continue
             key = (sym.get("id"), tuple(sorted(t for t, _, _ in missing)))
             entry = grouped.setdefault(key, {"sym": sym, "missing": {}, "variables": {},
-                                             "implied": set()})
+                                             "implied": set(), "basis": {}})
             entry["implied"] |= implied
+            entry["basis"].update(basis)
             for token, carried, total in missing:
                 best = entry["missing"].get(token)
                 if not best or carried * best[1] > best[0] * total:
@@ -148,7 +208,7 @@ def guard_asymmetry(symbols, writes):
                 "writers": len(group),
                 "carriers": sorted({o.get("name") for o in others
                                     if any(t in (o.get("guards") or []) for t, _, _ in missing)}),
-                "setup_writers": sorted({s.get("name") for s in setup.get(var, [])})}
+                "setup_writers": sorted({s.get("name") for s in setup.get(where, [])})}
     leads = []
     for (sym_id, tokens), entry in grouped.items():
         sym = entry["sym"]
@@ -162,16 +222,73 @@ def guard_asymmetry(symbols, writes):
         leads.append({
             "id": _lead_id("guard-asymmetry", sym.get("name"), sym.get("path"), *tokens),
             "kind": "guard-asymmetry", "functions": [_ref(sym)], "path": sym.get("path"),
+            "contract": _contract(sym),
+            "function_inherited_from": sym.get("inherited_from") if sym.get("inherits") else None,
             "variables": variables, "missing_guards": list(tokens),
             "missing_guards_primary": primary,
             "support": {"carried_by": carried, "of_other_writers": total},
             "evidence": {v: entry["variables"][v] for v in variables},
             "setup_writers_not_compared": setup,
+            "compared_among_modifier_peers": dict(sorted(entry["basis"].items())),
             "question": "%s writes %s without %s, which %d of the %d other entry points writing "
-                        "it carry. Is the missing check intended, and who can reach %s?"
+                        "it carry%s. Is the missing check intended, and who can reach %s?"
                         % (sym.get("name"), _listed(variables, limit=3),
-                           ", ".join(primary), carried, total, _short(sym)),
-            "_strength": strength})
+                           ", ".join(primary), carried, total, _peer_note(sym, entry["basis"]),
+                           _short(sym)),
+            "_strength": strength, "_vendored": _inherited_vendored(sym)})
+    return leads
+
+
+def _peer_note(sym, basis):
+    """` (counted among the writers that apply onlyRole; burn applies onlyRole(BURNER_ROLE))`"""
+    if not basis:
+        return ""
+    bares = sorted(set(basis.values()))
+    applied = sorted(t for t in sym.get("guards") or []
+                     if PARAMETERIZED.match(t) and PARAMETERIZED.match(t).group(1) in bares)
+    return " (counted among the writers that apply %s; %s applies %s)" % (
+        ", ".join(bares), _short(sym), ", ".join(applied))
+
+
+def _inherited_vendored(sym):
+    """An inherited function whose code is vendored: its leads are listed after the others."""
+    return bool(sym.get("inherits") and sym.get("vendored_declaration"))
+
+
+def unguarded_hooks(symbols):
+    """An authorization hook (`_authorizeUpgrade`) that a deployed entry point runs and that
+    checks nothing: no condition, no modifier, no guarded helper."""
+    by_id = {s.get("id"): s for s in symbols}
+    users = defaultdict(list)
+    for sym in symbols:
+        if (sym.get("entry") and (sym.get("contract_deployable") or sym.get("inherits"))
+                and sym.get("scope_role") != "dependency"):
+            for reached in sym.get("resolution") or []:
+                users[reached].append(sym)
+    leads = []
+    for hook_id in sorted(users, key=str):
+        hook = by_id.get(hook_id)
+        if (not hook or not AUTH_HOOK.match(_short(hook)) or not hook.get("implemented", True)
+                or hook.get("guards") or "guards" not in hook):
+            continue
+        by_surface = defaultdict(list)
+        for sym in users[hook_id]:
+            by_surface[_surface(sym)].append(sym)
+        for (path, contract), entries in sorted(by_surface.items()):
+            entries = sorted(entries, key=lambda e: str(e.get("name")))
+            names = [_short(e) for e in entries[:MAX_HOOK_ENTRIES]]
+            leads.append({
+                "id": _lead_id("unguarded-hook", hook.get("name"), contract, path),
+                "kind": "unguarded-hook", "functions": [_ref(hook)] + [
+                    _ref(e) for e in entries[:MAX_HOOK_ENTRIES]],
+                "path": path, "contract": contract, "hook": hook.get("name"),
+                "entry_points": [e.get("name") for e in entries],
+                "entry_guards": {e.get("name"): sorted(e.get("guards") or [])
+                                 for e in entries[:MAX_HOOK_ENTRIES]},
+                "question": "%s checks nothing - no condition, modifier or guarded call - and %s "
+                            "runs it from %s. Who can call %s, and is that intended?"
+                            % (hook.get("name"), contract, ", ".join(names), names[0]),
+                "_strength": 2.0, "_vendored": False})
     return leads
 
 
@@ -181,10 +298,11 @@ def paired_write_omission(symbols, writes):
     writers = defaultdict(set)
     for sym in entries:
         for var in writes.get(sym.get("id"), ()):
-            writers[var].add(sym.get("id"))
+            writers[(_surface(sym), var)].add(sym.get("id"))
     leads = []
-    for var in sorted(writers):
-        group = writers[var]
+    for key in sorted(writers):
+        surface, var = key
+        group = writers[key]
         if len(group) < PAIR_MIN_COWRITERS + 1:
             continue
         together = Counter(other for sid in group for other in writes.get(sid, ()) if other != var)
@@ -193,12 +311,12 @@ def paired_write_omission(symbols, writes):
                     and n < len(group)]
         skipped = defaultdict(list)
         for partner in partners:
-            for sid in group - writers[partner]:
+            for sid in group - writers[(surface, partner)]:
                 skipped[sid].append(partner)
         for sid, missed in skipped.items():
             sym = by_id[sid]
             missed = sorted(missed)
-            evidence = {b: sorted(by_id[o].get("name") for o in group & writers[b])
+            evidence = {b: sorted(by_id[o].get("name") for o in group & writers[(surface, b)])
                         for b in missed}
             ratio = max(len(evidence[b]) / float(len(group)) for b in missed)
             first = missed[0]
@@ -206,7 +324,10 @@ def paired_write_omission(symbols, writes):
                 "id": _lead_id("paired-write-omission", sym.get("name"), sym.get("path"), var,
                                *missed),
                 "kind": "paired-write-omission", "functions": [_ref(sym)],
-                "path": sym.get("path"), "variable": var, "skipped_partners": missed,
+                "path": sym.get("path"), "contract": _contract(sym),
+                "function_inherited_from": (sym.get("inherited_from") if sym.get("inherits")
+                                            else None),
+                "variable": var, "skipped_partners": missed,
                 "support": {"writers_of_variable": len(group),
                             "also_write_partner": {b: len(evidence[b]) for b in missed}},
                 "evidence": evidence,
@@ -214,7 +335,7 @@ def paired_write_omission(symbols, writes):
                             "%s (%s) also write. Does %s drift out of step on this path?"
                             % (sym.get("name"), var, ", ".join(missed), len(evidence[first]),
                                len(group), var, ", ".join(evidence[first][:4]), first),
-                "_strength": ratio})
+                "_strength": ratio, "_vendored": _inherited_vendored(sym)})
     return leads
 
 
@@ -235,16 +356,24 @@ def _listed(tokens, first=(), limit=4):
 
 
 def sibling_asymmetry(symbols, writes):
-    modifier_names = {str(m) for s in symbols for m in s.get("modifiers_unverified") or []}
+    modifier_names = _modifier_tokens(symbols)
+    # A graph with heir symbols carries every inherited function in its heir's surface; an
+    # older graph only names the heirs in inherited_by.
+    surfaces = any("contract_deployable" in s for s in symbols)
     by_contract = defaultdict(lambda: defaultdict(list))
     for sym in _candidates(symbols):
         if role(sym) != "entry":
             continue
-        for contract in {_contract(sym)} | set(sym.get("inherited_by") or []):
-            by_contract[contract][_short(sym)].append(sym)
+        if surfaces:
+            keys = {_surface(sym)}
+        else:
+            keys = {(None, c) for c in {_contract(sym)} | set(sym.get("inherited_by") or [])}
+        for key in keys:
+            by_contract[key][_short(sym)].append(sym)
     leads, seen = [], set()
-    for contract in sorted(by_contract):
-        functions = by_contract[contract]
+    for key in sorted(by_contract, key=lambda k: (str(k[0]), str(k[1]))):
+        contract = key[1]
+        functions = by_contract[key]
         for first_verb, second_verb in SIBLING_VERBS:
             for name in sorted(functions):
                 suffix = _verb_split(name, first_verb)
@@ -283,7 +412,8 @@ def sibling_asymmetry(symbols, writes):
                             "question": "In %s, %s. Is each difference intended?"
                                         % (contract, "; ".join(parts)),
                             "_strength": float(len(diff["guards_only_in_first"])
-                                               + len(diff["guards_only_in_second"])) + 0.5})
+                                               + len(diff["guards_only_in_second"])) + 0.5,
+                            "_vendored": _inherited_vendored(one) and _inherited_vendored(two)})
     return leads
 
 
@@ -294,13 +424,16 @@ def analyze(graph):
     writes = _effective_writes(symbols)
     found = {"guard-asymmetry": guard_asymmetry(symbols, writes),
              "paired-write-omission": paired_write_omission(symbols, writes),
-             "sibling-asymmetry": sibling_asymmetry(symbols, writes)}
+             "sibling-asymmetry": sibling_asymmetry(symbols, writes),
+             "unguarded-hook": unguarded_hooks(symbols)}
     leads, truncated = [], {}
     for kind, rows in found.items():
-        rows.sort(key=lambda r: (-r["_strength"], str(r["path"]), r["id"]))
+        # Leads on inherited vendored code last: they are real surface, but rarely the bug.
+        rows.sort(key=lambda r: (r["_vendored"], -r["_strength"], str(r["path"]), r["id"]))
         truncated[kind] = len(rows) > MAX_LEADS_PER_KIND
         for row in rows[:MAX_LEADS_PER_KIND]:
             row.pop("_strength", None)
+            row.pop("_vendored", None)
             leads.append(row)
     result = {"schema": 1, "method": "odd-one-out-heuristic",
               "counts": {kind: min(len(rows), MAX_LEADS_PER_KIND) for kind, rows in found.items()},
@@ -310,7 +443,8 @@ def analyze(graph):
                              "guard_carriers": "strict majority of the other writers",
                              "pair_min_cowriters": PAIR_MIN_COWRITERS,
                              "pair_min_ratio": round(PAIR_MIN_RATIO, 4),
-                             "sibling_verbs": [list(p) for p in SIBLING_VERBS]},
+                             "sibling_verbs": [list(p) for p in SIBLING_VERBS],
+                             "authorization_hook": AUTH_HOOK.pattern},
               "leads": leads, "review_state": "unreviewed-leads", "notice": NOTICE}
     solidity = [s for s in symbols if s.get("language") == "solidity"]
     if solidity and not any("guards" in s for s in solidity):

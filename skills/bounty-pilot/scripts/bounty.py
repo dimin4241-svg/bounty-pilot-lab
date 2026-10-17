@@ -195,20 +195,41 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
             require_private_output(target, Path(top) if top else anchor, what='impact-plan --out')
     target.mkdir(parents=True, exist_ok=True)
     parsed = load_impact_helper('semantic_graph')
-    symbols = []
+    symbols, skipped_sources = [], []
     if solc:
-        symbols.extend(parsed.solidity_symbols(parsed.load_solc(solc)))
+        trees = parsed.load_solc(solc)
+        skipped_sources = list(getattr(trees, 'skipped', []))
+        symbols.extend(parsed.solidity_symbols(trees))
     if repo:
         symbols.extend(parsed.py_symbols(repo))
-    dropped = 0
-    if scope:
-        prefixes = tuple(str(x) for x in scope if str(x))
-        if prefixes:
-            kept = [sym for sym in symbols
-                    if str(sym.get('path', '')).startswith(prefixes)]
-            dropped = len(symbols) - len(kept)
-            symbols = kept
-    graph = parsed.build(symbols)
+    dropped = kept_dependencies = 0
+    prefixes = [str(x) for x in scope or [] if str(x)]
+    if prefixes:
+        # Out-of-scope code an in-scope symbol calls or inherits stays, marked `dependency`:
+        # `Vault.deposit` moves value inside the vendored ERC4626._deposit it inherits, and
+        # dropping that code would drop the path. Dependencies are never ranked as entries
+        # and never compared for odd-one-out leads.
+        by_id = {sym['id']: sym for sym in symbols}
+        keep = {sym['id'] for sym in symbols if path_in_scope(str(sym.get('path', '')), prefixes)}
+        todo = list(keep)
+        while todo:
+            sym = by_id[todo.pop()]
+            for callee in list(sym.get('calls') or []) + [sym.get('inherits')]:
+                if callee in by_id and callee not in keep:
+                    keep.add(callee)
+                    todo.append(callee)
+        kept = []
+        for sym in symbols:
+            if sym['id'] not in keep:
+                continue
+            in_scope = path_in_scope(str(sym.get('path', '')), prefixes)
+            kept.append(dict(sym, scope_role='in-scope' if in_scope else 'dependency'))
+            kept_dependencies += not in_scope
+        dropped = len(symbols) - len(kept)
+        symbols = kept
+    graph = parsed.build(symbols, skipped_sources)
+    if prefixes:
+        graph['scope_filter'] = prefixes
     paths = load_impact_helper('impact_paths').rank(graph)
     odd = load_impact_helper('odd_one_out').analyze(graph)
     dump(target / 'semantic-graph.json', graph)
@@ -217,18 +238,21 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
     by_id = {sym.get('id'): sym for sym in graph.get('symbols', [])}
     in_scope_sinks = 0
     for ranked in paths.get('ranked', []):
-        sym = by_id.get(ranked.get('sink'))
-        path_str = str(sym.get('path', '')) if sym else ''
-        if not scope:
-            if path_str and not path_str.startswith(('lib/', 'test/', 'script/', 'node_modules/')):
+        reached = [by_id.get(ranked.get('sink')), by_id.get(ranked.get('entry'))]
+        reached = [str(sym.get('path', '')) for sym in reached if sym]
+        if not prefixes:
+            if any(p and not p.startswith(('lib/', 'test/', 'script/', 'node_modules/'))
+                   for p in reached):
                 in_scope_sinks += 1
-        elif path_str.startswith(tuple(str(x) for x in scope if str(x))):
+        elif any(path_in_scope(p, prefixes) for p in reached):
             in_scope_sinks += 1
     result = {'graph': str(target / 'semantic-graph.json'),
               'impact_paths': str(target / 'impact-paths.json'),
               'symbols': len(graph['symbols']), 'paths': len(paths['ranked']),
               'scope_filter': list(scope) if scope else None,
               'symbols_dropped_by_scope': dropped,
+              'symbols_kept_as_dependencies': kept_dependencies,
+              'skipped_sources': skipped_sources,
               'graph_truncated': bool(graph.get('truncated')),
               'ranked_sinks_in_scope': in_scope_sinks,
               'odd_one_out': str(target / 'odd-one-out.json'),
@@ -237,6 +261,11 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
                         'odd-one-out.json holds unreviewed leads - a check or a paired write most '
                         'comparable entry points carry and one does not - never findings; '
                         'intentional asymmetries exist.'}
+    if skipped_sources:
+        result['skipped_sources_warning'] = (
+            '%d source file(s) were over the AST node cap and were not analysed; read them by '
+            'hand: %s' % (len(skipped_sources),
+                          ', '.join(x['path'] for x in skipped_sources[:10])))
     if in_scope_sinks == 0 and paths.get('ranked'):
         result['warning'] = (
             'No ranked sink is in the in-scope sources: this queue aims at dependencies or tests '
@@ -1204,7 +1233,11 @@ def lead_queue(run):
                       'something capability-probe measured as available; the probe is right '
                       'about what it ran, so read the claim again. coverage_floor is the last '
                       'coverage-floor measurement, present only once that command has run: it '
-                      'is what the word exhausted has to answer to. audit_inventory is the '
+                      'is what the word exhausted has to answer to. function_coverage is the '
+                      'last function-coverage measurement; either one is stale when a record or '
+                      'coverage file it counted changed after it ran (stale_inputs) - re-run it '
+                      'before reading the fraction. odd_one_out counts the odd-one-out leads no '
+                      'odd-one-out-review.json entry has closed. audit_inventory is the '
                       'review artifacts this repository ships, present once audit-inventory has '
                       'run: each unreviewed one is a published list of issues the team already '
                       'knows that nobody in this run has accounted for, and submission is '
@@ -1715,7 +1748,7 @@ def _is_vendored_path(path):
     return any(part.lower() in VENDOR_PARTS for part in Path(path).parts[:-1])
 
 
-def _surface_paths(cell):
+def _surface_paths(cell, unparsed=None):
     """Path-looking tokens in one surface cell, stripped of the `:Contract.function` tail.
 
     A token counts as a path when it carries a separator or a source suffix. `src/` and
@@ -1724,8 +1757,16 @@ def _surface_paths(cell):
     indistinguishable from an invariant name like `accounting`.
     """
     found = []
-    for token in SURFACE_SPLIT.split(cell or ''):
-        raw = token.strip().strip('`*_|').split(':', 1)[0].replace('\\', '/').lstrip('./')
+    for token in SURFACE_SPLIT.split(_protect_arguments(cell)):
+        raw = token.strip().strip('`*_|').replace('\\', '/')
+        while raw.startswith('./'):
+            raw = raw[2:]
+        if _unrooted(raw):
+            # `/home/me/repo/src/Vault.sol` or `C:\\repo\\...`: reported, never credited.
+            if unparsed is not None and _reportable_path(raw):
+                unparsed.append(raw.replace('\x00', ' ').replace('\x01', ','))
+            continue
+        raw = raw.split(':', 1)[0]
         if not raw or _is_placeholder(raw) or not ('/' in raw or Path(raw).suffix):
             continue
         trimmed = raw.rstrip('/')
@@ -1755,11 +1796,24 @@ def _examined_by(files, surfaces):
     return {path for path in files for surface in surfaces if _examines(path, surface)}
 
 
-def _credited_by(files, surfaces):
-    """(files a surface names, files only a directory surface covers)."""
+def _credited_by(files, surfaces, ambiguous=None):
+    """(files a surface names, files only a directory surface covers).
+
+    A bare file name (`Vault.sol`) names a file only when exactly one file in the list has
+    that name; otherwise it is added to `ambiguous` and credits none of them."""
+    by_name = {}
+    for path in files:
+        by_name.setdefault(Path(path).name, []).append(path)
+    usable = []
+    for surface in surfaces:
+        if '/' not in surface and Path(surface).suffix and len(by_name.get(surface, ())) > 1:
+            if ambiguous is not None:
+                ambiguous.add(surface)
+            continue
+        usable.append(surface)
     named, under = set(), set()
     for path in files:
-        for surface in surfaces:
+        for surface in usable:
             kind = _credit_kind(path, surface)
             if kind == 'file':
                 named.add(path)
@@ -1862,15 +1916,45 @@ UNPARSED_WARNING = (
     'this fraction measures formatting, not coverage.')
 
 
-def _outside_scope_onchain(tracked, scope_prefixes):
+# A Rust crate is on-chain by its directory (`programs/` in an Anchor workspace, `program/` in
+# a native one) or by what its Cargo.toml depends on.
+ONCHAIN_RUST_DIRS = {'programs', 'program'}
+ONCHAIN_CRATE_DEPENDENCY = re.compile(
+    r'(?m)^\s*(?:anchor-lang|solana-program|pinocchio|steel|cosmwasm-std|ink|stylus-sdk)\s*=')
+
+
+def _onchain_crates(root, tracked):
+    """Directories of tracked Cargo.toml files whose dependencies make the crate a program."""
+    crates = set()
+    if root is None:
+        return crates
+    for path in tracked:
+        if Path(path).name.lower() != 'cargo.toml':
+            continue
+        size = target_file_size(root, path)
+        if size is None or size > 200_000:
+            continue
+        try:
+            text = (Path(root) / path).read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        if ONCHAIN_CRATE_DEPENDENCY.search(text):
+            crates.add(str(Path(path).parent))
+    return crates
+
+
+def _outside_scope_onchain(tracked, scope_prefixes, root=None):
     """On-chain sources --scope left out: a warning, never a gate failure."""
     if not scope_prefixes:
         return []
+    crates = _onchain_crates(root, tracked)
     found = []
     for path in tracked:
         suffix = Path(path).suffix.lower()
-        onchain = suffix in ONCHAIN_SUFFIXES or (
-            suffix == '.rs' and 'programs' in [p.lower() for p in Path(path).parts[:-1]])
+        parents = [str(x) for x in Path(path).parents]
+        onchain = suffix in ONCHAIN_SUFFIXES or (suffix == '.rs' and (
+            ONCHAIN_RUST_DIRS & {p.lower() for p in Path(path).parts[:-1]}
+            or any(x in crates for x in parents)))
         if (onchain and not _is_test_path(path) and not _is_vendored_path(path)
                 and not path_in_scope(path, scope_prefixes)):
             found.append(path)
@@ -1909,9 +1993,10 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
         in_scope.append(path)
     files = set(in_scope)
     named, under = {}, set()
+    ambiguous, unparsed_surfaces = set(), []
     for name, cells in _surface_cells_by_source(run).items():
-        surfaces = [s for cell in cells for s in _surface_paths(cell)]
-        named[name], dir_only = _credited_by(files, surfaces)
+        surfaces = [s for cell in cells for s in _surface_paths(cell, unparsed_surfaces)]
+        named[name], dir_only = _credited_by(files, surfaces, ambiguous)
         under |= dir_only
     examined = sorted(set().union(*named.values()))
     by_directory = sorted(under - set(examined))
@@ -1920,7 +2005,7 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
     state = ('no-files-in-scope' if not files else
              'at-or-above-floor' if fraction >= min_fraction else 'below-floor')
     unparsed = _unparsed_coverage_files(run)
-    outside = _outside_scope_onchain(tracked, scope_prefixes)
+    outside = _outside_scope_onchain(tracked, scope_prefixes, root)
     result = {'state': state, 'scope': list(scope_prefixes or []),
               'files_in_scope': len(files), 'files_examined': len(examined),
               'examined_fraction': fraction, 'min_fraction': min_fraction,
@@ -1931,13 +2016,18 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
               'credited_by_directory_only': by_directory,
               'excluded_vendored_count': len(vendored), 'excluded_vendored': vendored[:50],
               'skipped_files': skipped,
+              'ambiguous_surfaces': sorted(ambiguous)[:UNEXAMINED_SHOWN],
+              'unparsed_surfaces': sorted(set(unparsed_surfaces))[:UNEXAMINED_SHOWN],
               'outside_scope_onchain_count': len(outside),
               'outside_scope_onchain': outside[:UNEXAMINED_SHOWN],
               'notice': 'Recorded, not audited: a coverage.md row means somebody wrote a row, '
                         'never that the file is safe. A file counts as examined when a '
                         'coverage.md surface, a known-hypotheses.md surface, a record\'s '
                         'affected_paths or an examined.json surface names that file by whole '
-                        'path segments (or by its bare file name). A surface ending in / is a '
+                        'path segments (or by its bare file name, when exactly one in-scope '
+                        'file has it - otherwise it is listed under ambiguous_surfaces). An '
+                        'absolute or Windows path is listed under unparsed_surfaces and credits '
+                        'nothing. A surface ending in / is a '
                         'directory: the files only such a row reaches are listed under '
                         'credited_by_directory_only and do not count toward examined_fraction '
                         'or the gate, because one `src/` row would otherwise mark a whole tree '
@@ -1957,6 +2047,7 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
             'does not measure them. Add a --scope prefix for each, or record why the program '
             'excludes them.' % (len(outside), ', '.join(suffixes),
                                 ' '.join(scope_prefixes or [])))
+    result['input_digests'] = _input_digests(run)
     path = run / 'coverage-floor.json'
     if path.is_symlink():
         raise ValueError(f'{path} is a symlink; refusing to write through it')
@@ -1966,6 +2057,45 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
                    unexamined_truncated=len(unexamined) > UNEXAMINED_SHOWN,
                    credited_by_directory_only=by_directory[:UNEXAMINED_SHOWN])
     return summary
+
+
+# The run files a coverage measurement reads. Each result records their digests, so `queue`
+# can say when a measurement predates the rows it should count.
+COVERAGE_INPUTS = ('coverage.md', 'known-hypotheses.md', 'findings.json', EXAMINED_FILE)
+
+
+def _file_digest(path):
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest() if Path(path).is_file() \
+            else None
+    except OSError:
+        return None
+
+
+def _input_digests(run, extra=None):
+    digests = {name: _file_digest(Path(run) / name) for name in COVERAGE_INPUTS}
+    for name, path in (extra or {}).items():
+        digests[name] = _file_digest(path)
+    return digests
+
+
+def _stale_inputs(run, result_path, data):
+    """Inputs that changed since the measurement in `data` was written."""
+    recorded = data.get('input_digests')
+    if isinstance(recorded, dict):
+        changed = []
+        for name, digest in recorded.items():
+            path = Path(name) if Path(name).is_absolute() else Path(run) / name
+            if _file_digest(path) != digest:
+                changed.append(name)
+        return sorted(changed)
+    # A measurement written before digests were recorded: compare modification times.
+    try:
+        written = Path(result_path).stat().st_mtime
+    except OSError:
+        return []
+    return sorted(name for name in COVERAGE_INPUTS
+                  if (Path(run) / name).is_file() and (Path(run) / name).stat().st_mtime > written)
 
 
 def read_coverage_floor(run):
@@ -1979,13 +2109,15 @@ def read_coverage_floor(run):
         return None
     if not isinstance(data, dict) or not isinstance(data.get('examined_fraction'), (int, float)):
         return None
+    stale = _stale_inputs(run, path, data)
     return {'state': data.get('state'), 'files_in_scope': data.get('files_in_scope'),
             'files_examined': data.get('files_examined'),
             'examined_fraction': data['examined_fraction'],
             'min_fraction': data.get('min_fraction'),
             'unexamined_count': data.get('unexamined_count'),
             'credited_by_directory_only_count': data.get('credited_by_directory_only_count'),
-            'outside_scope_onchain_count': data.get('outside_scope_onchain_count')}
+            'outside_scope_onchain_count': data.get('outside_scope_onchain_count'),
+            'stale': bool(stale), 'stale_inputs': stale}
 
 
 # --------------------------------------------------------------------------- #
@@ -2000,23 +2132,73 @@ LEXICAL_SUFFIXES = {'.sol': 'solidity', '.vy': 'vyper', '.rs': 'rust', '.move': 
 FILE_LIKE_SUFFIXES = SOURCE_SUFFIXES | CONFIG_SUFFIXES | {'.md', '.txt'}
 
 
-def _function_refs(cell):
-    """(path, contract, function) triples one surface cell names; path and contract may be
-    None. Accepted: `path:Contract.function`, `Contract.function` (or `module::function`) and
-    `path:function`, an argument list ignored. A file or a directory alone names no function,
-    nor does a bare function name, which reads the same as an invariant."""
+# `withdraw(uint256 amount, address to)` is one surface: the argument list is kept whole
+# through SURFACE_SPLIT and read for the overload it names.
+ARGUMENT_LIST = re.compile(r'(?<=[\w$])\(([^()]*)\)')
+DATA_LOCATIONS = {'memory', 'calldata', 'storage', 'payable', 'indexed'}
+TYPE_ALIASES = {'uint': 'uint256', 'int': 'int256', 'byte': 'bytes1'}
+
+
+def _protect_arguments(cell):
+    return ARGUMENT_LIST.sub(lambda m: '(' + re.sub(r'\s+', '\x00', m.group(1).strip())
+                             .replace(',', '\x01') + ')', cell or '')
+
+
+def _argument_types(text):
+    """`uint256 amount\x01address to` -> ['uint256', 'address']; '' -> []."""
+    types = []
+    for arg in text.split('\x01'):
+        words = [w for w in arg.replace('\x00', ' ').split() if w not in DATA_LOCATIONS]
+        if not words:
+            if arg.strip('\x00 '):
+                types.append('?')
+            continue
+        base = words[0]
+        suffix = re.search(r'(?:\[\d*\])*$', base).group(0)
+        core = base[:len(base) - len(suffix)]
+        types.append(TYPE_ALIASES.get(core, core) + suffix)
+    return types
+
+
+def _unrooted(raw):
+    """An absolute, Windows or parent-relative path: it names nothing inside the checkout."""
+    return raw.startswith(('/', '../', '~')) or bool(re.match(r'^[A-Za-z]:/', raw))
+
+
+def _reportable_path(raw):
+    """An unrooted token worth reporting: a path with a file or directory in it, not a `/`
+    separating two words of a column header."""
+    body = re.sub(r'^(?:[A-Za-z]:)?[/~.]+', '', raw.split(':')[0] if not re.match(
+        r'^[A-Za-z]:/', raw) else raw[2:].split(':')[0])
+    return bool(body) and ('/' in body or bool(Path(body).suffix))
+
+
+def _function_refs(cell, unparsed=None):
+    """(path, contract, function, arguments) one surface cell names; path, contract and
+    arguments may be None. Accepted: `path:Contract.function`, `Contract.function` (or
+    `module::function`) and `path:function`, each optionally with an argument list naming one
+    overload. A file or a directory alone names no function, nor does a bare function name,
+    which reads the same as an invariant. An absolute or Windows path is collected into
+    `unparsed`, never credited."""
     refs = []
-    for token in SURFACE_SPLIT.split(cell or ''):
-        raw = token.strip().strip('`*|"\'[]').lstrip('(').rstrip('.,;:)').replace('\\', '/')
+    for token in SURFACE_SPLIT.split(_protect_arguments(cell)):
+        raw = token.strip().strip('`*|"\'[]').lstrip('(').rstrip('.,;:').replace('\\', '/')
+        if raw.endswith(')') and '(' not in raw:
+            raw = raw.rstrip(')')
         while raw.startswith('./'):
             raw = raw[2:]
         if not raw or _is_placeholder(raw):
             continue
-        parts = re.split(r'(?<!:):(?!:)', raw, maxsplit=1)
+        if _unrooted(raw):
+            if unparsed is not None and _reportable_path(raw):
+                unparsed.append(raw.replace('\x00', ' ').replace('\x01', ','))
+            continue
+        head, _, arguments = raw.partition('(')
+        parts = re.split(r'(?<!:):(?!:)', head, maxsplit=1)
         path, rest = (parts[0], parts[1]) if len(parts) == 2 else (None, parts[0])
         if path is not None and not ('/' in path or Path(path).suffix):
             continue
-        rest = rest.split('(', 1)[0]
+        args = _argument_types(arguments.rstrip(')')) if '(' in raw else None
         if path is None and ('/' in rest or (
                 '::' not in rest and Path(rest).suffix.lower() in FILE_LIKE_SUFFIXES)):
             continue  # a file or a directory: no function named
@@ -2026,21 +2208,48 @@ def _function_refs(cell):
         if len(names) == 1:
             if path is None:
                 continue
-            refs.append((path.rstrip('/'), None, names[0]))
+            refs.append((path.rstrip('/'), None, names[0], args))
         else:
-            refs.append((path.rstrip('/') if path else None, names[-2], names[-1]))
+            refs.append((path.rstrip('/') if path else None, names[-2], names[-1], args))
     return refs
 
 
-def _ref_matches(entry, ref):
-    path, contract, function = ref
-    if function != entry['function']:
+def _arguments_match(entry, args):
+    """None when the ref names no overload; else whether this entry is the overload named.
+    A source type (`IERC20`, `Pool.Key`) or its ABI form (`address`) both match."""
+    params = entry.get('params')
+    if args is None or params is None:
+        return True
+    if len(params) != len(args):
         return False
-    if contract is not None and contract != entry['contract']:
-        # `Vault.deposit` names `VaultBase.deposit` when Vault inherits it unchanged; the path
-        # given is then Vault's file, which this entry does not carry.
-        return contract in entry.get('inherited_by', ())
-    return path is None or _credit_kind(entry['path'], path) == 'file'
+    abi = entry.get('abi_params') or params
+    for given, source, encoded in zip(args, params, abi):
+        if given not in (source, source.rsplit('.', 1)[-1], encoded):
+            return False
+    return True
+
+
+def _ref_matches(entry, ref, own_entries=()):
+    """How a ref credits an entry: 'named' (its own contract or file), 'declaration' (the
+    contract that declares an inherited function, when the heir resolves it the same way),
+    'inherited' (an heir with no entry of its own, older graphs), or None."""
+    path, contract, function, args = ref
+    if function != entry['function'] or not _arguments_match(entry, args):
+        return None
+    if contract is None or contract == entry['contract']:
+        if path is None or _credit_kind(entry['path'], path) == 'file':
+            return 'named'
+        return None
+    if entry.get('inherits') and contract == entry.get('declared_in') and \
+            entry.get('same_as_declaration'):
+        if path is None or _credit_kind(entry.get('declaration_path') or '', path) == 'file':
+            return 'declaration'
+        return None
+    # `Vault.deposit` names `VaultBase.deposit` when Vault inherits it unchanged and the graph
+    # has no `Vault.deposit` of its own (a graph without heir symbols, or an abstract heir).
+    if contract in entry.get('inherited_by', ()) and (contract, function) not in own_entries:
+        return 'inherited'
+    return None
 
 
 def _excluded_reason(path, scope_prefixes):
@@ -2055,10 +2264,16 @@ def _excluded_reason(path, scope_prefixes):
 
 
 def _graph_entry_points(graph, scope_prefixes, excluded):
+    """Every entry point of the in-scope deployed surface.
+
+    A function an in-scope contract inherits is that contract's entry point (`Vault.transfer`,
+    `Proxy.upgradeToAndCall`) even when its code is vendored: the graph's heir symbols carry
+    it at the heir's path. A declaration in an abstract contract that in-scope heirs deploy is
+    counted through them, once per heir."""
     if not isinstance(graph, dict) or not isinstance(graph.get('symbols'), list):
         raise ValueError('the semantic graph must be an object with a symbols list '
                          '(semantic-graph.json from impact-plan)')
-    entries = []
+    kept = []
     for sym in graph['symbols']:
         if not isinstance(sym, dict) or not sym.get('entry') or not sym.get('implemented', True):
             continue
@@ -2067,18 +2282,44 @@ def _graph_entry_points(graph, scope_prefixes, excluded):
         if reason:
             excluded[reason] = excluded.get(reason, 0) + 1
             continue
+        kept.append(sym)
+    represented = {sym.get('inherits') for sym in kept if sym.get('inherits')}
+    entries = []
+    for sym in kept:
+        heirs = [x.rsplit(':', 1)[0] for x in sym.get('deployed_by') or []]
+        if sym.get('contract_deployable') is False and (
+                sym.get('id') in represented
+                or any(_excluded_reason(x, scope_prefixes) is None for x in heirs)):
+            excluded['abstract-counted-through-heirs'] = \
+                excluded.get('abstract-counted-through-heirs', 0) + 1
+            continue
+        if sym.get('inherits') and sym.get('vendored_declaration') and \
+                sym.get('state_mutability') in ('view', 'pure'):
+            # `Vault.name()`: vendored code that cannot change state is not an entry to read.
+            excluded['inherited-vendored-read-only'] = \
+                excluded.get('inherited-vendored-read-only', 0) + 1
+            continue
+        path = str(sym.get('path', ''))
         name = str(sym.get('name', ''))
         contract = sym.get('contract') or (name.rsplit('.', 1)[0] if '.' in name else '')
-        entries.append({'name': name, 'path': path, 'contract': contract,
-                        'function': name.rsplit('.', 1)[-1], 'source': 'semantic-graph',
-                        'language': sym.get('language', 'unknown'),
-                        'function_kind': sym.get('function_kind'),
-                        'read_only': sym.get('state_mutability') in ('view', 'pure'),
-                        'inherited_by': list(sym.get('inherited_by') or []),
-                        'sinks': list(sym.get('sinks') or []),
-                        # A lock only a modifier writes (nonReentrant) is not accounting.
-                        'writes': len(set(sym.get('writes_transitive', sym.get('writes')) or [])
-                                      - set(sym.get('writes_via_modifiers') or []))})
+        entry = {'name': name, 'path': path, 'contract': contract,
+                 'function': name.rsplit('.', 1)[-1], 'source': 'semantic-graph',
+                 'language': sym.get('language', 'unknown'),
+                 'function_kind': sym.get('function_kind'),
+                 'read_only': sym.get('state_mutability') in ('view', 'pure'),
+                 'inherited_by': list(sym.get('inherited_by') or []),
+                 'sinks': list(sym.get('sinks') or []),
+                 'params': sym.get('parameter_types'),
+                 'abi_params': sym.get('abi_parameter_types'),
+                 'signature': sym.get('signature'),
+                 # A lock only a modifier writes (nonReentrant) is not accounting.
+                 'writes': len(set(sym.get('writes_transitive', sym.get('writes')) or [])
+                               - set(sym.get('writes_via_modifiers') or []))}
+        if sym.get('inherits'):
+            entry.update(inherits=sym.get('inherits'), declared_in=sym.get('inherited_from'),
+                         declaration_path=sym.get('declaration_path'),
+                         same_as_declaration=not sym.get('resolution_differs', False))
+        entries.append(entry)
     return entries
 
 
@@ -2147,6 +2388,9 @@ def _enclosing(stack, pattern):
     return None
 
 
+TEST_ATTRIBUTE = re.compile(r'#\[(?:cfg\(test\)\]|test_only\]|test\]|test\()')
+
+
 def _lexical_functions(path, text, language, native_crate=False):
     """(contract, function, line) entry points by source shape; never semantic."""
     clean = _blank_comments_and_strings(text, language)
@@ -2166,8 +2410,13 @@ def _lexical_functions(path, text, language, native_crate=False):
                 decorators = []
         return found
     file_module = re.search(r'(?m)^\s*module\s+(?:[\w]+::)?(\w+)\s*;', clean)
+    test_file_module = bool(file_module and re.search(r'#\[test_only\]\s*$',
+                                                      clean[:file_module.start()]))
     for header, offset, stack in _brace_blocks(clean):
         line = clean.count('\n', 0, offset) + 1
+        if language in ('rust', 'move') and (
+                any(TEST_ATTRIBUTE.search(h) for h in stack + [header]) or test_file_module):
+            continue  # `#[cfg(test)] mod tests`, `#[test]`, `#[test_only]`: never deployed
         if language == 'solidity':
             m = (re.search(r'\bfunction\s+([A-Za-z_$][\w$]*)\s*\(', header)
                  or re.search(r'(?:^|\s)(constructor|receive|fallback)\s*\(', header))
@@ -2181,8 +2430,8 @@ def _lexical_functions(path, text, language, native_crate=False):
             m = re.search(r'\bfn\s+([A-Za-z_]\w*)', header)
             if not m:
                 continue
-            public = re.search(r'(?:^|\s)pub(?:\([^)]*\))?\s+(?:(?:async|unsafe|const)\s+)*fn\b',
-                               header)
+            # `pub(crate)` is not callable from outside the crate: not an instruction.
+            public = re.search(r'(?:^|\s)pub\s+(?:(?:async|unsafe|const)\s+)*fn\b', header)
             program = next((h for h in reversed(stack)
                             if '#[program]' in h and re.search(r'\bmod\s+\w+', h)), None)
             if program and public:
@@ -2206,7 +2455,7 @@ def _lexical_functions(path, text, language, native_crate=False):
             if not m:
                 continue
             embedded = any('#[abi(embed_v0)]' in h and re.search(r'\bimpl\b', h) for h in stack)
-            if legacy or embedded or '#[external(v0)]' in header:
+            if legacy or embedded or '#[external(v0)]' in header or '#[l1_handler]' in header:
                 found.append((_enclosing(stack, r'\bmod\s+(\w+)') or stem, m.group(1), line))
     return found
 
@@ -2304,15 +2553,49 @@ def function_coverage(run, graph=None, repo=None, scope_prefixes=None,
             sources.append('lexical')
         entries.extend(lexical)
     cells = _surface_cells_by_source(run)
-    refs = {name: [ref for cell in rows for ref in _function_refs(cell)]
+    unparsed_surfaces = []
+    refs = {name: [ref for cell in rows for ref in _function_refs(cell, unparsed_surfaces)]
             for name, rows in cells.items()}
     no_function = sorted({s for rows in cells.values() for cell in rows
                           for s in _surface_paths(cell) if not _function_refs(cell)})
-    credited = {}
+    # A bare file name (`Vault.sol:Vault.f`) names a file only when one entry path has it.
+    paths_by_name = {}
+    for entry in entries:
+        paths_by_name.setdefault(Path(entry['path']).name, set()).add(entry['path'])
+    ambiguous = set()
+    for name in refs:
+        resolved = []
+        for ref in refs[name]:
+            path = ref[0]
+            if path and '/' not in path and Path(path).suffix:
+                choices = paths_by_name.get(path, set())
+                if len(choices) > 1:
+                    ambiguous.add(path)
+                    continue
+                if choices:
+                    ref = (next(iter(choices)),) + tuple(ref[1:])
+            resolved.append(ref)
+        refs[name] = resolved
+    own_entries = {(e['contract'], e['function']) for e in entries}
+    overloads = {}
+    for entry in entries:
+        key = (entry['path'], entry['contract'], entry['function'])
+        overloads[key] = overloads.get(key, 0) + 1
+    zero_arity = {(e['contract'], e['function']) for e in entries if e.get('params') == []}
+    credited, how, by_name_only = {}, {}, set()
     for index, entry in enumerate(entries):
         for name, found in refs.items():
-            if any(_ref_matches(entry, ref) for ref in found):
+            for ref in found:
+                if ref[3] == [] and (entry['contract'], entry['function']) not in zero_arity:
+                    ref = ref[:3] + (None,)  # `f()` written for a function with arguments
+                kind = _ref_matches(entry, ref, own_entries)
+                if not kind:
+                    continue
                 credited.setdefault(index, set()).add(name)
+                how.setdefault(index, set()).add(kind)
+                if ref[3] is None and overloads[(entry['path'], entry['contract'],
+                                                 entry['function'])] > 1:
+                    by_name_only.add(index)
     weights = load_impact_helper('impact_paths').CLASS_WEIGHTS
     examined, unexamined = [], []
     for index, entry in enumerate(entries):
@@ -2320,12 +2603,21 @@ def function_coverage(run, graph=None, repo=None, scope_prefixes=None,
                                            'language', 'sinks', 'writes')}
         if entry.get('line'):
             row['line'] = entry['line']
+        if entry.get('signature'):
+            row['signature'] = entry['signature']
+        if entry.get('inherits'):
+            row['inherited_from'] = entry.get('declared_in')
         if index in credited:
-            examined.append(dict(row, credited_by=sorted(credited[index])))
+            extra = {'credited_by': sorted(credited[index]), 'credited_via': sorted(how[index])}
+            if index in by_name_only:
+                extra['credited_all_overloads'] = True
+            examined.append(dict(row, **extra))
         else:
             key, row['priority_tier'] = _function_priority(entry, weights)
-            unexamined.append((key, row))
-    unexamined = [row for _, row in sorted(unexamined, key=lambda pair: pair[0])]
+            unexamined.append((key, row, index))
+    unexamined.sort(key=lambda item: item[0])
+    unexamined_entries = [entries[index] for _, _, index in unexamined]
+    unexamined = [row for _, row, _ in unexamined]
     total = len(entries)
     fraction = round(len(examined) / total, 4) if total else 0.0
     state = ('no-entry-points' if not total else
@@ -2333,7 +2625,7 @@ def function_coverage(run, graph=None, repo=None, scope_prefixes=None,
     not_reached = []
     for row in _examined_record(run)['not_reached']:
         ref_list = _function_refs(row['surface'])
-        hits = [u['name'] for u in unexamined
+        hits = [u['name'] for u in unexamined_entries
                 if any(_ref_matches(dict(u, inherited_by=[]), ref) for ref in ref_list)]
         if hits:
             not_reached.append({'surface': row['surface'], 'why': row.get('why'),
@@ -2352,6 +2644,9 @@ def function_coverage(run, graph=None, repo=None, scope_prefixes=None,
               'unparsed_coverage_files': unparsed,
               'surfaces_naming_no_function_count': len(no_function),
               'surfaces_naming_no_function': no_function[:UNEXAMINED_SHOWN],
+              'ambiguous_surfaces': sorted(ambiguous)[:UNEXAMINED_SHOWN],
+              'unparsed_surfaces': sorted(set(unparsed_surfaces))[:UNEXAMINED_SHOWN],
+              'credited_all_overloads': sorted({entries[i]['name'] for i in by_name_only}),
               'unexamined_count': len(unexamined), 'unexamined': unexamined,
               'not_reached': not_reached,
               'examined_entry_points': examined,
@@ -2360,7 +2655,16 @@ def function_coverage(run, graph=None, repo=None, scope_prefixes=None,
                         'affected_paths or an examined.json surface names that function - '
                         '`path:Contract.function`, `Contract.function` or `path:function`, '
                         'matched on whole identifiers. A file or directory surface credits no '
-                        'function. Entry points come from the compiler-AST semantic graph '
+                        'function. An argument list (`withdraw(uint256)`) credits that overload '
+                        'only; a surface without one credits every overload of the name and the '
+                        'row says credited_all_overloads. A function an in-scope contract '
+                        'inherits is that contract\'s entry point (`Vault.transfer`, vendored '
+                        'code included) and is credited by naming the heir, or by naming the '
+                        'declaring contract when the heir resolves every virtual call the same '
+                        'way; a bare file name credits only when one entry path has it '
+                        '(ambiguous_surfaces otherwise); an absolute or Windows path is listed '
+                        'under unparsed_surfaces and credits nothing. Entry points come from the '
+                        'compiler-AST semantic graph '
                         '(public/external implemented functions, constructors included); rows '
                         'marked source "lexical" come from source shape only (Vyper @external, '
                         'Anchor #[program] pub fn, Solana entrypoint!/process_*, Move public/'
@@ -2376,6 +2680,10 @@ def function_coverage(run, graph=None, repo=None, scope_prefixes=None,
         result['warning'] = (result.get('warning', '') + ' No entry point was found: the graph '
                              'holds none in scope, or the lexical fallback recognised no entry '
                              'shape. This measures nothing and never passes.').strip()
+    graph_key = ('semantic-graph.json' if graph_path == run / 'semantic-graph.json'
+                 else str(graph_path))
+    result['input_digests'] = _input_digests(
+        run, {graph_key: graph_path} if graph_path.is_file() else None)
     path = run / FUNCTION_COVERAGE_FILE
     if path.is_symlink():
         raise ValueError(f'{path} is a symlink; refusing to write through it')
@@ -2402,15 +2710,52 @@ def read_function_coverage(run):
              'priority_tier': row.get('priority_tier')}
             for row in (data.get('unexamined') or [])[:QUEUE_UNEXAMINED_FUNCTIONS]
             if isinstance(row, dict)]
+    stale = _stale_inputs(run, path, data)
     return {'state': data.get('state'), 'source': data.get('source'),
             'entry_points': data.get('entry_points'), 'examined': data.get('examined'),
             'examined_fraction': data['examined_fraction'],
             'min_fraction': data.get('min_fraction'),
-            'unexamined_count': data.get('unexamined_count'), 'unexamined_first': head}
+            'unexamined_count': data.get('unexamined_count'), 'unexamined_first': head,
+            'stale': bool(stale), 'stale_inputs': stale}
+
+
+ODD_ONE_OUT_REVIEW_FILE = 'odd-one-out-review.json'
+ODD_ONE_OUT_REVIEW_STATUSES = ('intended', 'lead', 'finding')
+# `intended` dismisses a lead, so it carries an objection's burden: a quoted anchor - code in
+# backticks, or a file:line / L123 reference - not a bare opinion.
+REVIEW_ANCHOR = re.compile(r'`[^`]+`|\b[\w./-]+\.\w+:\d+\b|\bL\d+\b')
+
+
+def _odd_one_out_review(run):
+    """{lead_id: {status, note}} from odd-one-out-review.json, and whether it was unreadable."""
+    path = Path(run) / ODD_ONE_OUT_REVIEW_FILE
+    if not path.is_file():
+        return {}, False
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return {}, True
+    return (data, False) if isinstance(data, dict) else ({}, True)
+
+
+def _review_problem(entry):
+    """Why a review entry does not close its lead, or None when it does."""
+    if not isinstance(entry, dict):
+        return 'not an object with status and note'
+    status = entry.get('status')
+    note = str(entry.get('note') or '').strip()
+    if status not in ODD_ONE_OUT_REVIEW_STATUSES:
+        return 'status must be one of ' + ', '.join(ODD_ONE_OUT_REVIEW_STATUSES)
+    if not note:
+        return 'no note'
+    if status == 'intended' and not REVIEW_ANCHOR.search(note):
+        return 'intended without a quoted anchor (code in backticks or a file:line reference)'
+    return None
 
 
 def read_odd_one_out(run):
-    """Counts of the odd-one-out leads impact-plan wrote, or None when there are none."""
+    """Counts of the odd-one-out leads impact-plan wrote that no review closed, or None when
+    there is no odd-one-out.json."""
     path = Path(run) / 'odd-one-out.json'
     if not path.is_file():
         return None
@@ -2420,16 +2765,43 @@ def read_odd_one_out(run):
         return None
     if not isinstance(data, dict) or not isinstance(data.get('leads'), list):
         return None
-    by_kind = {}
+    review, unreadable = _odd_one_out_review(run)
+    by_kind, reviewed, invalid, lead_ids = {}, {}, [], set()
     for lead in data['leads']:
-        if isinstance(lead, dict):
-            kind = str(lead.get('kind'))
-            by_kind[kind] = by_kind.get(kind, 0) + 1
-    return {'state': 'unreviewed-leads', 'total': sum(by_kind.values()),
-            'by_kind': dict(sorted(by_kind.items())),
-            'notice': 'Heuristic leads from the compiler AST (a check or paired write most '
-                      'comparable entry points carry and one does not). Unreviewed: read each '
-                      'one; none is a finding, and intentional asymmetries exist.'}
+        if not isinstance(lead, dict):
+            continue
+        lead_id = str(lead.get('id'))
+        lead_ids.add(lead_id)
+        if lead_id in review:
+            problem = _review_problem(review[lead_id])
+            if problem is None:
+                status = review[lead_id]['status']
+                reviewed[status] = reviewed.get(status, 0) + 1
+                continue
+            invalid.append({'id': lead_id, 'problem': problem})
+        kind = str(lead.get('kind'))
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+    total = sum(by_kind.values())
+    result = {'state': ('no-leads' if not lead_ids else
+                        'unreviewed-leads' if total else 'all-leads-reviewed'),
+              'total': total, 'by_kind': dict(sorted(by_kind.items())),
+              'leads_in_file': len(lead_ids), 'reviewed': dict(sorted(reviewed.items())),
+              'invalid_reviews': invalid[:UNEXAMINED_SHOWN],
+              'review_ids_not_in_leads': sorted(set(review) - lead_ids)[:UNEXAMINED_SHOWN],
+              'review_file': ODD_ONE_OUT_REVIEW_FILE,
+              'notice': 'Heuristic leads from the compiler AST (a check or paired write most '
+                        'comparable entry points carry and one does not). total counts the '
+                        'leads no review closed: read each one; none is a finding, and '
+                        'intentional asymmetries exist. Close a lead in '
+                        + ODD_ONE_OUT_REVIEW_FILE + ' as {"<lead id>": {"status": "intended" | '
+                        '"lead" | "finding", "note": "..."}}; "intended" needs a quoted anchor, '
+                        'and a "lead" or "finding" still needs its record in findings.json. '
+                        'review_ids_not_in_leads are reviews of leads a rebuilt graph no longer '
+                        'produces.'}
+    if unreadable:
+        result['warning'] = (ODD_ONE_OUT_REVIEW_FILE + ' exists but is not a JSON object of '
+                             'reviews: no lead counts as reviewed until it parses.')
+    return result
 
 
 # --------------------------------------------------------------------------- #
