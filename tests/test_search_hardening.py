@@ -113,6 +113,36 @@ An attacker re-enters withdraw and takes funds twice.
 """
 
 
+def walk_json(value):
+    """Every (key, value) pair in a parsed JSON document, depth first."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield key, item
+            yield from walk_json(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield None, item
+            yield from walk_json(item)
+
+
+def assert_no_confidence(test, document):
+    """Upstream confidence (95) and agent counts (8) must not be carried anywhere.
+
+    Checked on parsed keys and values: a substring test over the file text failed whenever a
+    timestamp, digest or temporary path happened to contain `95`.
+    """
+    pairs = list(walk_json(document))
+    test.assertFalse({key for key, _ in pairs if isinstance(key, str)}
+                     & {'conf', 'confidence', 'agents'})
+    scalars = [value for _, value in pairs if not isinstance(value, (dict, list))]
+    test.assertNotIn(95, scalars)
+    test.assertNotIn(8, scalars)
+    for value in scalars:
+        if isinstance(value, str):
+            test.assertNotRegex(value, r'(?i)\bconf(?:idence)?\s*[=:]|agents=')
+            test.assertNotEqual(value.strip(), '95')
+
+
 class SearchFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -397,9 +427,7 @@ class SolidityAuditorConvergeTests(SearchFixture):
         withdraw = next(g for g in self.report()['groups'] if g['function'] == 'withdraw')
         self.assertEqual((withdraw['claims'], withdraw['leads']), (1, 1))
         self.assertEqual(withdraw['surfaces'], ['src/Vault.sol:Vault.withdraw'])
-        ledger = (self.run / bounty.READINGS_LEDGER).read_text()
-        self.assertNotIn('conf', ledger)
-        self.assertNotIn('95', ledger)
+        assert_no_confidence(self, bounty.read_json(self.run / bounty.READINGS_LEDGER))
 
     def test_an_unclosed_marker_is_reported(self):
         self.reading('run-1.md', '<!--F key=vault|withdraw|reentrancy kind=FINDING-->',
@@ -498,10 +526,7 @@ class ImportFindingsTests(SearchFixture):
         deposit = next(r for r in self.records() if r['origin']['key'].endswith('drift'))
         self.assertEqual(deposit['title'], 'Deposit share drift')
         self.assertIn('shares round down', deposit['root_cause'])
-        text = (self.run / 'findings.json').read_text()
-        self.assertNotIn('95', text)
-        self.assertNotIn('"conf', text)
-        self.assertNotIn('agents=', text)
+        assert_no_confidence(self, self.records())
 
     def test_an_assembled_report_alone_is_unparsed_with_its_reason(self):
         result = self.import_(self.reading('full-report.md', AUDITOR_FULL_REPORT))

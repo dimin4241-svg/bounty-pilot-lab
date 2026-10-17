@@ -3142,8 +3142,9 @@ class ConvergeTests(unittest.TestCase):
         (self.readings / 'notes.json').write_text('{"not": "a reading"}\n')
         result = bounty.converge([str(self.readings)], self.run)
         self.assertEqual(result['readings_parsed'], 1)       # the .json file is not a reading
-        self.assertEqual(result['blocks_parsed'], 2)
-        self.assertEqual(result['distinct_groups'], 2)
+        # A lower-case kind word is the same header: it used to be dropped without a trace.
+        self.assertEqual(result['blocks_parsed'], 3)
+        self.assertEqual(result['distinct_groups'], 3)
         self.assertEqual(result['saturated_groups'], 0)
 
     def test_converge_refuses_a_directory_that_init_did_not_create(self):

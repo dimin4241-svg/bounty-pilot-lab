@@ -2452,11 +2452,28 @@ BLOCK_KINDS = {'CANDIDATE': 'claim', 'FINDING': 'claim', 'LEAD': 'lead'}
 # Tolerant of how agents actually format a header: list bullets, numbered items (`1.`, `2)`),
 # headings, block quotes and `**CANDIDATE**` emphasis all precede the same `| key: value` fields.
 HEADER_PREFIX = r'^[\s>#*+_-]*(?:\d{1,4}[.)][\s>#*+_-]*)?'
-BLOCK_HEADER = re.compile(HEADER_PREFIX + r'(CANDIDATE|FINDING|LEAD)[\s*_]*(\|.*)$')
-COVERAGE_LINE = re.compile(HEADER_PREFIX + r'(EXAMINED|NOT-REACHED)[\s*_]*\|(.*)$')
-# A header word followed by a field bar that neither pattern accepted - a table cell, a word of
-# prose in front of it. Reported as skipped, so a format drift is visible instead of silent.
-NEAR_HEADER = re.compile(r'\b(CANDIDATE|FINDING|LEAD|EXAMINED|NOT-REACHED)[\s*_]*\|')
+# After the word: emphasis, an item number (`FINDING 1`, `FINDING #2`, `CANDIDATE-3`), more
+# emphasis. The kind word is matched in any case: `Finding |` is the header `FINDING |`.
+HEADER_NUMBER = r'[\s*_]*(?:(?:[#-]?\d{1,4}[.:)]?|\(\d{1,4}\))[\s*_]*)?'
+HEADER_FIELD_NAMED = re.compile(r'(?i)(?:^|\|)\s*[*_`]*(?:lens|surface|contract|function|'
+                                r'bug[_ -]?class|group[_ ]?key)[*_`]*\s*:')
+# The fields start at a bar or - written `CANDIDATE — lens: …` - at a dash or colon, but only
+# when a field name follows, so that `Finding: the vault is fine` stays prose.
+HEADER_FIELD_NAMES = r'(?:lens|surface|contract|function|bug[_ -]?class)\s*:'
+BLOCK_HEADER = re.compile(HEADER_PREFIX + r'(CANDIDATE|FINDING|LEAD)\b' + HEADER_NUMBER
+                          + r'(\|.*|[\u2014\u2013:-]\s*' + HEADER_FIELD_NAMES + r'.*)$', re.I)
+# `EXAMINED | surface`, and `EXAMINED: surface` when the first word reads as a surface - a path,
+# `Contract.function` or `module::fn` - so `Examined: everything.` is not a coverage line.
+COVERAGE_LINE = re.compile(HEADER_PREFIX + r'(EXAMINED|NOT[- ]REACHED)\b[\s*_]*'
+                           r'(?:\|(.*)|:(?!:)[\s*_`]*([\w.$\\/-]*(?:/|\w(?:\.|::?)\w)[^\s|]*.*))$',
+                           re.I)
+# A header word neither pattern accepted - a table cell, a word of prose in front of it,
+# `FINDING (1) |`. Reported as skipped, so a format drift is visible instead of silent. Upper case
+# is enough; in any other case the line must also name a field, so a summary table headed
+# `Finding | Severity` is not noise.
+NEAR_HEADER = re.compile(r'\b(?:CANDIDATE|FINDING|LEAD|EXAMINED|NOT[- ]REACHED)\b[^|\n]{0,16}\|'
+                         r'|(?i:\b(?:candidate|finding|lead|examined|not[- ]reached)\b'
+                         r'[^|\n]{0,16}\|.*?' + HEADER_FIELD_NAMES + r')')
 # solidity-auditor (pashov/skills v4.1) persists each pass as `.solidity-auditor/runs/<stamp>/
 # run-K.md`, every finding bounded by `<!--F key=contract|function|bug-class conf=95
 # kind=FINDING agents=8-->` and `<!--/F-->`. A LEAD carries no conf. Neither conf nor agents is
@@ -2477,7 +2494,14 @@ AUDITOR_REPORT_BANNER = re.compile(r'^#\s+\U0001F510\s*Security Review\b')
 # example, `src/Pool.sol:Pool<T>::swap` is a surface.
 DOC_PLACEHOLDERS = {'path:contract.function', 'path:program::instruction', 'path:symbol',
                     'contract.function', 'program::instruction', 'kebab-case', 'kebab-tag',
-                    'lens-name', 'bug-class', 'contract|function|bug-class'}
+                    'lens-name', 'bug-class', 'contract|function|bug-class',
+                    'path:contract.otherfunction', 'contract.otherfunction',
+                    'contractname.functionname', 'contract.functionname'}
+# The documentation's own spellings, wherever they sit in a value: a token `Contract.` (capital C,
+# nothing before it) or a leading `path:`. No real surface is a contract named `Contract` in a
+# file named `path`, and `_shared.md` writes `path:Contract.otherFunction` as an example.
+DOC_PLACEHOLDER_SHAPE = re.compile(r'(?<![\w$])Contract\.(?!(?:sol|vy|rs|move|cairo)\b)|'
+                                   r'^(?i:path):')
 # The loose form, for path tokens in coverage.md (coverage-floor): any marker disqualifies one.
 PLACEHOLDER_MARKERS = ('<', '>', 'kebab-case', 'lens-name', 'contract.function',
                        'program::instruction', 'path:symbol')
@@ -2488,6 +2512,12 @@ BLOCK_BODY_FIELDS = {'capability', 'path', 'proof', 'breaks', 'smell', 'next_exp
 BLOCK_FIELD_LINE = re.compile(r'^\s*(?:[-*]\s+)?([A-Za-z_][A-Za-z0-9_ -]{0,40}?)\s*:\s?(.*)$')
 BLOCK_BODY_MAX_LINES = 200
 LINE_REFERENCE = re.compile(r'^L?\d+(?:-L?\d+)?$', re.I)
+# A file name with a symbol glued on by a dot - what `contract: src/Vault.sol` plus
+# `function: withdraw` used to become.
+SOURCE_DOTTED_SYMBOL = re.compile(
+    r'^(.+?(?:' + '|'.join(re.escape(suffix) for suffix in
+                           sorted(SOURCE_SUFFIXES, key=len, reverse=True)) + r'))\.'
+    r'([A-Za-z_$][\w$]*(?:(?:\.|::)[A-Za-z_$][\w$]*)*)$', re.I)
 
 
 def _reading_files(spec):
@@ -2498,12 +2528,20 @@ def _reading_files(spec):
     if not path.is_dir():
         raise ValueError(f'--readings {str(spec)!r} is not a file or a directory')
     found = []
-    for item in sorted(path.rglob('*')):
+    # Natural order, so `run-10.md` follows `run-2.md`: a later pass is a later write-up, and a
+    # plain sort put pass 10 between passes 1 and 2.
+    for item in sorted(path.rglob('*'), key=_natural_key):
         if item.name.startswith('.') or item.is_symlink() or not item.is_file():
             continue
         if item.suffix.lower() in READING_SUFFIXES:
             found.append(item)
     return found
+
+
+def _natural_key(path):
+    """Sort key comparing runs of digits as numbers: run-2 < run-10."""
+    return [int(part) if part.isdigit() else part
+            for part in re.split(r'(\d+)', str(path))]
 
 
 def _read_reading(path):
@@ -2538,7 +2576,7 @@ def _is_placeholder_value(value):
     text = (value or '').strip().strip('`*').strip()
     if not text:
         return False
-    if re.sub(r'\s+', '', text.lower()) in DOC_PLACEHOLDERS:
+    if re.sub(r'\s+', '', text.lower()) in DOC_PLACEHOLDERS or DOC_PLACEHOLDER_SHAPE.search(text):
         return True
     rest = re.sub(r'<[^<>]*>', '', text)
     return rest != text and not re.search(r'[A-Za-z0-9]', rest)
@@ -2577,14 +2615,20 @@ def _split_surface(surface):
     file.
     """
     text = _strip_symbol((surface or '').strip().strip('`*').strip())
+    # `src/Vault.sol : Vault.withdraw ()` is the surface `src/Vault.sol:Vault.withdraw`.
+    text = re.sub(r'\s*(::?)\s*', r'\1', text)
     first = re.split(r'[\s,;]+', text.strip())[0].strip('`*') if text.strip() else ''
     first = first.replace('\\', '/')
     path, symbol = '', first
     index = _single_colon(first)
+    dotted = SOURCE_DOTTED_SYMBOL.match(first) if index < 0 else None
     if index >= 0:
         head, tail = first[:index], first[index + 1:]
         if '/' in head or Path(head).suffix:
             path, symbol = head, tail
+    elif dotted:
+        # `Vault.sol.withdraw`, `src/Vault.sol.withdraw`: a file name, then a symbol in it.
+        path, symbol = dotted.group(1), dotted.group(2)
     elif '/' in first or Path(first).suffix.lower() in SOURCE_SUFFIXES:
         path, symbol = first, ''
     symbol = symbol.strip(':.')
@@ -2818,15 +2862,54 @@ def _auditor_marker_block(attributes, body, source, line, index, revision, skipp
     return block
 
 
+def _auditor_location(contract, function):
+    """(path, contract, function) from solidity-auditor's `contract:` and `function:` fields.
+
+    Its format asks for a contract name and a bare function, and agents also write the file
+    (`src/Vault.sol`, `Vault.sol`) or qualify the function (`Vault.withdraw`). Gluing those
+    together made `src/Vault.sol.withdraw` and `Vault.Vault.withdraw`.
+    """
+    contract = re.sub(r'\s*(::?)\s*', r'\1', _strip_symbol(contract or '')).strip().strip('`*')
+    function = re.sub(r'\s*(::?)\s*', r'\1', _strip_symbol(function or '')).strip().strip('`*')
+    contract, function = contract.strip(), function.strip()
+    path, named = '', contract.replace('\\', '/')
+    index = _single_colon(named)
+    if index >= 0 and ('/' in named[:index] or
+                       Path(named[:index]).suffix.lower() in SOURCE_SUFFIXES):
+        path, contract = named[:index], named[index + 1:]
+    elif '/' in named or Path(named).suffix.lower() in SOURCE_SUFFIXES:
+        path, contract = named, Path(named).name.split('.')[0]
+    parts = [part for part in re.split(r'::|\.', function) if part]
+    if len(parts) > 1:
+        contract, function = contract or parts[-2], parts[-1]
+    return path, contract, function
+
+
+# `group_key: Contract | function | bug-class` - its bars split it across fields, so it is read
+# from the raw header when `bug_class:` itself is missing.
+GROUP_KEY_FIELD = re.compile(r'(?i)group[_ ]?key\s*:\s*([^|]+)\|([^|]+)\|([^|]+)')
+
+
 def _header_block(word, header, body, source, line, index, skipped):
     """One CANDIDATE / FINDING / LEAD header line with its body fields."""
     surface = header.get('surface', '')
     contract, function = header.get('contract', ''), header.get('function', '')
-    bug_class = header.get('bug_class', '')
+    bug_class = header.get('bug_class', '') or header.get('bug-class', '')
+    grouped = GROUP_KEY_FIELD.search(line)
+    if grouped and not bug_class:
+        bug_class = grouped.group(3).strip()
+    if grouped and not (surface or contract or function):
+        contract, function = grouped.group(1).strip(), grouped.group(2).strip()
     # solidity-auditor's raw agent blocks carry `contract:` and `function:` and no surface.
     tool = 'solidity-auditor' if (contract or function) and not surface else 'bounty-pilot'
+    if any(_is_placeholder_value(value) for value in (surface, contract, function, bug_class)):
+        skipped.append({'source': source, 'line': line.strip()[:120],
+                        'reason': 'format example, not a reported surface'})
+        return None
     if not surface and (contract or function):
-        surface = f'{contract}.{function}' if contract and function else contract or function
+        path, contract, function = _auditor_location(contract, function)
+        symbol = f'{contract}.{function}' if contract and function else contract or function
+        surface = f'{path}:{symbol}' if path and symbol else path or symbol
     if any(_is_placeholder_value(value) for value in (surface, contract, function, bug_class)):
         skipped.append({'source': source, 'line': line.strip()[:120],
                         'reason': 'format example, not a reported surface'})
@@ -2893,11 +2976,16 @@ def _parse_reading(text, source, index=None):
         result['derived_report'] = _assembled_report_lines(lines, source)
         return result
     skipped, revision, number = result['skipped'], '', 0
+    stamp, run_pass = '', None
     while number < len(lines):
         line = lines[number]
         run_marker = AUDITOR_RUN_MARKER.match(line)
         if run_marker:
-            revision = _marker_attributes(run_marker.group(1)).get('sha', '') or revision
+            attributes = _marker_attributes(run_marker.group(1))
+            revision = attributes.get('sha', '') or revision
+            stamp = attributes.get('stamp', '') or stamp
+            run_pass = int(attributes['pass']) if attributes.get('pass', '').isdigit() \
+                else run_pass
             number += 1
             continue
         opened = AUDITOR_BLOCK_OPEN.match(line)
@@ -2915,47 +3003,100 @@ def _parse_reading(text, source, index=None):
                                               lines[number + 1:end], source, line, index,
                                               revision, skipped)
                 if block:
+                    # Which scan and which pass wrote it: a later pass is the later write-up,
+                    # and raw agent output saved beside the run files is not another reading.
+                    block.update(upstream_format='run-file', upstream_stamp=stamp,
+                                 upstream_pass=run_pass)
                     result['blocks'].append(block)
             number = end + 1 if closed else end
             continue
         header = BLOCK_HEADER.match(line)
+        if header and not header.group(1).isupper() and \
+                not HEADER_FIELD_NAMED.search(header.group(2)):
+            # `Finding | Severity | Status` heads a summary table; in any case but upper case
+            # the word is a header only when a field name follows it.
+            header = None
         if header:
             body, number = _block_body(lines, number + 1)
-            block = _header_block(header.group(1), _block_fields(header.group(2)), body, source,
+            tail = header.group(2)
+            tail = tail if tail.startswith('|') else '|' + tail[1:]
+            block = _header_block(header.group(1).upper(), _block_fields(tail), body, source,
                                   line, index, skipped)
             if block:
+                if block['tool'] == 'solidity-auditor':
+                    block['upstream_format'] = 'raw'
                 result['blocks'].append(block)
             continue
         coverage = COVERAGE_LINE.match(line)
         if coverage:
-            parts = coverage.group(2).split('|')
-            surface = parts[0].strip()
-            if surface.lower().startswith('surface:'):
-                surface = surface.split(':', 1)[1]
-            surface = surface.strip().strip('`').strip()
-            fields = _block_fields('|'.join(parts[1:]))
-            if not surface or _is_placeholder_value(surface):
-                skipped.append({'source': source, 'line': line.strip()[:120],
-                                'reason': 'format example, not a reported surface' if surface
-                                else 'coverage line names no surface'})
-            else:
-                path, symbol = _split_surface(surface)[:2]
-                if path and index:
-                    surface = index.canonical(path) + (':' + symbol if symbol else '')
-                why = fields.get('why', '')
-                entry = {'surface': surface}
-                if coverage.group(1) == 'NOT-REACHED':
-                    entry['why'] = '' if _is_placeholder_value(why) else why
-                result['examined' if coverage.group(1) == 'EXAMINED'
-                       else 'not_reached'].append(entry)
+            _coverage_line(coverage, line, source, index, result)
             number += 1
             continue
         if NEAR_HEADER.search(line):
+            at_start = re.match(HEADER_PREFIX + r'(?i:candidate|finding|lead|examined|not[- ]'
+                                r'reached)\b', line)
             skipped.append({'source': source, 'line': line.strip()[:120],
-                            'reason': 'looks like a block header but is not at the start of '
+                            'reason': 'looks like a block header but its fields could not be '
+                                      'read, so it was not parsed' if at_start else
+                                      'looks like a block header but is not at the start of '
                                       'its line, so it was not parsed'})
         number += 1
     return result
+
+
+def _top_level_items(text):
+    """Comma- or semicolon-separated items, never splitting inside `(...)`, `<...>` or `[...]`:
+    `Vault.f(uint256,address), Vault.g` is two surfaces, not three."""
+    items, depth, current = [], 0, []
+    for char in text:
+        if char in '(<[':
+            depth += 1
+        elif char in ')>]' and depth:
+            depth -= 1
+        if char in ',;' and not depth:
+            items.append(''.join(current))
+            current = []
+        else:
+            current.append(char)
+    items.append(''.join(current))
+    return [item.strip() for item in items if item.strip()]
+
+
+def _coverage_line(match, line, source, index, result):
+    """One EXAMINED / NOT-REACHED line: one entry per surface it names.
+
+    `why:` takes everything after it, bars included - a reason is prose, not fields - and a
+    line naming several surfaces separated by commas credits each of them.
+    """
+    kind = 'EXAMINED' if match.group(1).upper() == 'EXAMINED' else 'NOT-REACHED'
+    tail = match.group(2) if match.group(2) is not None else match.group(3)
+    why = ''
+    reason = re.search(r'(?i)(?:^|[|\s])why\s*:', tail)
+    if reason:
+        why, tail = tail[reason.end():].strip(), tail[:reason.start()]
+    cell = tail.split('|')[0].strip()
+    if cell.lower().startswith('surface:'):
+        cell = cell.split(':', 1)[1]
+    cell = cell.strip().strip('`').strip()
+    if not cell:
+        result['skipped'].append({'source': source, 'line': line.strip()[:120],
+                                  'reason': 'coverage line names no surface'})
+        return
+    if _is_placeholder_value(why):
+        why = ''
+    for surface in _top_level_items(cell):
+        surface = surface.strip('`*').strip()
+        if _is_placeholder_value(surface):
+            result['skipped'].append({'source': source, 'line': line.strip()[:120],
+                                      'reason': 'format example, not a reported surface'})
+            continue
+        path, symbol = _split_surface(surface)[:2]
+        if path and index:
+            surface = index.canonical(path) + (':' + symbol if symbol else '')
+        entry = {'surface': surface}
+        if kind == 'NOT-REACHED':
+            entry['why'] = why
+        result['examined' if kind == 'EXAMINED' else 'not_reached'].append(entry)
 
 
 SATURATED_DOC = """# Saturated ground
@@ -2970,9 +3111,13 @@ many readings agreed on can still be invalid. It covers that function only: the 
 in a sibling function of the same file is not covered by it. Later passes read it to spend their
 pass on surfaces and mechanisms it does not name. A line marked UNRECORDED is not closed: several
 readings found it and nobody has written it down. Record it in findings.json first; until then
-it is a lead, not ground to skip. `convergence.json` holds the full grouping and the
-singletons, the mechanisms one reading saw and nobody has confirmed.
+it is a lead, not ground to skip. A line marked UNTRIAGED is not closed either: its record is a
+hypothesis imported from another tool that nobody has triaged, so it is still a lead to work.
+`convergence.json` holds the full grouping and the singletons, the mechanisms one reading saw and
+nobody has confirmed.
 """
+# A solidity-auditor scan stamp, `YYYYMMDD-HHMMSS`, as its runs/<stamp>/ directory is named.
+AUDITOR_STAMP = re.compile(r'\d{8}-\d{6}')
 
 
 def _record_matches(row, group, strict=False):
@@ -3095,7 +3240,49 @@ def _unrecorded_singletons(run, records, shown=25):
                       'else lists them: record each one or close it with its reason.'}
 
 
-def converge(readings, run, threshold=2, reset=False):
+def _reading_digest(text):
+    """Content identity of a reading for duplicate detection: whitespace runs collapse, so a copy
+    re-saved with trailing spaces or other line endings is the same reading, not a second one."""
+    return hashlib.sha256(re.sub(r'\s+', ' ', text).strip().encode('utf-8')).hexdigest()
+
+
+def _is_untriaged_import(record):
+    origin = record.get('origin') if isinstance(record, dict) else None
+    return (isinstance(origin, dict) and origin.get('triage') == 'untriaged'
+            and record.get('status') in OPEN_STATUSES)
+
+
+def _fold_auditor_sources(groups, recorded):
+    """Count raw solidity-auditor output once with the run file of its own scan.
+
+    A run-K.md is the gated merge of the agents of pass K. Raw agent output saved under the same
+    runs/<stamp> directory, or beside run files of that stamp, adds no reading to a mechanism a
+    run file of that scan already reports; where no run file of its scan has the mechanism it
+    still counts, so a singleton the gate dropped is not lost.
+    """
+    stamps_by_dir = {}
+    for key, entry in recorded.items():
+        for block in entry.get('blocks') or []:
+            if block.get('upstream_format') == 'run-file' and block.get('upstream_stamp'):
+                stamps_by_dir.setdefault(str(Path(key).parent), set()).add(
+                    block['upstream_stamp'])
+
+    def raw_stamps(source):
+        found = set(stamps_by_dir.get(str(Path(source).parent), ()))
+        found.update(part for part in Path(source).parts if AUDITOR_STAMP.fullmatch(part))
+        return found
+
+    for group in groups.values():
+        run_stamps = group.pop('_run_stamps')
+        raw = group.pop('_raw_sources')
+        folded = [source for source in group['sources']
+                  if source in raw and raw_stamps(source) & run_stamps]
+        group['folded_sources'] = folded
+        # One file is one reading, so the distinct sources are the distinct readings.
+        group['readings'] = len(group['sources']) - len(folded)
+
+
+def converge(readings, run, threshold=2, reset=False, drop_missing=False):
     """Group what independent readings reported, so later passes can skip saturated ground.
 
     Repeated readings are bought for recall. In a backtest of this skill 9 of 12 readings
@@ -3126,6 +3313,7 @@ def converge(readings, run, threshold=2, reset=False):
     recorded = ledger['readings']
     index = _target_index_for_run(meta)
     unreadable, added, changed, unchanged, duplicates, derived = [], [], [], [], [], []
+    moved = []
     for path in files:
         text = _read_reading(path)
         if text is None:
@@ -3133,14 +3321,24 @@ def converge(readings, run, threshold=2, reset=False):
             continue
         key = str(path)
         digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        content = _reading_digest(text)
         previous = recorded.get(key)
         if previous and previous.get('sha256') == digest:
+            previous['content_sha256'] = content
+            previous.pop('missing_source', None)
             unchanged.append(key)
             continue
         twin = next((other for other, entry in recorded.items()
-                     if other != key and entry.get('sha256') == digest), None)
+                     if other != key and (entry.get('content_sha256') == content
+                                          or entry.get('sha256') == digest)), None)
+        if twin and not Path(twin).is_file():
+            # The reading moved: re-read it at its new path rather than count a missing file.
+            del recorded[twin]
+            moved.append(twin)
+            twin = None
         if twin:
-            # The same reading copied elsewhere is still one reading.
+            # The same reading copied elsewhere is still one reading, and so is a copy that
+            # differs only in whitespace.
             duplicates.append({'reading': key, 'same_content_as': twin})
             continue
         parsed = _parse_reading(text, key, index)
@@ -3150,9 +3348,31 @@ def converge(readings, run, threshold=2, reset=False):
         for block in parsed['blocks']:
             block.pop('fields', None)
         (changed if previous else added).append(key)
-        recorded[key] = {'sha256': digest, 'recorded_at': datetime.now(timezone.utc).isoformat(),
+        recorded[key] = {'sha256': digest, 'content_sha256': content,
+                         'recorded_at': datetime.now(timezone.utc).isoformat(),
                          'blocks': parsed['blocks'], 'skipped': parsed['skipped'],
                          'examined': parsed['examined'], 'not_reached': parsed['not_reached']}
+    # A reading whose file is gone. Readings are often written to scratch space that gets
+    # cleaned, and a pass's evidence must not vanish with it, so by default it stays counted -
+    # flagged, and named in the notes. --drop-missing removes it from the ledger instead.
+    if moved:
+        notes.append(f'{len(moved)} reading(s) moved since an earlier call were re-read at their '
+                     'new path and still count once')
+    missing = sorted(key for key in recorded if not Path(key).is_file())
+    for key, entry in recorded.items():
+        if key in missing:
+            entry['missing_source'] = True
+        else:
+            entry.pop('missing_source', None)
+    if missing and drop_missing:
+        for key in missing:
+            del recorded[key]
+        notes.append(f'--drop-missing: {len(missing)} reading(s) whose file no longer exists '
+                     'were removed from the ledger and are no longer counted')
+    elif missing:
+        notes.append(f'{len(missing)} reading(s) in the ledger no longer exist at the path they '
+                     'were read from and are still counted (missing_source in convergence.json); '
+                     'pass --drop-missing to stop counting them: ' + ', '.join(missing[:5]))
     dump(run / READINGS_LEDGER, ledger)
 
     blocks = [block for key in sorted(recorded) for block in recorded[key]['blocks']]
@@ -3165,16 +3385,19 @@ def converge(readings, run, threshold=2, reset=False):
             'path_is_file': block.get('path_is_file', False), 'contract': block.get('contract'),
             'function': block.get('function'), 'bug_class': block['bug_class'],
             'bug_classes': [], 'surfaces': [], 'lenses': [], 'tools': [],
-            'readings': 0, 'claims': 0, 'leads': 0, 'sources': []})
+            'readings': 0, 'claims': 0, 'leads': 0, 'sources': [],
+            '_run_stamps': set(), '_raw_sources': set()})
         for field, value in (('bug_classes', block['bug_class']), ('surfaces', block['surface']),
                              ('lenses', block['lens']), ('sources', block['source']),
                              ('tools', block.get('tool'))):
             if value and value not in group[field]:
                 group[field].append(value)
         group['claims' if block['kind'] == 'claim' else 'leads'] += 1
-    for group in groups.values():
-        # One file is one reading, so the distinct sources are the distinct readings.
-        group['readings'] = len(group['sources'])
+        if block.get('upstream_format') == 'run-file' and block.get('upstream_stamp'):
+            group['_run_stamps'].add(block['upstream_stamp'])
+        elif block.get('upstream_format') == 'raw':
+            group['_raw_sources'].add(block['source'])
+    _fold_auditor_sources(groups, recorded)
     ordered = sorted(groups.values(), key=lambda g: (-g['readings'], g['key']))
     saturated = [g for g in ordered if g['readings'] >= threshold]
     singletons = [g for g in ordered if g['readings'] == 1]
@@ -3182,16 +3405,25 @@ def converge(readings, run, threshold=2, reset=False):
     records = records if isinstance(records, list) else []
     for g in saturated:
         record = _record_for_group(g, records)
-        g['record'] = ({'id': record.get('id'), 'status': record.get('status')}
+        g['record'] = ({'id': record.get('id'), 'status': record.get('status'),
+                        'untriaged_import': _is_untriaged_import(record)}
                        if record else None)
     unrecorded = [g for g in saturated if not g['record']]
+    untriaged = [g for g in saturated if g['record'] and g['record']['untriaged_import']]
+
+    def state(g):
+        if not g['record']:
+            return 'UNRECORDED - record it before treating it as closed'
+        text = 'record {0} ({1})'.format(g['record']['id'], g['record']['status'])
+        if g['record']['untriaged_import']:
+            text += (' UNTRIAGED - an imported hypothesis nobody has triaged; not closed '
+                     'until it is')
+        return text
 
     lines = [SATURATED_DOC.format(threshold=threshold)]
     lines.extend('{0} | {1} | reported by {2} readings ({3} claims, {4} leads) | {5}'.format(
         g['surfaces'][0] if g['surfaces'] else '(no surface)', g['bug_class'] or '(no bug_class)',
-        g['readings'], g['claims'], g['leads'],
-        'record {0} ({1})'.format(g['record']['id'], g['record']['status']) if g['record']
-        else 'UNRECORDED - record it before treating it as closed') for g in saturated)
+        g['readings'], g['claims'], g['leads'], state(g)) for g in saturated)
     if not saturated:
         lines.append(f'No mechanism reached {threshold} independent readings yet.')
     (run / 'saturated.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
@@ -3207,8 +3439,9 @@ def converge(readings, run, threshold=2, reset=False):
         'generated_at': datetime.now(timezone.utc).isoformat(), 'threshold': threshold,
         'readings_parsed': len(all_readings), 'blocks_parsed': len(blocks),
         'distinct_groups': len(groups), 'saturated_groups': len(saturated),
-        'saturated_unrecorded': len(unrecorded),
-        'readings': all_readings, 'unreadable': unreadable,
+        'saturated_unrecorded': len(unrecorded), 'saturated_untriaged': len(untriaged),
+        'readings': all_readings, 'missing_sources': missing if not drop_missing else [],
+        'unreadable': unreadable,
         'derived_reports': derived, 'skipped_blocks': skipped_blocks,
         'groups': ordered, 'saturated': saturated, 'singletons': singletons})
     return {'run': str(run), 'threshold': threshold, 'readings_parsed': len(all_readings),
@@ -3221,6 +3454,10 @@ def converge(readings, run, threshold=2, reset=False):
                                       'surface_path': g['surface_path'],
                                       'bug_class': g['bug_class'], 'readings': g['readings']}
                                      for g in unrecorded],
+            'saturated_untriaged': [{'surface': g['surfaces'][0] if g['surfaces'] else '',
+                                     'bug_class': g['bug_class'], 'record': g['record']['id']}
+                                    for g in untriaged],
+            'missing_sources': missing if not drop_missing else [],
             'blocks_skipped': len(skipped_blocks), 'unreadable_files': unreadable,
             'examined_surfaces': len(examined), 'not_reached_surfaces': len(not_reached),
             'notes': notes,
@@ -3261,6 +3498,18 @@ def _finding_key(block):
     location = block['surface_path'] if block.get('path_is_file') else block.get('contract')
     return '|'.join(_converge_key(s) for s in (location, block.get('function'),
                                                 block['bug_class']))
+
+
+def _write_up_rank(block, sequence):
+    """Which of two blocks with one key is kept: a claim over a lead, then the later write-up.
+
+    Later is the later solidity-auditor pass of the later scan when the run marker says so,
+    and otherwise the file read later - never the file name's place in a plain sort, which put
+    run-10.md before run-2.md.
+    """
+    stage = block.get('upstream_pass')
+    return (block.get('kind') == 'claim', block.get('upstream_stamp') or '',
+            stage if isinstance(stage, int) else -1, sequence)
 
 
 def _next_record_number(records):
@@ -3380,7 +3629,7 @@ def import_findings(run, sources, repo=None, source='auto'):
         raise ValueError(f'--repo {str(repo)!r} is not a readable git checkout')
 
     chosen, order, unparsed, examples, report_lines = {}, [], [], 0, []
-    for path in files:
+    for sequence, path in enumerate(files):
         text = _read_reading(path)
         if text is None:
             unparsed.append({'file': str(path), 'line': '',
@@ -3407,16 +3656,17 @@ def import_findings(run, sources, repo=None, source='auto'):
                 continue
             key = _finding_key(block)
             held = chosen.get(key)
+            rank = _write_up_rank(block, sequence)
             if held is None:
                 order.append(key)
-                chosen[key] = {'block': block, 'files': [str(path)]}
+                chosen[key] = {'block': block, 'files': [str(path)], 'rank': rank}
                 continue
             if str(path) not in held['files']:
                 held['files'].append(str(path))
             # The strongest kind wins, and among equals the later write-up: a later pass read
             # what the earlier ones wrote. Upstream confidence never decides it.
-            if block['kind'] == 'claim' or held['block']['kind'] == 'lead':
-                held['block'] = block
+            if rank >= held['rank']:
+                held['block'], held['rank'] = block, rank
     # Lines of an assembled report whose function some run file already gave a keyed block
     # are covered; the rest carry no bug class to import, and say so.
     keyed = {(_converge_key(entry['block'].get('contract')),
@@ -5645,6 +5895,15 @@ def _dependency_diff(root, path, old, new):
             'top_changed': files[:DELTA_DEPENDENCY_FILES_SHOWN]}
 
 
+def _governs_scope(path, scope_prefixes):
+    """True when a config file sits at the root or in a directory holding a scope prefix."""
+    folder = str(Path(path).parent).replace('\\', '/')
+    if folder in ('', '.'):
+        return True
+    return any(_scope_prefix(prefix).startswith(folder.rstrip('/') + '/')
+               for prefix in scope_prefixes or [] if isinstance(prefix, str))
+
+
 def delta(repo, since, scope_prefixes=None, limit=40):
     repo = Path(repo).resolve()
     root = Path(git(repo, 'rev-parse', '--show-toplevel').strip()).resolve()
@@ -5663,21 +5922,25 @@ def delta(repo, since, scope_prefixes=None, limit=40):
             if text is not None:
                 test_corpus.append(text)
     test_blob = '\n'.join(test_corpus)
-    rows, skipped_tests = [], 0
+    rows, skipped_tests, outside_config = [], 0, []
     gitlinks = {path for path, _, _ in _gitlink_changes(root, base, head)}
     for added, removed, path in _numstat(root, base, head):
         if path in gitlinks:
             continue
         churn = sum(int(v) for v in (added, removed) if v.isdigit())
         if _delta_config(path):
-            # Root configuration governs the whole build, so --scope does not hide it.
+            # Configuration in a directory that holds a scope prefix governs that build - the
+            # root foundry.toml, packages/contracts/foundry.toml for packages/contracts/src/ -
+            # so --scope does not hide it. Any other changed config is listed, never dropped.
             in_scope = path_in_scope(path, scope_prefixes)
-            if in_scope or '/' not in path:
-                rows.append({'kind': 'config', 'path': path, 'churn': churn,
-                             'in_scope_prefix': in_scope,
-                             'exists_at_head': os.path.lexists(str(root / path)),
-                             'score': round(min(churn, DELTA_CONFIG_CHURN_CAP) ** 0.5
-                                            * (1 + DELTA_CONFIG_WEIGHT), 2)})
+            row = {'kind': 'config', 'path': path, 'churn': churn, 'in_scope_prefix': in_scope,
+                   'exists_at_head': os.path.lexists(str(root / path)),
+                   'score': round(min(churn, DELTA_CONFIG_CHURN_CAP) ** 0.5
+                                  * (1 + DELTA_CONFIG_WEIGHT), 2)}
+            if in_scope or _governs_scope(path, scope_prefixes):
+                rows.append(row)
+            else:
+                outside_config.append(row)
             continue
         if Path(path).suffix not in SOURCE_SUFFIXES:
             continue
@@ -5720,12 +5983,19 @@ def delta(repo, since, scope_prefixes=None, limit=40):
             'test_files_excluded': skipped_tests,
             'total_changed': len(rows), 'truncated': len(rows) > limit,
             'omitted': [r['path'] for r in rows[limit:]],
-            'ranked': rows[:limit], 'skipped_files': skipped,
+            'ranked': rows[:limit],
+            'changed_config_outside_scope': len(outside_config),
+            'config_outside_scope': [{key: row[key] for key in ('path', 'churn',
+                                                               'exists_at_head')}
+                                     for row in outside_config],
+            'skipped_files': skipped,
             'notice': 'Ranking is a reading order over changed non-test source, build and '
                       'deployment configuration and submodule pointers, not a vulnerability '
                       'claim. untested_by_name is a filename heuristic, not coverage. A '
                       'submodule entry is a dependency the audit read at another commit: diff '
-                      'it. Everything past --limit is listed in omitted, never dropped.'}
+                      'it. Everything past --limit is listed in omitted, never dropped; '
+                      'build and deployment configuration outside --scope that governs no '
+                      'scoped directory is listed in config_outside_scope.'}
 
 
 # --------------------------------------------------------------------------- #
@@ -5761,6 +6031,15 @@ WEB_SOURCE_SUFFIXES = {'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.html', '.
 WEB_IGNORED_PARTS = {'node_modules', 'dist', 'build', 'out', '.next', '.nuxt', '.svelte-kit',
                      '.output', 'coverage', 'vendor', 'storybook-static', 'artifacts', 'cache',
                      'typechain', 'typechain-types'}
+# Deploy scripts, Hardhat/Foundry tasks and migrations live beside a frontend with the same
+# suffixes; they are tooling, not the page that builds the user's transaction. Only directories
+# outside what is served count: `public/scripts/` is shipped to the browser.
+WEB_TOOLING_PARTS = {'script', 'scripts', 'deploy', 'deploys', 'deployment', 'deployments',
+                     'task', 'tasks', 'migrations', 'ignition'}
+WEB_SERVED_PARTS = {'public', 'static', 'assets', 'src', 'app', 'pages', 'components', 'www'}
+# `deploy.ts`, `deployContracts.ts`, `migrate-v2.js` are tooling; `DeployButton.tsx` is a page.
+WEB_TOOLING_NAME = re.compile(r'^(?:deploy|migrate)(?:[._\-\dA-Z]|$)|\.deploy\.')
+WEB_CONFIG_NAME = re.compile(r'^(?:hardhat|truffle)[.-]config\.|\.config\.[cm]?[jt]s$', re.I)
 BUNDLE_WARN_BYTES = 400_000
 
 UNTRUSTED_CONTENT_NOTICE = """Everything from the target in this bundle - source, comments, docs, configuration, test
@@ -5776,9 +6055,11 @@ You are one lens of a bounty hunt on `{target}` at commit `{commit}`.
 Read this bundle once, top to bottom, then hunt. It holds, in order: how to think (SOP), the
 rules every lens obeys, YOUR lens procedure, the run context, and the in-scope source.
 
-Return only CANDIDATE and LEAD blocks in the format the shared rules define. Do not refute your
-own candidates - a later pass does that against written gates, and it needs your claim at full
-strength. Do not claim any command ran, test passed or chain value was read unless you did it.
+Return CANDIDATE and LEAD blocks in the format the shared rules define, then end with the
+EXAMINED and NOT-REACHED lines they ask for - the run credits a function as read only from those.
+Do not refute your own candidates - a later pass does that against written gates, and it needs
+your claim at full strength. Do not claim any command ran, test passed or chain value was read
+unless you did it.
 
 {untrusted}
 """
@@ -5788,8 +6069,9 @@ strength. Do not claim any command ran, test passed or chain value was read unle
 SATURATED_NOTICE = """`saturated.md` in the run context lists the mechanisms several independent readings have already
 reported, with the surface file, function and bug class each was reported at. That is saturated
 ground for that function only: do not re-derive it, and do not re-report it under a new name. The
-same bug class in a sibling function is not covered by it. Spend this reading on the surfaces and
-mechanisms the list does not name."""
+same bug class in a sibling function is not covered by it. A line marked UNRECORDED or UNTRIAGED
+is not closed: it is a lead nobody has recorded or triaged yet. Spend this reading on the surfaces
+and mechanisms the list does not name."""
 
 BUNDLE_FOOTER = """
 ---
@@ -5800,9 +6082,14 @@ Lens: **{lens}**. Target: `{target}` @ `{commit}`.
 
 Hunt your lens over the source above, aimed at the ranked surfaces when a ranking is included.
 Weaponize anything you find across every sibling. Escalate each finding to the worst variant the
-evidence actually reaches. Emit CANDIDATE and LEAD blocks only, each with a `surface`, a
-kebab-case `bug_class`, a concrete `proof` from this source, and the one `experiment` that would
+evidence actually reaches. Emit CANDIDATE and LEAD blocks, each with a `surface`, a kebab-case
+`bug_class`, a concrete `proof` from this source, and the one `next_experiment` that would
 settle it. Prefer a LEAD over dropping a trail.
+
+Then end the reading with one `EXAMINED |` line per function you read in full and attacked, in
+the same surface form, and one `NOT-REACHED |` line, with `why:`, per function you could not
+reach. A function you do not list counts as unexamined for every later pass; one you list
+without reading closes ground nobody covered.
 """
 
 
@@ -5885,8 +6172,12 @@ def _relevant_tests(root, all_tests, in_scope, scope_prefixes, skipped=None):
     return kept, omitted
 
 
-def _collect(root, paths, skipped=None):
-    """Fence each readable target file; unreadable ones go to `skipped` with the reason."""
+def _collect(root, paths, skipped=None, redactions=None):
+    """Fence each readable target file; unreadable ones go to `skipped` with the reason.
+
+    With `redactions` (a list), credential-shaped values are redacted out of the text and each
+    file that lost one is recorded there with the count, so a bundle says what it withheld.
+    """
     parts, missed = [], []
     for path in paths:
         notes = []
@@ -5894,6 +6185,10 @@ def _collect(root, paths, skipped=None):
         if text is None:
             missed.extend(notes)
             continue
+        if redactions is not None:
+            text, count = _redact_source_secrets(text)
+            if count:
+                redactions.append({'path': path, 'count': count})
         parts.append(_fenced(path, text))
     if skipped is not None:
         skipped.extend(missed)
@@ -5924,6 +6219,60 @@ def _redact_context_secrets(text):
     return UNQUOTED_SECRET_KEY_VALUE.sub(
         lambda m: m.group(0) if m.group(2).startswith('<redacted>') else m.group(1) + '<redacted>',
         text)
+
+
+SOURCE_URL = re.compile(r'(?i)\b(?:https?|wss?)://[^\s"\'<>`]+')
+# A quoted 32-byte hex value given to a name that reads as a signing key - `const pk = "0x…"` in a
+# deploy script. A bytes32 constant in Solidity is written unquoted, so it is never touched.
+HEX_KEY_ASSIGNMENT = re.compile(
+    r'(?i)(\b[\w$]*(?:pk|priv|key|signer|deployer|wallet|secret|mnemonic)[\w$]*["\']?\s*'
+    r'[:=]\s*)(["\'])(0x[0-9a-f]{64})(\2)')
+
+
+def _redact_source_secrets(text):
+    """Credentials in bundled source replaced by `<redacted>`, and how many were.
+
+    Narrower than the configuration redaction on purpose: source is what a lens audits, so only
+    a value shaped like a real credential is touched - a key in a URL, a password in a URL, a
+    bearer token, or a quoted opaque value assigned to a key-named variable. An expression such
+    as `SECRET_ROLE = keccak256("SECRET_ROLE")` or `apiKey = process.env.API_KEY` is code, and
+    stays.
+    """
+    count = [0]
+
+    def counted(replace):
+        def apply(match):
+            new = replace(match)
+            if new != match.group(0):
+                count[0] += 1
+            return new
+        return apply
+
+    def opaque_segments(segment):
+        return '<redacted>' if _opaque_secret(segment.group(0)) else segment.group(0)
+
+    def url(match):
+        value = match.group(0)
+        head, sep, rest = value.partition('://')
+        host, slash, tail = rest.partition('/')
+        tail = VERSIONED_KEY_PATH.sub(lambda m: m.group(1) + ('<redacted>' if _opaque_secret(
+            m.group(2)) else m.group(2)), slash + tail)
+        tail = QUERY_STRING_SECRET.sub(lambda m: m.group(0)[:m.start(1) - m.start(0)] + (
+            '<redacted>' if _opaque_secret(m.group(1)) else m.group(1)), tail)
+        return head + sep + host + tail
+
+    text = URL_USERINFO.sub(counted(lambda m: m.group(1) + '<redacted>@'), text)
+    text = RPC_PROVIDER_URL.sub(counted(lambda m: m.group(1) + OPAQUE_PATH_SEGMENT.sub(
+        opaque_segments, m.group(2))), text)
+    text = SOURCE_URL.sub(counted(url), text)
+    text = SECRET_KEY_VALUE.sub(counted(lambda m: m.group(1) + m.group(2) + '<redacted>'
+                                        + m.group(4) if _opaque_secret(m.group(3))
+                                        else m.group(0)), text)
+    text = BEARER_VALUE.sub(counted(lambda m: m.group(1) + '<redacted>'
+                                    if _opaque_secret(m.group(2)) else m.group(0)), text)
+    text = HEX_KEY_ASSIGNMENT.sub(counted(lambda m: m.group(1) + m.group(2) + '<redacted>'
+                                          + m.group(4)), text)
+    return text, count[0]
 
 
 def _collect_project_context(root, paths, skipped=None):
@@ -6019,7 +6368,11 @@ def _collect_context_files(root, tracked, skipped=None):
 # Precomputed analysis a run may hold, and the lenses each file is handed to. Every one is a
 # heuristic: it aims a reading, it never stands in for one, and its header says so.
 ANALYSIS_MAX_BYTES = 60_000
-ANALYSIS_STRUCTURE_LENSES = tuple(dict.fromkeys(HIGH_IMPACT_LENSES + ('seam',)))
+# The structural maps are long and serve the lenses that walk value paths: `impact-first` and
+# `seam` always, and - for impact-paths.json - every lens of the `high-impact` group when the run
+# bundles that group. The same privileged-path lens bundled under `attack` stays near its own size.
+ANALYSIS_STRUCTURE_LENSES = ('impact-first', 'seam')
+ANALYSIS_GROUP_LENSES = {'impact-paths.json': ('high-impact', HIGH_IMPACT_LENSES)}
 ANALYSIS_FILES = (
     ('impact-paths.json', ANALYSIS_STRUCTURE_LENSES,
      'Static source-to-sink paths ranked by impact_paths.py over a lexical/AST graph. An edge is '
@@ -6116,13 +6469,62 @@ def _analysis_section(path, what):
     return text, record
 
 
+def _classic_records_section(records):
+    """The run's records as the classic lens needs them: which mechanisms are held already, and
+    whether solidity-auditor's sweep was imported - which decides who owns Part B.
+
+    Compact on purpose (id, status, class, paths, title, origin), imported hypotheses first and
+    untriaged ones before triaged, capped to the analysis budget with the cut stated.
+    """
+    rows = []
+    for row in records if isinstance(records, list) else []:
+        if not isinstance(row, dict):
+            continue
+        origin = row.get('origin') if isinstance(row.get('origin'), dict) else {}
+        rows.append({'id': row.get('id'), 'status': row.get('status'),
+                     'bug_class': row.get('bug_class'),
+                     'affected_paths': row.get('affected_paths'), 'title': row.get('title'),
+                     'tool': origin.get('tool') or 'bounty-pilot',
+                     'triage': origin.get('triage', '')})
+    rows.sort(key=lambda r: (r['tool'] != 'solidity-auditor', r['triage'] != 'untriaged',
+                             str(r['id'])))
+    imported = [r for r in rows if r['tool'] == 'solidity-auditor']
+    untriaged = [r for r in imported if r['triage'] == 'untriaged']
+    kept = len(rows)
+    while kept and len(json.dumps(rows[:kept], indent=1).encode('utf-8')) > ANALYSIS_MAX_BYTES:
+        kept = kept * 3 // 4
+    if imported:
+        lead = (f'solidity-auditor\'s sweep is imported into this run: {len(imported)} '
+                f'record(s), {len(untriaged)} not yet triaged. Part B ground those records name '
+                'is its ground; spend this reading on Part A and on Part B items no record names. '
+                'An untriaged import is a hypothesis, not closed ground.')
+    else:
+        lead = ('No solidity-auditor records are imported into this run, so Part B - the '
+                'classic sweep - is yours. The records below are what earlier passes hold.')
+    cut = '' if kept == len(rows) else (f' Listed: the first {kept} of {len(rows)}; '
+                                         'findings.json in the run directory holds the rest.')
+    text = ('## Records already in this run\n\n' + lead + cut + '\n\n'
+            + _fence(json.dumps(rows[:kept], indent=1), 'json'))
+    return text, {'records': len(rows), 'imported_from_solidity_auditor': len(imported),
+                  'untriaged_imports': len(untriaged), 'included': kept}
+
+
 def _is_web_source(path):
-    """Frontend source the web-frontend lens reads: never build output, packages or tests."""
+    """Frontend source the web-frontend lens reads: never build output, packages or tests, and
+    never the deploy scripts, Hardhat tasks and tool configuration that share its suffixes."""
     p = Path(path)
     name = p.name.lower()
+    parts = [part.lower() for part in p.parts[:-1]]
     if p.suffix.lower() not in WEB_SOURCE_SUFFIXES or _is_test_path(path):
         return False
-    if any(part.lower() in WEB_IGNORED_PARTS for part in p.parts[:-1]):
+    if any(part in WEB_IGNORED_PARTS for part in parts):
+        return False
+    # `scripts/deploy.ts` is tooling; `web/public/scripts/widget.js` is served to users.
+    for depth, part in enumerate(parts):
+        if part in WEB_TOOLING_PARTS and not any(
+                outer in WEB_SERVED_PARTS for outer in parts[:depth]):
+            return False
+    if WEB_TOOLING_NAME.search(p.name) or WEB_CONFIG_NAME.search(name):
         return False
     return not (name.endswith(('.min.js', '.d.ts', '.map')) or
                 any(marker in name for marker in ('.test.', '.spec.', '.stories.')))
@@ -6183,8 +6585,8 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
 
     out = run / 'bundles'
     out.mkdir(parents=True, exist_ok=True)
-    source_skips = []
-    source, skipped = _collect(root, in_scope, source_skips)
+    source_skips, redactions = [], []
+    source, skipped = _collect(root, in_scope, source_skips, redactions)
     skipped_files.extend(source_skips)
     source_doc = (f'# In-scope source ({len(in_scope)} files)\n\n'
                   + (f'{len(source_skips)} file(s) were not read and are absent below: '
@@ -6198,7 +6600,7 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
         # bundle carries this in place of the contract source.
         web_paths = [p for p in tracked if _is_web_source(p) and path_in_scope(p, scope_prefixes)]
         web_skips = []
-        web_source, _ = _collect(root, web_paths, web_skips)
+        web_source, _ = _collect(root, web_paths, web_skips, redactions)
         skipped_files.extend(web_skips)
         web_doc = (f'# In-scope web source ({len(web_paths)} files)\n\n'
                    'Frontend code: pages, components, wallet calls and the configuration that '
@@ -6209,7 +6611,7 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                    + (web_source or 'No tracked web source matched the scope. Widen --scope to '
                       'the frontend, or fetch the deployed page as the lens procedure says.\n'))
         (out / 'web-source.md').write_text(web_doc, encoding='utf-8')
-    tests, _ = _collect(root, test_paths, skipped_files)
+    tests, _ = _collect(root, test_paths, skipped_files, redactions)
     tests_doc = (f'# Tests, mocks and fixtures ({len(test_paths)} files)\n\n'
                  'Read these as evidence of what the authors believed, not as code to audit.\n'
                  + (f'\n{len(tests_omitted)} further test file(s) were omitted as unrelated to the '
@@ -6252,6 +6654,9 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
     explicit = {Path(extra).resolve() for extra in includes or []}
     analysis = {}
     for name, analysis_lenses, what in ANALYSIS_FILES:
+        group, members = ANALYSIS_GROUP_LENSES.get(name, ('', ()))
+        if group and group in lenses:
+            analysis_lenses = tuple(dict.fromkeys(analysis_lenses + tuple(members)))
         path = run / name
         if not path.is_file() or path.resolve() in explicit or \
                 not any(lens in analysis_lenses for lens in chosen):
@@ -6271,10 +6676,16 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
     patterns = optional('hack-patterns.md')
     findings_doc = ''
     findings_path = run / 'findings.json'
+    classic_doc, classic_records = '', None
     if findings_path.is_file():
         body = findings_path.read_text(encoding='utf-8')
         findings_doc = ('## The records under review\n\nAttack these. Nothing here is '
                         'established.\n\n```json\n' + body.rstrip() + '\n```\n')
+        if 'classic' in chosen:
+            try:
+                classic_doc, classic_records = _classic_records_section(json.loads(body))
+            except json.JSONDecodeError:
+                classic_doc, classic_records = '', None
     written = []
     for lens in chosen:
         if lens == TRIAGE:
@@ -6332,6 +6743,10 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
         if lens in ('seam', 'composition') and findings_doc:
             pieces.append(findings_doc.replace('Attack these. Nothing here is established.',
                                                'The earlier passes produced these. Cross them.'))
+        if lens == 'classic' and classic_doc:
+            # Part B belongs to solidity-auditor only when its sweep is in this run, and the
+            # lens can only tell from the records it is handed.
+            pieces.append(classic_doc)
         if context_doc:
             pieces.append(context_doc)
         included = []
@@ -6354,6 +6769,8 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                  'bytes': path.stat().st_size}
         if included:
             entry['included_analysis'] = included
+        if lens == 'classic' and classic_records:
+            entry['records_included'] = classic_records
         written.append(entry)
 
     # The dispatch log, so a later gate can ask whether a reading of each bundle came back.
@@ -6383,6 +6800,18 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
     if docs_skipped:
         notes.append(f'{len(docs_skipped)} documentation file(s) unreadable and omitted: '
                      + ', '.join(docs_skipped[:5]))
+    redacted = {}
+    for item in redactions:
+        redacted[item['path']] = max(item['count'], redacted.get(item['path'], 0))
+    redacted = [{'path': path, 'count': count} for path, count in sorted(redacted.items())]
+    if redacted:
+        notes.append(f"{sum(r['count'] for r in redacted)} credential-shaped value(s) in "
+                     f"{len(redacted)} source file(s) were replaced by <redacted> in the bundles "
+                     '(see redacted_secrets); the checkout still holds them, and a committed '
+                     'live credential can itself be worth reporting')
+    if classic_records and classic_records['included'] < classic_records['records']:
+        notes.append(f"the classic bundle lists {classic_records['included']} of "
+                     f"{classic_records['records']} records; the rest are in findings.json")
     scope_audit = load_impact_helper('scope_coverage').audit(root, run, scope_prefixes)
     if scope_audit['missing_stacks']:
         notes.append('source bundle omits entire tracked stack(s): ' +
@@ -6401,6 +6830,7 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
             'analysis_included': {name: [lens for lens in chosen if lens in item[2]]
                                   for name, item in analysis.items()},
             'web_files_bundled_for_web_frontend': len(web_paths),
+            'redacted_secrets': redacted,
             'bundles': written, 'notes': notes,
             'skipped_files': skipped_files, 'manifest': BUNDLE_MANIFEST,
             'dispatch': 'Give each bundle to its own agent, in its own context. Record in '
@@ -8453,6 +8883,9 @@ def build_parser():
     conv.add_argument('--reset', action='store_true',
                       help='clear the run\'s readings ledger first; by default readings '
                            'accumulate across calls, so a later pass adds to an earlier one')
+    conv.add_argument('--drop-missing', action='store_true',
+                      help='stop counting ledger readings whose file no longer exists; by '
+                           'default they stay counted and are named in notes')
 
     imp = sub.add_parser('import-findings',
                          help='import another reading\'s FINDING / CANDIDATE / LEAD blocks as '
@@ -8658,8 +9091,8 @@ def main(argv=None):
             print(json.dumps(result, indent=2))
             return 1 if args.gate and (result['missing_stacks'] or result['state'] == 'not-bundled') else 0
         if args.action == 'converge':
-            print(json.dumps(converge(args.readings, args.run, args.threshold, args.reset),
-                             indent=2))
+            print(json.dumps(converge(args.readings, args.run, args.threshold, args.reset,
+                                      args.drop_missing), indent=2))
             return 0
         if args.action == 'import-findings':
             print(json.dumps(import_findings(args.run, args.sources, args.repo, args.source),

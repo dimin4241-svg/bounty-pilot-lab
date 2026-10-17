@@ -39,15 +39,34 @@ BACKEND_PY_DEPS = ("flask", "fastapi", "django", "aiohttp", "tornado", "sanic",
 
 # Cross-chain messaging: a bridge, a relayer or keeper, or a messaging SDK. Whatever the stack,
 # the trust boundary is who may deliver a message and whether its origin is authenticated, which
-# is the integration-auth lens. Long names match anywhere in a path; short ones only as a word.
-MESSAGING_PATH_WORDS = ("bridge", "relayer", "keeper", "messenger", "messaging", "crosschain",
-                        "cross-chain", "cross_chain", "layerzero", "wormhole", "hyperlane",
-                        "axelar", "ccip", "lzreceive")
-MESSAGING_PATH_TOKENS = ("relay", "oapp", "oft", "xcm", "ibc", "lz", "cctp")
+# is the integration-auth lens. Every name matches as a whole word, never inside another one:
+# `OFTAdapter` names `oft` and `OApp` names `oapp`, and `Cambridge` names no bridge.
+MESSAGING_PATH_TOKENS = ("bridge", "relayer", "relay", "messenger", "messaging", "crosschain",
+                         "layerzero", "wormhole", "hyperlane", "axelar", "ccip", "lzreceive",
+                         "oapp", "oft", "xcm", "ibc", "lz", "cctp")
+# Words that also end common compounds (`BookKeeper`, an accounting ledger) count only as a
+# whole path segment - `keeper/`, `keeper.rs`, `keeper-bot` - never as a camelCase part.
+MESSAGING_PATH_SEGMENTS = ("keeper",)
 MESSAGING_DEPS = ("@layerzerolabs", "layerzero", "wormhole", "@hyperlane-xyz", "hyperlane",
                   "@axelar-network", "axelar", "contracts-ccip", "@chainlink/ccip", "ibc-",
                   "cosmwasm-ibc", "xcm", "@eth-optimism", "@arbitrum/nitro-contracts",
                   "@across-protocol", "@connext", "@debridge")
+# A dependency name is matched at a name boundary: `libc-` does not declare `ibc-`.
+MESSAGING_DEP_PATTERNS = tuple(
+    (dep, re.compile(r"(?<![a-z0-9])" + re.escape(dep)
+                     + (r"(?![a-z0-9])" if dep[-1].isalnum() else "")))
+    for dep in MESSAGING_DEPS)
+
+
+def _path_words(name):
+    """Words of a path: split at separators, at camelCase and at acronym ends, so
+    `OFTAdapter.sol` is `oft adapter sol` and `IBCHandler` is `ibc handler`. Adjacent words are
+    also joined, so `LayerZero` and `OApp` still read as `layerzero` and `oapp`."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", spaced)
+    words = [w for w in re.split(r"[^a-z0-9]+", spaced.lower()) if w]
+    joined = [a + b for a, b in zip(words, words[1:])]
+    return set(words) | set(joined) | {w[:-1] for w in words if w.endswith("s")}
 
 
 def _read(path, cap=400000):
@@ -91,13 +110,11 @@ def _messaging_signals(root, files):
     signals = []
     words = set()
     for name in files:
-        lower = name.lower()
-        hit = next((w for w in MESSAGING_PATH_WORDS if w in lower), None)
-        if not hit:
-            # Split camelCase before tokenising, so `OFTAdapter.sol` yields `oft`.
-            spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
-            tokens = set(re.split(r"[^a-z0-9]+", spaced.lower()))
-            hit = next((t for t in MESSAGING_PATH_TOKENS if t in tokens), None)
+        tokens = _path_words(name)
+        segments = set(re.split(r"[^a-z0-9]+", name.lower()))
+        segments |= {w[:-1] for w in segments if w.endswith("s")}
+        hit = next((t for t in MESSAGING_PATH_TOKENS if t in tokens), None) or \
+            next((t for t in MESSAGING_PATH_SEGMENTS if t in segments), None)
         if hit and hit not in words:
             words.add(hit)
             signals.append("path names " + repr(hit) + ": " + name)
@@ -105,7 +122,7 @@ def _messaging_signals(root, files):
                      ("package.json", "cargo.toml", "remappings.txt", "foundry.toml",
                       "go.mod", "move.toml", "scarb.toml")]:
         text = _read(root / manifest).lower()
-        hit = sorted({d for d in MESSAGING_DEPS if d in text})
+        hit = sorted({dep for dep, pattern in MESSAGING_DEP_PATTERNS if pattern.search(text)})
         if hit:
             signals.append(manifest + " declares messaging dependency: " + ", ".join(hit))
     return signals[:20]
