@@ -978,11 +978,15 @@ def _mechanism_overlap(left, right):
     return len(shared) / min(len(a), len(b)) if shared and a and b else 0.0
 
 
-def history_check(run, ledger=None, project=None):
+def history_check(run, ledger=None, project=None, create_ledger=False):
     run = Path(run).resolve()
     meta = read_json(run / 'run.json')
     target_root = meta.get('target_root')
     path = _history_path(ledger, target_root=target_root, run_dir=run)
+    # A ledger path that does not exist compares against nothing, and used to be created on the
+    # spot - so a typo in --ledger read as a clean no-match from then on. It is created only on
+    # request, and the result says whether one was actually read.
+    ledger_found = path.is_file()
     project_key = (_explicit_project(project) if project else
                    meta.get('history_project_key') or meta.get('project_key'))
     if not project_key and target_root and Path(target_root).is_dir():
@@ -993,7 +997,8 @@ def history_check(run, ledger=None, project=None):
     if not isinstance(records, list):
         raise ValueError('findings.json must be an array')
     history = _history_rows(path)
-    _private_history_file(path)
+    if ledger_found or create_ledger:
+        _private_history_file(path)
     old = _latest_history(history)
     prior_cases = [row for row in old if row.get('project_key') == project_key]
     prior_cases.sort(key=lambda row: str(row.get('recorded_at', '')), reverse=True)
@@ -1050,6 +1055,7 @@ def history_check(run, ledger=None, project=None):
     matches.sort(key=lambda row: (-row['review_priority'], row['finding_id'], row['case_id']))
     result = {
         'project_key': project_key, 'history_path': str(path), 'history_records': len(old),
+        'ledger_found': ledger_found, 'ledger_created': bool(create_ledger and not ledger_found),
         'prior_cases_total': len(prior_cases), 'prior_cases_returned': len(prior_case_summaries),
         'prior_cases': prior_case_summaries,
         'checked_at': datetime.now(timezone.utc).isoformat(),
@@ -1061,6 +1067,11 @@ def history_check(run, ledger=None, project=None):
                   'root cause, path, revision and program outcome. No match cannot reveal another '
                   'researcher\'s private submissions.',
     }
+    if not ledger_found and not create_ledger:
+        result['warning'] = ('No ledger exists at history_path, so nothing was compared. Pass '
+                             '--ledger with your ledger, seed it with history import, or, if '
+                             'you have never filed a report, rerun with --create-ledger. Until '
+                             'then personal history is unavailable, never a clean no-match.')
     if meta.get('history_project_key') != project_key:
         meta['history_project_key'] = project_key
         dump(run / 'run.json', meta)
@@ -1129,7 +1140,8 @@ def lead_queue(run):
             if isinstance(row.get('next_experiment'), dict) else None
         if blocker_state(blocker) == 'unverified':
             unverified_blockers.append({'id': row['id'], 'surface': _record_surface(row),
-                                        'claim': blocker_claim(blocker)[:300]})
+                                        'claim': blocker_claim(blocker)[:300],
+                                        'reason': blocker_reason(blocker)})
         leads.append({
             'id': row['id'], 'status': row['status'], 'severity': row['severity'],
             'bug_class': row['bug_class'], 'root_cause': row['root_cause'],
@@ -2272,19 +2284,48 @@ def blocker_claim(blocker):
     return ''
 
 
+# What a failure looks like in an excerpt whose command still exited 0: curl prints a 403 and
+# exits 0, a JSON-RPC error arrives in a 200 response. "0 errors" is a success line, not this.
+FAILURE_OUTPUT = re.compile(
+    r'(?i)\b(?:error|errors|errored|fail|failed|failure|fatal|panic|panicked|exception|traceback|'
+    r'denied|forbidden|unauthori[sz]ed|not found|no such|unsupported|not supported|'
+    r'not available|unavailable|refused|timed out|timeout|rate[ -]?limit(?:ed)?|'
+    r'too many requests|reverted|cannot|can\'t|could not|couldn\'t|unable to|not allowed|'
+    r'insufficient|aborted|killed)\b|\b[45]\d\d (?:[A-Z][a-z]+)|"error"\s*:')
+SUCCESS_COUNTS = re.compile(r'(?i)\b(?:0|no|zero|without)\s+(?:errors?|failures?|failed)\b')
+
+
+def blocker_reason(blocker):
+    """Why a blocker is not reproduced, or '' when it is (or when there is none)."""
+    if not blocker_claim(blocker):
+        return ''
+    if not isinstance(blocker, dict):
+        return 'a bare sentence: record it as an object with claim, command, exit_code and output_excerpt'
+    if not (has_text(blocker.get('command')) and has_text(blocker.get('output_excerpt'))):
+        return 'no command and output_excerpt: nobody can tell whether the obstacle is real'
+    exit_code = blocker.get('exit_code')
+    if type(exit_code) is not int:
+        return 'no exit_code: record the integer the command returned'
+    if exit_code != 0:
+        return ''
+    if FAILURE_OUTPUT.search(SUCCESS_COUNTS.sub('', blocker['output_excerpt'])):
+        return ''
+    return ('the command exited 0 and its output shows no error: a blocker is a failure '
+            'somebody observed, and this run succeeded')
+
+
 def blocker_state(blocker):
     """Classify a blocker as reproduced, unverified or absent.
 
-    Reproduced means someone ran something and recorded what came back: the command and an
-    excerpt of its output. Everything else - a bare sentence, an object with a claim and no
+    Reproduced means someone ran something, it failed, and they recorded what came back: the
+    command, its exit code, and an excerpt of its output - a non-zero exit, or an exit of 0 with
+    an excerpt that shows the error (curl exits 0 on a 403). A command that succeeded is the
+    opposite of a blocker. Everything else - a bare sentence, an object with a claim and no
     command - is unverified. It is still a blocker; it is simply not evidence yet.
     """
     if not blocker_claim(blocker):
         return 'absent'
-    if (isinstance(blocker, dict) and has_text(blocker.get('command'))
-            and has_text(blocker.get('output_excerpt'))):
-        return 'reproduced'
-    return 'unverified'
+    return 'unverified' if blocker_reason(blocker) else 'reproduced'
 
 
 def _check_blocker(blocker, prefix, errors):
@@ -2316,7 +2357,8 @@ def _blocked_lead(row):
         return None
     blocker = next_step.get('blocker')
     state = blocker_state(blocker)
-    return None if state == 'absent' else {'state': state, 'claim': blocker_claim(blocker)}
+    return None if state == 'absent' else {'state': state, 'claim': blocker_claim(blocker),
+                                           'reason': blocker_reason(blocker)}
 
 
 def _record_surface(row):
@@ -2341,9 +2383,10 @@ def _check_blocked_leads(records, errors):
         if not blocked or blocked['state'] == 'reproduced':
             continue
         errors.append(f'finding[{i}]: needs-evidence record is held by an unverified blocker '
-                      f'({blocked["claim"][:120]}). Reproduce it - record next_experiment.blocker '
-                      'as an object with claim, command and output_excerpt - or, if nobody is '
-                      'going to run it, drop the blocker and park or refute the record')
+                      f'({blocked["claim"][:120]}): {blocked["reason"]}. Reproduce it - record '
+                      'next_experiment.blocker as an object with claim, command, exit_code and '
+                      'output_excerpt - or, if nobody is going to run it, drop the blocker and '
+                      'park or refute the record')
 
 
 def _escalation_attempted(row):
@@ -2556,27 +2599,276 @@ def _check_record(row, prefix, run, seen, errors):
                 errors.append(prefix + ': parked requires park.evidence, why the mechanism is '
                               'real: a test, a measurement or a code anchor')
     if row['status'] == 'verified':
-        for key in ('command', 'assertion', 'negative_control', 'source_integrity'):
-            if not has_text(evidence.get(key)):
-                errors.append(prefix + ': verified requires evidence.' + key)
-        if type(evidence.get('exit_code')) is not int:
-            errors.append(prefix + ': verified requires observed integer exit_code')
-        for key in ('log_path', 'poc_path'):
-            value = evidence.get(key)
-            if not has_text(value):
-                errors.append(prefix + ': verified requires evidence.' + key)
-                continue
-            rel = Path(value)
-            target = (run / rel).resolve()
-            if rel.is_absolute() or run not in target.parents or not target.is_file():
-                errors.append(prefix + ': evidence.' + key + ' must resolve to a file inside the run')
-            elif target.stat().st_size == 0:
-                errors.append(prefix + ': evidence.' + key + ' must not be empty')
+        _check_verified_evidence(row, prefix, run, errors)
     return True
 
 
+# Files the run keeps about itself. A log or a PoC that names one of them shows nothing: one
+# reported record cited run.json as both, with exit code 137, and passed.
+RUN_BOOKKEEPING = {'run.json', 'findings.json', 'experiments.json', 'program.json',
+                   'dup-map.json', 'dup-matches.json', 'dup-harvest.json', 'history-matches.json',
+                   'audit-inventory.json', 'capabilities.json', 'coverage-floor.json',
+                   'convergence.json', 'candidate-template.json', 'saturated.md', 'scope.md',
+                   'model.md', 'coverage.md', 'known-hypotheses.md', '.gitignore'}
+RUN_BOOKKEEPING_DIRS = {'deployments', 'bundles'}
+COMMIT_HASH = re.compile(r'[0-9a-f]{7,64}')
+COMMAND_PLACEHOLDER = re.compile(r'\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<[^<>\s]*>|%[A-Za-z_]\w*%')
+_HELPERS = {}
+
+
+def _experiment_gate():
+    """The bundled experiment gate, loaded once: the submission gate reuses its checks."""
+    if 'experiment_gate' not in _HELPERS:
+        _HELPERS['experiment_gate'] = load_impact_helper('experiment_gate')
+    return _HELPERS['experiment_gate']
+
+
+def _experiment_entry(run, finding_id):
+    """This finding's experiments.json entry and the runner result it cites, read leniently.
+
+    Structure is reported here only where it contradicts the record; whether the ledger itself
+    holds up is the submission gate's question, so an unreadable ledger is simply no entry.
+    """
+    gate = _experiment_gate()
+    try:
+        entry = gate.load_ledger(run)[0].get(finding_id)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(entry, dict) or entry.get('status') != 'executed':
+        return entry, None
+    try:
+        result = gate.read_result(run, entry.get('result_path'))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return entry, None
+    return entry, result if isinstance(result, dict) else None
+
+
+def _token_pattern(token, wildcard):
+    parts = wildcard.split(token)
+    return '.*'.join(re.escape(part) for part in parts)
+
+
+def _same_command(command, argv):
+    """Whether a typed command is the argv the runner executed, placeholders and redactions aside.
+
+    `$ETH_RPC_URL` in the record and `<REDACTED>` in the runner's scrubbed argv both stand for a
+    value the other side holds, so each matches anything in its position; every other token
+    must be identical.
+    """
+    import shlex
+    try:
+        typed = shlex.split(command)
+    except ValueError:
+        return False
+    ran = [str(item) for item in argv]
+    if ran and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', ran[0]):
+        while typed and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', typed[0]):
+            typed.pop(0)    # `NAME=value cmd`: the runner passes the environment separately
+    if len(typed) != len(ran):
+        return False
+    redacted = re.compile(re.escape('<REDACTED>'))
+    for mine, theirs in zip(typed, ran):
+        if mine == theirs:
+            continue
+        if re.fullmatch(_token_pattern(mine, COMMAND_PLACEHOLDER), theirs, re.S):
+            continue
+        if re.fullmatch(_token_pattern(theirs, redacted), mine, re.S):
+            continue
+        return False
+    return True
+
+
+# A secret handed to a tool on its command line: `--private-key 0x…`, `--etherscan-api-key …`.
+SECRET_FLAG = re.compile(
+    r'(?i)(?<![\w-])--?(?:private-?keys?|mnemonics?|mnemonic-?phrase|seed-?phrase|passphrase|'
+    r'password|keystore-?password|unlocked-?password|api-?key|etherscan-?api-?key|'
+    r'auth-?token|access-?token|secret(?:-?key)?)(?:=|\s+)(["\']?)([^\s"\']+)')
+QUERY_STRING_SECRET = re.compile(
+    r'(?i)[?&](?:api[_-]?key|apikey|key|token|secret|access[_-]?token|auth)=([^&\s"\'#]+)')
+SECRET_PLACEHOLDER = re.compile(
+    r'\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<[^<>]*>|%[A-Za-z_]\w*%|\*+|\.\.\.|x{3,}|(?i:redacted)')
+
+
+def _is_secret_placeholder(value):
+    value = value.strip().strip('"\'')
+    return not value or bool(SECRET_PLACEHOLDER.fullmatch(value))
+
+
+def _opaque_secret(value):
+    """A value shaped like a key or a password rather than like a word."""
+    value = value.strip().strip('"\'')
+    return (len(value) >= 8 and not _is_secret_placeholder(value)
+            and bool(re.search(r'\d', value) or (re.search(r'[a-z]', value)
+                                                 and re.search(r'[A-Z]', value))))
+
+
+def secret_kinds(text):
+    """What kinds of credential a command or an output excerpt carries; never the values."""
+    if not isinstance(text, str) or not text:
+        return []
+    kinds = []
+    if URL_USERINFO.search(text):
+        kinds.append('a username and password in a URL')
+    for match in RPC_PROVIDER_URL.finditer(text):
+        if any(_opaque_secret(seg.group(0))
+               for seg in OPAQUE_PATH_SEGMENT.finditer(match.group(2))):
+            kinds.append('an RPC provider key in a URL')
+            break
+    else:
+        for match in re.finditer(r'(?i)\b(?:https?|wss?)://[^\s"\'<>]+', text):
+            found = VERSIONED_KEY_PATH.search(match.group(0))
+            if found and _opaque_secret(found.group(2)):
+                kinds.append('an API key in a URL path')
+                break
+    if any(_opaque_secret(m.group(1)) for m in QUERY_STRING_SECRET.finditer(text)):
+        kinds.append('a key in a URL query string')
+    if any(not _is_secret_placeholder(m.group(2)) for m in SECRET_FLAG.finditer(text)):
+        kinds.append('a secret passed as a command-line flag')
+    if any(_opaque_secret(m.group(3)) for m in SECRET_KEY_VALUE.finditer(text)) or \
+            any(_opaque_secret(m.group(2)) for m in UNQUOTED_SECRET_KEY_VALUE.finditer(text)):
+        kinds.append('a secret assigned to a key-named variable')
+    if any(_opaque_secret(m.group(2)) for m in AUTH_HEADER_VALUE.finditer(text)) or \
+            any(_opaque_secret(m.group(2)) for m in BEARER_VALUE.finditer(text)):
+        kinds.append('an authorization token')
+    return sorted(set(kinds), key=kinds.index)
+
+
+def _secret_errors(where, value, errors):
+    for kind in secret_kinds(value):
+        errors.append(where + ' carries ' + kind + '. Replace it with an environment variable '
+                      'placeholder such as $ETH_RPC_URL or $PRIVATE_KEY, and rotate the '
+                      'credential if this file has left the machine')
+
+
+def _check_record_secrets(row, prefix, errors):
+    """Commands and output excerpts end up quoted in reports; a key in one is a key published."""
+    evidence = row.get('evidence')
+    if isinstance(evidence, dict):
+        for key, value in sorted(evidence.items()):
+            _secret_errors(prefix + ': evidence.' + str(key), value, errors)
+    next_step = row.get('next_experiment')
+    if isinstance(next_step, dict):
+        for key in ('method', 'expected_evidence'):
+            _secret_errors(prefix + ': next_experiment.' + key, next_step.get(key), errors)
+        blocker = next_step.get('blocker')
+        if isinstance(blocker, str):
+            _secret_errors(prefix + ': next_experiment.blocker', blocker, errors)
+        elif isinstance(blocker, dict):
+            for key in ('claim',) + BLOCKER_STRING_FIELDS:
+                _secret_errors(prefix + ': next_experiment.blocker.' + key, blocker.get(key),
+                               errors)
+
+
+def _check_experiment_secrets(run, errors):
+    """The experiment ledger carries commands and observations too."""
+    path = run / 'experiments.json'
+    try:
+        ledger = read_json(path) if path.is_file() else {}
+    except (OSError, ValueError):
+        return
+    entries = ledger.get('experiments') if isinstance(ledger, dict) else None
+    for i, entry in enumerate(entries if isinstance(entries, list) else []):
+        if not isinstance(entry, dict):
+            continue
+        for key, value in sorted(entry.items()):
+            _secret_errors(f'experiments.json: experiments[{i}].{key}', value, errors)
+
+
+def _check_verified_evidence(row, prefix, run, errors):
+    """A verified record names files that are evidence, a commit, and the run that produced it."""
+    evidence = row['evidence']
+    for key in ('command', 'assertion', 'negative_control', 'source_integrity'):
+        if not has_text(evidence.get(key)):
+            errors.append(prefix + ': verified requires evidence.' + key)
+    exit_code = evidence.get('exit_code')
+    if type(exit_code) is not int:
+        errors.append(prefix + ': verified requires observed integer exit_code')
+    elif exit_code != 0:
+        # The convention is a test that asserts the bad outcome and passes when the bug is
+        # there. A non-zero exit is also what a compile error, a crash or a SIGKILL looks like.
+        errors.append(prefix + f': evidence.exit_code is {exit_code}; a verified PoC is a test '
+                      'that passes (exit 0) when the bug is demonstrated. A non-zero exit is also '
+                      'what a compile error, a crash or a kill (137) looks like, so it shows nothing')
+    resolved = {}
+    for key in ('log_path', 'poc_path'):
+        value = evidence.get(key)
+        if not has_text(value):
+            errors.append(prefix + ': verified requires evidence.' + key)
+            continue
+        rel = Path(value)
+        target = (run / rel).resolve()
+        if rel.is_absolute() or run not in target.parents or not target.is_file():
+            errors.append(prefix + ': evidence.' + key + ' must resolve to a file inside the run')
+            continue
+        if target.stat().st_size == 0:
+            errors.append(prefix + ': evidence.' + key + ' must not be empty')
+        inside = target.relative_to(run).parts
+        if (len(inside) == 1 and inside[0] in RUN_BOOKKEEPING) or inside[0] in RUN_BOOKKEEPING_DIRS:
+            errors.append(prefix + ': evidence.' + key + ' names ' + '/'.join(inside) + ', a file '
+                          'the run keeps about itself; point it at the PoC test and at the log '
+                          'that test printed')
+            continue
+        resolved[key] = target
+    if len(resolved) == 2 and resolved['log_path'] == resolved['poc_path']:
+        errors.append(prefix + ': evidence.log_path and evidence.poc_path name the same file; the '
+                      'PoC is the test, the log is what running it printed')
+    meta_path = run / 'run.json'
+    try:
+        meta = read_json(meta_path) if meta_path.is_file() else {}
+    except (OSError, ValueError):
+        meta = {}
+    commit = meta.get('commit') if isinstance(meta, dict) else None
+    ident = row['id'] if isinstance(row['id'], str) else ''
+    entry, result = _experiment_entry(run, ident)
+    revision = row['revision'].strip().lower() if isinstance(row['revision'], str) else ''
+    if revision and not COMMIT_HASH.fullmatch(revision):
+        errors.append(prefix + ': verified requires revision to be the commit hash the PoC ran '
+                      'against (7 to 64 hex characters), not ' + repr(row['revision'][:60]))
+    elif revision:
+        pinned = [value.lower() for value in (commit, (entry or {}).get('revision'))
+                  if isinstance(value, str) and COMMIT_HASH.fullmatch(value.lower())]
+        if not any(value.startswith(revision) for value in pinned):
+            errors.append(prefix + ': revision ' + revision[:16] + ' is neither the run\'s commit ('
+                          + (str(commit)[:12] if commit else 'none recorded') + ') nor the '
+                          'revision of its executed experiment; a verified record names the '
+                          'commit its PoC ran against')
+    if result is None:
+        return
+    candidates = [case for case in result.get('cases', [])
+                  if isinstance(case, dict) and case.get('role') == 'candidate'
+                  and isinstance(case.get('argv'), list) and case['argv']]
+    command = evidence.get('command')
+    matched = [case for case in candidates
+               if has_text(command) and _same_command(command, case['argv'])]
+    if candidates and has_text(command) and not matched:
+        import shlex
+        shown = shlex.join(str(item) for item in candidates[0]['argv'])[:200]
+        errors.append(prefix + ': evidence.command is not the candidate command the paired run '
+                      'executed (' + shown + '); record the command that produced the result '
+                      'experiments.json cites')
+    elif matched and type(exit_code) is int and all(case.get('exit_code') != exit_code
+                                                     for case in matched):
+        errors.append(prefix + ': evidence.exit_code ' + str(exit_code) + ' is not the exit code '
+                      'the paired run observed for that command ('
+                      + str(matched[0].get('exit_code')) + ')')
+
+
 DEPLOYMENT_EVIDENCE_DIR = 'deployments'
+DEPLOYMENT_TOOL = 'bounty.py verify-deployment'
 EVM_SOURCE_SUFFIXES = ('.sol', '.vy')
+# Source that is deployed as contract code on some chain. `not-applicable` says no deployed code
+# is involved, which is never true of these, whatever the path carries after the file name.
+ONCHAIN_SOURCE_SUFFIXES = EVM_SOURCE_SUFFIXES + ('.yul', '.huff', '.fe', '.move', '.cairo',
+                                                 '.fc', '.func', '.tolk')
+# Rust is contract code only in a crate built against an on-chain runtime; a relayer or a
+# keeper in Rust is off-chain and may keep `not-applicable`.
+ONCHAIN_RUST_CRATE = re.compile(
+    r'(?m)^\s*(?:\[(?:[\w.-]*\.)?dependencies\.)?(anchor-lang|solana-program|pinocchio|'
+    r'cosmwasm-std|ink|ink_lang)\s*[=\]]')
+ONCHAIN_RUST_LABELS = {'anchor-lang': 'Solana (Anchor)', 'solana-program': 'Solana',
+                       'pinocchio': 'Solana', 'cosmwasm-std': 'CosmWasm', 'ink': 'ink!',
+                       'ink_lang': 'ink!'}
+EXTRA_SOURCE_SUFFIXES = {'.jsx', '.mjs', '.cjs'}
 
 
 # An on-chain identity is not always an EVM address. A Solana program id is base58 and
@@ -2594,19 +2886,104 @@ def _evidence_stem(address):
     return address if BASE58_ID.fullmatch(address) else None
 
 
+def deployment_digest(record):
+    """Fingerprint of a verify-deployment record, so an edit made after it was written shows."""
+    body = {key: value for key, value in record.items() if key != 'record_sha256'}
+    payload = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def _affected_file(entry):
+    """The file an affected_paths entry names, line anchor, symbol and note cut away; or ''.
+
+    `src/Vault.sol#L42`, `src/Vault.sol (withdraw)` and `src/Vault.sol:withdraw` all name
+    src/Vault.sol. `Vault.withdraw()` names no file at all, and neither does a bare symbol.
+    """
+    words = entry.strip().replace('\\', '/').split()
+    text = words[0] if words else ''
+    text = text.split('#', 1)[0].split('(', 1)[0].split(':', 1)[0]
+    name = text.rsplit('/', 1)[-1]
+    suffix = Path(name).suffix.lower()
+    if (suffix in SOURCE_SUFFIXES or suffix in CONFIG_SUFFIXES or suffix in EXTRA_SOURCE_SUFFIXES
+            or name.lower() in CONFIG_ROOT_FILES):
+        return text
+    return ''
+
+
+def _crate_manifest(root, rel):
+    """The Cargo.toml of the crate a Rust file belongs to, read from the target checkout."""
+    if not root or not Path(root).is_dir():
+        return None
+    for parent in Path(rel).parents:
+        text = read_target_file(root, parent / 'Cargo.toml', errors='replace',
+                                max_bytes=200_000)
+        if text is not None and '[package]' in text:
+            return text
+    return None
+
+
+def _onchain_source(path, target_root):
+    """Why a named file is deployed contract code, or '' when nothing says it is."""
+    suffix = Path(path).suffix.lower()
+    if suffix in ONCHAIN_SOURCE_SUFFIXES:
+        return 'contract source'
+    if suffix != '.rs':
+        return ''
+    if 'programs' in [part.lower() for part in Path(path).parts[:-1]]:
+        return 'a Solana program: programs/ is the Anchor workspace layout'
+    manifest = _crate_manifest(target_root, path)
+    found = ONCHAIN_RUST_CRATE.search(manifest.lower()) if manifest else None
+    if found:
+        return 'a ' + ONCHAIN_RUST_LABELS[found.group(1)] + ' contract crate (its Cargo.toml ' \
+               'depends on ' + found.group(1) + ')'
+    return ''
+
+
+def _check_not_applicable(row, prefix, run, errors):
+    """`not-applicable` is for code nothing deploys, and only a named file can show that."""
+    if not has_text(row.get('deployment_rationale')):
+        errors.append(prefix + ': deployment_status not-applicable requires deployment_rationale '
+                      '(why no deployed code is involved)')
+    try:
+        meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
+    except (OSError, ValueError):
+        meta = {}
+    target_root = meta.get('target_root') if isinstance(meta, dict) else None
+    paths = row['affected_paths'] if isinstance(row['affected_paths'], list) else []
+    unnamed, onchain = [], []
+    for entry in paths:
+        if not isinstance(entry, str):
+            continue
+        name = _affected_file(entry)
+        if not name:
+            unnamed.append(entry.strip())
+            continue
+        why = _onchain_source(name, target_root)
+        if why:
+            onchain.append(name + ': ' + why)
+    if unnamed:
+        errors.append(prefix + ': deployment_status not-applicable needs every affected path to '
+                      'name a file, and ' + ', '.join(repr(p[:60]) for p in unnamed[:3])
+                      + ' names none; name the file, so the gate can tell deployed contract '
+                      'source from off-chain code')
+    if onchain:
+        errors.append(prefix + ': deployment_status not-applicable is refused for deployed '
+                      'contract source (' + '; '.join(onchain[:3]) + '). Deployed code is what '
+                      'the program pays on: run verify-deployment --run against the address or '
+                      'program id, or leave deployment_status unknown')
+
+
 def _check_deployment_evidence(row, prefix, run, errors):
-    """`exact` must be backed by verify-deployment output saved in this run, never typed in."""
+    """`exact` must be backed by verify-deployment output saved in this run, never typed in.
+
+    A file is evidence only as verify-deployment wrote it: its tool marker, the chain and block
+    (or slot) the code was read at, a comparison that came back exact, and a digest over the
+    whole record, so a hand-typed or hand-edited file is refused. The artifact it compared must
+    still exist with the bytes it had, or the match cannot be rechecked.
+    """
     status = row['deployment_status']
     if status == 'not-applicable':
-        if not has_text(row.get('deployment_rationale')):
-            errors.append(prefix + ': deployment_status not-applicable requires deployment_rationale '
-                          '(why no deployed code is involved)')
-        paths = row['affected_paths'] if isinstance(row['affected_paths'], list) else []
-        evm = sorted({p for p in paths if isinstance(p, str) and
-                      p.split(':', 1)[0].strip().lower().endswith(EVM_SOURCE_SUFFIXES)})
-        if evm:
-            errors.append(prefix + ': deployment_status not-applicable is refused for deployed '
-                          'contract source (' + ', '.join(evm[:3]) + '); run verify-deployment --run')
+        _check_not_applicable(row, prefix, run, errors)
         return
     if status != 'exact':
         errors.append(prefix + ': submission requires deployment_status exact or not-applicable; '
@@ -2635,22 +3012,51 @@ def _check_deployment_evidence(row, prefix, run, errors):
             errors.append(label + ' is not a verify-deployment result')
             continue
         address = data.get('address')
+        if isinstance(address, str) and _evidence_stem(address) is None:
+            # Move and Cairo addresses: nothing here reads their code, so an `exact` for one
+            # can only have been typed. The honest record is unknown, with the method in prose.
+            errors.append(label + ': verify-deployment compares EVM contracts and Solana programs '
+                          'only, so it never read ' + address[:80] + '; leave deployment_status '
+                          'unknown and state in the report how the deployed code was identified')
+            continue
         if not isinstance(address, str) or _evidence_stem(address) != target.stem:
             errors.append(label + ' does not name the address it was recorded for; the file is '
                           'named after its address, lowercased for an EVM address and verbatim '
                           'for a base58 program id')
             continue
+        if data.get('tool') != DEPLOYMENT_TOOL or data.get('record_sha256') != \
+                deployment_digest(data):
+            errors.append(label + ' was not written by verify-deployment --run, or was edited '
+                          'after it was; rerun verify-deployment --address ' + address
+                          + ' --artifact <build> --run <run>')
+            continue
         if data.get('deployment_status') != 'exact':
             errors.append(label + ' reports ' + str(data.get('deployment_status'))
                           + ', not exact, for ' + address)
             continue
+        comparison = data.get('comparison')
+        if not isinstance(comparison, dict) or comparison.get('status') != 'exact':
+            errors.append(label + ' carries no exact comparison for ' + address)
+            continue
+        read_at = ('chain_id', 'block') if EVM_ADDRESS.fullmatch(address) else \
+            ('genesis_hash', 'slot')
+        if not all(type(data.get(key)) is int or (key == 'genesis_hash' and has_text(data.get(key)))
+                   for key in read_at):
+            errors.append(label + ' does not record the ' + ' and '.join(read_at) + ' the code '
+                          'was read at; rerun verify-deployment with --run')
+            continue
         artifact = data.get('artifact')
-        if not isinstance(artifact, dict) or not has_text(artifact.get('sha256')):
+        if (not isinstance(artifact, dict) or not has_text(artifact.get('sha256'))
+                or not has_text(artifact.get('path'))):
             errors.append(label + ' has no compared artifact hash; rerun verify-deployment '
                           'with --artifact and --run')
             continue
-        built = Path(artifact.get('path') or '')
-        if built.is_file() and _sha256_file(built) != artifact['sha256']:
+        built = Path(artifact['path'])
+        if not built.is_file():
+            errors.append(label + ': the compared artifact ' + artifact['path'] + ' no longer '
+                          'exists, so the match cannot be rechecked; keep the build artifact and '
+                          'rerun verify-deployment')
+        elif _sha256_file(built) != artifact['sha256']:
             errors.append(label + ': the artifact changed after it was compared; rerun '
                           'verify-deployment')
 
@@ -2676,6 +3082,19 @@ def _check_escalation_submission(row, prefix, errors):
     if repeated:
         errors.append(prefix + ': escalation records ' + ', '.join(repeated) + ' more than once; '
                       'each amplifier carries exactly one result')
+    # Six bare not-applicable results and no ceiling is a ladder nobody climbed. Structure lets
+    # an open record carry one unexplained; what is submitted says why each does not apply.
+    unexplained = [item['amplifier'] for item in attempted
+                   if isinstance(item, dict) and item.get('result') == 'not-applicable'
+                   and _is_one_of(item.get('amplifier'), ESCALATION_AMPLIFIERS)
+                   and not has_text(item.get('anchor'))]
+    if unexplained:
+        errors.append(prefix + ': escalation marks ' + ', '.join(unexplained) + ' not-applicable '
+                      'with no reason; give each one the sentence, in anchor, that says why it '
+                      'cannot apply here ("not-applicable" is never "not tried")')
+    if not has_text(escalation.get('ceiling')) or not has_text(escalation.get('ceiling_evidence')):
+        errors.append(prefix + ': submission requires escalation.ceiling, the highest impact class '
+                      'the evidence reached, and escalation.ceiling_evidence anchoring it')
 
 
 def _check_submission(row, prefix, run, errors, history_match_ids=None, dup_match_ids=None):
@@ -2814,6 +3233,21 @@ def _submission_history_matches(run, meta, records, errors):
         errors.append('history-matches.json: project key changed; rerun history check')
     if data.get('findings_sha256') != _history_input_digest(records):
         errors.append('history-matches.json: candidate mechanisms changed; rerun history check')
+    if data.get('ledger_found') is not True and data.get('ledger_created') is not True:
+        clean = [row.get('id') for row in records if isinstance(row, dict)
+                 and row.get('status') == SUBMISSION_STATUS
+                 and isinstance(row.get('history_review'), dict)
+                 and row['history_review'].get('status') == 'no-match']
+        if clean and 'ledger_found' not in data:
+            errors.append('history-matches.json: written before history check recorded whether '
+                          'it read a ledger; rerun history check')
+        elif clean:
+            errors.append('history-matches.json: history check found no ledger at '
+                          + str(data.get('history_path')) + ', so no-match on '
+                          + ', '.join(str(i) for i in clean) + ' certifies nothing. Point '
+                          'history check at your ledger with --ledger, or rerun it with '
+                          '--create-ledger if you have never filed a report; until then record '
+                          'history_review.status unavailable')
     by_finding = {}
     for i, match in enumerate(data['matches']):
         if (not isinstance(match, dict) or not has_text(match.get('finding_id')) or
@@ -2905,6 +3339,50 @@ def _check_lead_ledger(run, records, errors):
                       'document')
 
 
+def _check_submission_experiments(run, meta, records, errors):
+    """Every verified record stands on its own executed, paired experiment.
+
+    The experiment gate only ever read open records, so a record marked verified skipped it:
+    a blocked experiment and a `verified` status passed both gates together. The submission
+    gate applies the same per-entry check, from the same code, to what is being submitted.
+    """
+    targets = [(i, row) for i, row in enumerate(records)
+               if isinstance(row, dict) and row.get('status') == SUBMISSION_STATUS]
+    if not targets:
+        return
+    if not (run / 'experiments.json').is_file():
+        # Runs from before the ledger existed fail closed: nothing else records the pair.
+        errors.append('experiments.json: missing, so no verified record has a recorded paired '
+                      'run. Create it ({"version": 1, "experiments": [...]}) with an executed '
+                      'entry per verified record, citing the scenario_runner.py --allow-exec '
+                      'result for its candidate and negative control')
+        return
+    gate = _experiment_gate()
+    try:
+        by_id, problems = gate.load_ledger(run)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        errors.append('experiments.json: ' + str(exc))
+        return
+    problems += gate.shared_results(run, by_id)
+    errors.extend('experiments.json: ' + problem for problem in problems)
+    for i, row in targets:
+        prefix, ident = f'finding[{i}]', row.get('id')
+        entry = by_id.get(ident) if isinstance(ident, str) else None
+        if entry is None:
+            errors.append(prefix + ': verified, but experiments.json records no executed '
+                          'experiment for it; run its candidate and negative control with '
+                          'scenario_runner.py --allow-exec and record the result')
+            continue
+        state, reason, _ = gate.check_entry(run, meta, row, entry)
+        if state in ('blocked', 'unsubstantiated-blocker'):
+            errors.append(prefix + ': verified, but its experiment is recorded as blocked; a '
+                          'blocked experiment never verifies a finding. Run it, or return the '
+                          'record to needs-evidence')
+        elif state != 'executed':
+            errors.append(prefix + ': verified, but its experiment does not pass the experiment '
+                          'gate: ' + reason)
+
+
 def validate(run, submission=False, ledger=True):
     run = Path(run).resolve()
     errors = []
@@ -2929,6 +3407,7 @@ def validate(run, submission=False, ledger=True):
         _check_dispatch(run, errors)
         _check_blocked_leads(records, errors)
         _check_audit_inventory(run, errors)
+        _check_submission_experiments(run, meta, records, errors)
     seen, targets = set(), 0
     for i, row in enumerate(records):
         prefix = f'finding[{i}]'
@@ -2936,12 +3415,14 @@ def validate(run, submission=False, ledger=True):
             errors.append(prefix + ': must be an object')
             continue
         complete = _check_record(row, prefix, run, seen, errors)
+        _check_record_secrets(row, prefix, errors)
         # Records are never deleted, so a refuted or still-open sibling stays in the file. The
         # submission gates apply to what would be submitted: the verified records.
         if submission and row.get('status') == SUBMISSION_STATUS:
             targets += 1
             if complete:
                 _check_submission(row, prefix, run, errors, history_matches, dup_matches)
+    _check_experiment_secrets(run, errors)
     if ledger:
         _check_lead_ledger(run, [row for row in records if isinstance(row, dict)], errors)
     if submission and not targets:
@@ -3076,13 +3557,23 @@ def _harvest_state(run, entries=None):
             'untriaged': sorted(set(untriaged))}
 
 
-def dup_check(run):
+def dup_check(run, empty_map_reason=None):
     """Run the duplicate join and record it, bound to the findings and the map it read."""
     run = Path(run).resolve()
     errors, collisions = check_dup_map(run)
     meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
     entries = read_json(run / 'dup-map.json')
     records = read_json(run / 'findings.json')
+    # init writes the map as []: an empty map is the scaffold until someone says what was read.
+    # The statement survives a rerun while the map stays empty, like dup-harvest's.
+    empty = isinstance(entries, list) and not entries
+    previous_path = run / 'dup-matches.json'
+    try:
+        previous = read_json(previous_path) if previous_path.is_file() else {}
+    except (OSError, ValueError):
+        previous = {}
+    if not has_text(empty_map_reason) and isinstance(previous, dict):
+        empty_map_reason = previous.get('empty_map_reason')
     result = {
         'run_id': meta.get('run_id'),
         'checked_at': datetime.now(timezone.utc).isoformat(),
@@ -3092,6 +3583,8 @@ def dup_check(run):
                             if isinstance(records, list) else ''),
         'dup_map_sha256': _dup_map_digest(entries),
         'collisions': collisions,
+        'empty_map_reason': empty_map_reason.strip()[:1000]
+                            if empty and has_text(empty_map_reason) else '',
         'harvest': _harvest_state(run, entries if isinstance(entries, list) else []),
         'state': 'invalid-map' if errors else
                  ('review-required' if collisions else 'no-dup-match-found'),
@@ -3153,6 +3646,12 @@ def _submission_dup_matches(run, meta, records, errors):
                       'dup-check so the new entries are compared')
     if data.get('map_errors'):
         errors.append('dup-matches.json: dup-map.json did not validate; fix it and rerun dup-check')
+    if isinstance(entries, list) and not entries and not has_text(data.get('empty_map_reason')):
+        errors.append('dup-map.json: empty - the scaffold init writes - so the duplicate join '
+                      'compared against nothing. Record what the program\'s known-issues list, '
+                      'its audits and its contests already burned (references/dup-map.md), or, '
+                      'if they burn nothing, rerun dup-check --empty-map-reason "<the sources '
+                      'you read, and when>"')
     by_finding = {}
     for i, hit in enumerate(data['collisions']):
         if not isinstance(hit, dict) or not has_text(hit.get('finding')) \
@@ -3502,9 +4001,12 @@ def read_audit_inventory(run):
 def _check_audit_inventory(run, errors):
     """A review the repository ships and nobody accounted for is a published list of answers."""
     state = _audit_inventory_state(run)
-    # A run with no inventory is not blocked: older runs predate the command, and a target that
-    # ships no review has nothing to account for.
+    # A target that ships no review writes an inventory with no artifacts, and that passes: what
+    # is required is that somebody looked. Runs that predate the command have to run it once.
     if not state['present']:
+        errors.append('audit-inventory.json: missing; run audit-inventory --repo <checkout> --run '
+                      '<run> (an inventory listing no artifact is fine: it records that the '
+                      'repository ships no review)')
         return
     if state['invalid']:
         errors.append('audit-inventory.json: not a result audit-inventory wrote; rerun '
@@ -4538,9 +5040,11 @@ CALL_PROXY_PROBES = (('gnosis-safe-mastercopy', 'masterCopy()'),
                      ('compound-unitroller', 'comptrollerImplementation()'))
 # Detection order also decides which implementation is compared when several are present.
 PROXY_KINDS = ('eip1967-implementation', 'eip1967-beacon', 'eip1822-proxiable',
-               'zeppelinos-implementation', 'eip1167-minimal-clone', 'eip1167-pattern',
-               'gnosis-safe-mastercopy', 'compound-unitroller', 'eip2535-diamond',
+               'zeppelinos-implementation', 'eip1167-minimal-clone', 'solady-0age-clone',
+               'solady-push0-clone', 'eip1167-pattern', 'gnosis-safe-mastercopy',
+               'compound-unitroller', 'eip2535-diamond', 'implementation-getter',
                'slot0-singleton', 'eip1967-admin')
+BLOCK_TAGS = ('earliest', 'safe', 'finalized', 'pending')
 SMALL_RUNTIME_BYTES = 1024
 OP_DELEGATECALL = 0xf4
 
@@ -4623,20 +5127,46 @@ def _decode_facet_addresses(raw_hex):
         return None
 
 
+# Clone forwarders are a fixed prefix, the implementation address and a fixed suffix, read from
+# the libraries that deploy them rather than remembered. ERC-1167 is OpenZeppelin Clones.sol's
+# form and Solady LibClone's CWIA form, and both append immutable args after the 45-byte
+# forwarder (`cloneWithImmutableArgs`, `cloneDeterministicWithImmutableArgs`, Solady's
+# `clone(implementation, args)`): data the forwarder never executes, since it returns at 0x2c.
+# Solady's default `clone` is the 44-byte 0age form and `clone_PUSH0` a 45-byte PUSH0 form;
+# neither carries args. Requiring the exact length missed every clone with args, and an
+# unrecognized prefix compared the clone's own runtime against the implementation's build.
+CLONE_FORMS = (
+    ('eip1167-minimal-clone', '363d3d373d3d3d363d73', '5af43d82803e903d91602b57fd5bf3', True),
+    ('solady-0age-clone', '3d3d3d3d363d3d37363d73', '5af43d3d93803e602a57fd5bf3', False),
+    ('solady-push0-clone', '5f5f365f5f37365f73', '5af43d5f5f3e6029573d5ffd5b3d5ff3', False),
+)
+IMMUTABLE_ARGS_SHOWN = 4096
+
+
+def clone_forwarder(code_hex):
+    """(kind, implementation, immutable args) for a recognised clone runtime, or None."""
+    raw = _code_bytes(code_hex)
+    for kind, prefix_hex, suffix_hex, takes_args in CLONE_FORMS:
+        prefix, suffix = bytes.fromhex(prefix_hex), bytes.fromhex(suffix_hex)
+        head = len(prefix) + 20 + len(suffix)
+        if (len(raw) < head or not raw.startswith(prefix)
+                or raw[head - len(suffix):head] != suffix):
+            continue
+        if len(raw) > head and not takes_args:
+            continue
+        return kind, '0x' + raw[len(prefix):len(prefix) + 20].hex(), raw[head:]
+    return None
+
+
 def minimal_clone_implementation(code_hex):
-    """Return the implementation address for the canonical EIP-1167 runtime, if present."""
-    raw = bytes.fromhex(code_hex[2:] if code_hex.startswith('0x') else code_hex)
-    prefix = bytes.fromhex('363d3d373d3d3d363d73')
-    suffix = bytes.fromhex('5af43d82803e903d91602b57fd5bf3')
-    if (len(raw) != len(prefix) + 20 + len(suffix)
-            or not raw.startswith(prefix) or not raw.endswith(suffix)):
-        return None
-    return '0x' + raw[len(prefix):-len(suffix)].hex()
+    """Return the implementation address of a recognised clone forwarder, if present."""
+    found = clone_forwarder(code_hex)
+    return found[1] if found else None
 
 
 def looks_like_minimal_clone(code_hex):
-    raw = bytes.fromhex(code_hex[2:] if code_hex.startswith('0x') else code_hex)
-    return raw.startswith(bytes.fromhex('363d3d373d3d3d363d73'))
+    raw = _code_bytes(code_hex)
+    return any(raw.startswith(bytes.fromhex(prefix)) for _, prefix, _, _ in CLONE_FORMS)
 
 
 # solc appends a CBOR map then its own 2-byte big-endian length. The map starts with a
@@ -4813,19 +5343,197 @@ def record_deployment(run, result):
     if folder.is_symlink():
         raise ValueError('the run\'s deployments/ folder must not be a symlink')
     folder.mkdir(mode=0o700, exist_ok=True)
-    path = folder / (result['address'].lower() + '.json')
+    path = folder / (_evidence_stem(result['address']) + '.json')
     if path.is_symlink():
         raise ValueError(f'{path} is a symlink; refusing to write through it')
     record = dict(result, recorded_at=datetime.now(timezone.utc).isoformat(),
-                  tool='bounty.py verify-deployment', skill_version=skill_version())
+                  tool=DEPLOYMENT_TOOL, skill_version=skill_version())
+    # The submission gate recomputes this: a status edited from partial to exact by hand, or a
+    # file typed from scratch, no longer matches it.
+    record['record_sha256'] = deployment_digest(record)
     dump(path, record)
     return path
+
+
+def _check_linked_libraries(result, code_at):
+    """Record what sits at each linked library address; an empty one cannot be exact.
+
+    Library placeholders are masked so a linked build can match at all, which also means the
+    comparison never looked at the address the deployment linked. Its code is recorded so it
+    can be compared with the library's own build, and an address holding none is a contract
+    calling into nothing.
+    """
+    comparison = result.get('comparison')
+    masked = comparison.get('masked_ranges', []) if isinstance(comparison, dict) else []
+    addresses = sorted({item['onchain_value'] for item in masked
+                        if isinstance(item, dict) and item.get('kind') == 'library'})
+    if not addresses:
+        return
+    keccak = load_keccak()
+    linked = []
+    for address in addresses:
+        code = code_at(address)
+        linked.append({'address': address, 'runtime_code_bytes': max(0, (len(code) - 2) // 2),
+                       'runtime_code_keccak256': keccak.keccak_hex(bytes.fromhex(code[2:]))
+                                                 if len(code) > 2 else None})
+    result['linked_libraries'] = linked
+    empty = [item['address'] for item in linked if not item['runtime_code_bytes']]
+    if empty and result.get('deployment_status') == 'exact':
+        result['deployment_status'] = 'partial'
+        result['comparison'] = dict(comparison, status='partial', reason=(
+            'the runtime matches with library addresses masked, but the linked library at '
+            + ', '.join(empty) + ' holds no code at this block, so what the contract calls '
+            'is not the library that was built'))
+
+
+B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+# Loader ids and the program-data header are Solana's own: UpgradeableLoaderState is a u32
+# discriminant (2 Program, 3 ProgramData), and size_of_programdata_metadata() is 45 bytes -
+# discriminant, deploy slot, and an optional upgrade authority.
+SOLANA_UPGRADEABLE_LOADER = 'BPFLoaderUpgradeab1e11111111111111111111111'
+SOLANA_LEGACY_LOADERS = ('BPFLoader2111111111111111111111111111111111',
+                         'BPFLoader1111111111111111111111111111111111')
+SOLANA_PROGRAMDATA_METADATA = 45
+
+
+def b58encode(raw):
+    number = int.from_bytes(raw, 'big')
+    out = ''
+    while number:
+        number, rem = divmod(number, 58)
+        out = B58_ALPHABET[rem] + out
+    return '1' * (len(raw) - len(raw.lstrip(b'\0'))) + out
+
+
+def b58decode(text):
+    number = 0
+    for char in text:
+        if char not in B58_ALPHABET:
+            raise ValueError('not base58: ' + text[:60])
+        number = number * 58 + B58_ALPHABET.index(char)
+    body = number.to_bytes((number.bit_length() + 7) // 8, 'big') if number else b''
+    return b'\0' * (len(text) - len(text.lstrip('1'))) + body
+
+
+def solana_executable_hash(program):
+    """solana-verify's executable hash: sha256 of the program, trailing zero padding dropped."""
+    return hashlib.sha256(bytes(program).rstrip(b'\0')).hexdigest()
+
+
+def _solana_account(rpc, pubkey, opener):
+    """(context slot, account with its decoded data) at the finalized slot; account None if absent."""
+    import base64
+    reply = rpc_call(rpc, 'getAccountInfo',
+                     [pubkey, {'encoding': 'base64', 'commitment': 'finalized'}], opener)
+    if not isinstance(reply, dict) or not isinstance(reply.get('context'), dict):
+        raise ValueError('getAccountInfo returned no context')
+    slot, value = reply['context'].get('slot'), reply.get('value')
+    if value is None:
+        return slot, None
+    data = value.get('data') if isinstance(value, dict) else None
+    if not (isinstance(data, list) and len(data) == 2 and data[1] == 'base64'
+            and isinstance(data[0], str)):
+        raise ValueError('getAccountInfo returned account data that is not base64')
+    try:
+        raw = base64.b64decode(data[0], validate=True)
+    except ValueError as exc:
+        raise ValueError('getAccountInfo returned undecodable account data') from exc
+    return slot, dict(value, raw=raw)
+
+
+def verify_solana_program(rpc, address, artifact=None, block='latest', opener=None, run=None):
+    """Compare a deployed Solana program with a local .so build, as solana-verify does.
+
+    The program bytes are read from the chain - from its program-data account under the
+    upgradeable loader, from the program account itself under the legacy ones - and hashed
+    the way `solana-verify get-program-hash` and `get-executable-hash` hash them, so the same
+    match can be rechecked with that tool. Only a verifiable build of the deployed revision
+    reproduces the bytes; a mismatch is as often a different build as a different source.
+    """
+    if block != 'latest':
+        raise ValueError('a Solana account is read at the finalized slot; --block applies to '
+                         'EVM addresses only')
+    if len(b58decode(address)) != 32:
+        raise ValueError('a Solana program id is the base58 form of 32 bytes')
+    run = _deployment_run(run)
+    local = None
+    if artifact:
+        local = Path(artifact).read_bytes()
+        if not local.startswith(b'\x7fELF'):
+            raise ValueError('for a Solana program id, --artifact is the program\'s .so build '
+                             '(an ELF file such as target/deploy/<name>.so)')
+    genesis = rpc_call(rpc, 'getGenesisHash', [], opener)
+    slot, account = _solana_account(rpc, address, opener)
+    result = {'address': address, 'chain': 'solana', 'genesis_hash': genesis, 'slot': slot,
+              'proxy': {}, 'deployment_status': 'unknown'}
+
+    def finish():
+        result['proxy_kind'] = 'none'
+        result['implementation_address'] = None
+        if run:
+            result['evidence_file'] = str(record_deployment(run, result))
+        return result
+
+    if account is None or account.get('executable') is not True:
+        result['deployment_status'] = 'mismatch'
+        result['reason'] = 'no executable program at this id on this cluster'
+        return finish()
+    result['loader'] = owner = account.get('owner')
+    if owner == SOLANA_UPGRADEABLE_LOADER:
+        state = account['raw']
+        if len(state) < 36 or int.from_bytes(state[:4], 'little') != 2:
+            raise ValueError('the upgradeable program account holds no Program state')
+        programdata = b58encode(state[4:36])
+        slot, data_account = _solana_account(rpc, programdata, opener)
+        header = data_account['raw'] if isinstance(data_account, dict) else b''
+        if (not isinstance(data_account, dict) or data_account.get('owner') != owner
+                or len(header) < SOLANA_PROGRAMDATA_METADATA
+                or int.from_bytes(header[:4], 'little') != 3):
+            raise ValueError('the program-data account ' + programdata + ' holds no ProgramData '
+                             'state')
+        result.update(slot=slot, programdata_address=programdata,
+                      last_deploy_slot=int.from_bytes(header[4:12], 'little'),
+                      upgrade_authority=b58encode(header[13:45]) if header[12] == 1 else None)
+        program = header[SOLANA_PROGRAMDATA_METADATA:]
+    elif owner in SOLANA_LEGACY_LOADERS:
+        program = account['raw']
+    else:
+        result['reason'] = ('the program is owned by loader ' + str(owner) + ', whose account '
+                            'layout this check does not read')
+        return finish()
+    result['program_bytes'] = len(bytes(program).rstrip(b'\0'))
+    result['executable_hash'] = solana_executable_hash(program)
+    if local is None:
+        result['reason'] = ('no local build given, so source-to-chain identity is unproven; '
+                            'pass the verifiable .so build with --artifact')
+        return finish()
+    local_hash = solana_executable_hash(local)
+    result['artifact'] = {'path': str(Path(artifact).resolve()), 'field': 'program binary',
+                          'sha256': _sha256_file(artifact), 'executable_hash': local_hash}
+    result['compared'] = 'program executable'
+    if local_hash == result['executable_hash']:
+        result['comparison'] = {'status': 'exact', 'bytes': result['program_bytes'],
+                                'reason': 'the deployed program bytes equal the build, trailing '
+                                          'zero padding dropped as solana-verify drops it'}
+    else:
+        result['comparison'] = {'status': 'mismatch',
+                                'reason': 'executable hash differs; only a verifiable build of '
+                                          'the deployed revision (solana-verify build) '
+                                          'reproduces the deployed bytes'}
+    result['deployment_status'] = result['comparison']['status']
+    if result['deployment_status'] == 'exact' and result.get('upgrade_authority'):
+        result['note'] = ('the program is upgradeable by ' + result['upgrade_authority'] + '; '
+                          'record this slot in the finding and recheck before submitting')
+    return finish()
 
 
 def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, run=None):
     keccak = load_keccak()
     if not re.fullmatch(r'0x[0-9a-fA-F]{40}', address):
-        raise ValueError('address must be 0x followed by 40 hex characters')
+        if BASE58_ID.fullmatch(address):
+            return verify_solana_program(rpc, address, artifact, block, opener, run)
+        raise ValueError('address must be 0x followed by 40 hex characters, or a base58 Solana '
+                         'program id')
     run = _deployment_run(run)
     details = read_artifact_details(artifact) if artifact else None
     chain_id = rpc_call(rpc, 'eth_chainId', [], opener)
@@ -4834,6 +5542,13 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
         pinned = tip  # pin the tip once, so every read below sees one block
     elif isinstance(block, str) and block.isdigit():
         pinned = hex(int(block))
+    elif block in BLOCK_TAGS:
+        # A tag moves; the evidence records the number it meant when the code was read.
+        header = rpc_call(rpc, 'eth_getBlockByNumber', [block, False], opener)
+        number = header.get('number') if isinstance(header, dict) else None
+        if not isinstance(number, str) or not re.fullmatch(r'0x[0-9a-fA-F]+', number):
+            raise ValueError(f'the node returned no block number for tag {block}')
+        pinned = number
     else:
         pinned = block
     code = rpc_call(rpc, 'eth_getCode', [address, pinned], opener) or '0x'
@@ -4875,9 +5590,15 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
         packed = word[-40:] if len(word) >= 42 else ''
         if packed and int(packed, 16) != 0:
             result['proxy'][label] = '0x' + packed
-    clone_implementation = minimal_clone_implementation(code)
-    if clone_implementation:
-        result['proxy']['eip1167-minimal-clone'] = clone_implementation
+    clone = clone_forwarder(code)
+    if clone:
+        kind, clone_implementation, immutable_args = clone
+        result['proxy'][kind] = clone_implementation
+        if immutable_args:
+            result['clone_immutable_args'] = {
+                'bytes': len(immutable_args),
+                'hex': '0x' + immutable_args[:IMMUTABLE_ARGS_SHOWN].hex(),
+                'truncated': len(immutable_args) > IMMUTABLE_ARGS_SHOWN}
     elif looks_like_minimal_clone(code):
         result['proxy']['eip1167-pattern'] = 'detected-but-unresolved'
     body = strip_metadata(code)[0]
@@ -4898,6 +5619,19 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
             resolution_errors.append(
                 f'EIP-2535 diamond with {len(facets)} facet(s): each facet must be compared '
                 'against its own artifact; per-facet comparison is not implemented')
+    if (not result['proxy'] and delegates
+            and pushes_selector(body, keccak.selector('implementation()'))):
+        # A delegating runtime that dispatches implementation() keeps its logic elsewhere at any
+        # size: Compound's CErc20Delegator stores it in an ordinary slot, far over 1 KB, and
+        # came back exact against its own build with proxy_kind none. Resolved, the
+        # implementation is compared; unresolved, it can only be partial.
+        target = _word_address(probe('implementation()'))
+        if target and len(code_at(target)) > 2:
+            result['proxy']['implementation-getter'] = target
+        else:
+            result['proxy']['implementation-getter'] = 'detected-but-unresolved'
+            resolution_errors.append('the runtime delegates and dispatches implementation(), but '
+                                     'the getter returned no address holding code')
     if not result['proxy'] and delegates and len(body) < SMALL_RUNTIME_BYTES:
         # Older Safe proxies keep the singleton in slot 0 and expose no getter.
         word = rpc_call(rpc, 'eth_getStorageAt', [address, '0x0', pinned], opener) or '0x'
@@ -4916,8 +5650,10 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
                           'and record which implementation was live at this block')
     implementation = next((result['proxy'][kind] for kind in (
         'eip1967-implementation', 'eip1822-proxiable', 'zeppelinos-implementation',
-        'eip1167-minimal-clone', 'gnosis-safe-mastercopy', 'compound-unitroller',
-        'slot0-singleton') if kind in result['proxy']), None)
+        'eip1167-minimal-clone', 'solady-0age-clone', 'solady-push0-clone',
+        'gnosis-safe-mastercopy', 'compound-unitroller', 'implementation-getter',
+        'slot0-singleton') if kind in result['proxy']
+        and result['proxy'][kind] != 'detected-but-unresolved'), None)
     beacon = result['proxy'].get('eip1967-beacon')
     if beacon:
         try:
@@ -4987,6 +5723,7 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
                 result['comparison'] = dict(comparison, status='partial', reason=(
                     'the runtime matches, but it is a small runtime with DELEGATECALL; possibly an '
                     'unrecognized proxy, so the code that executes may not be this artifact'))
+        _check_linked_libraries(result, code_at)
         if result['proxy'] and result['deployment_status'] == 'exact':
             result['note'] = ('implementation bytecode matches at this block. A proxy can be '
                               'repointed, so record this block in the finding and recheck before '
@@ -5853,6 +6590,10 @@ def build_parser():
 
     dup = sub.add_parser('dup-check', help='match findings against the built duplicate map')
     dup.add_argument('--run', required=True)
+    dup.add_argument('--empty-map-reason', default=None,
+                     help='with an empty dup-map.json: the known-issues list, audits and contests '
+                          'you read and found nothing burned in, and when. Without it an empty '
+                          'map is the scaffold init wrote, and submission is blocked')
 
     harvest = sub.add_parser('dup-harvest',
                              help='collect closed issues and PRs the team already judged')
@@ -5938,6 +6679,10 @@ def build_parser():
     hist_check.add_argument('--run', required=True)
     hist_check.add_argument('--ledger', default=None, help='private JSONL path; default ~/.bounty-pilot/history.jsonl')
     hist_check.add_argument('--project', default=None, help='override project key when the repo has no origin remote')
+    hist_check.add_argument('--create-ledger', action='store_true',
+                            help='create an empty private ledger when none exists at the path: '
+                                 'you have never filed a report. Without it a missing ledger is '
+                                 'recorded as not found, and no-match cannot be submitted')
     hist_record = hist_sub.add_parser('record', help='record a submitted report or a program decision')
     hist_record.add_argument('--run', required=True)
     hist_record.add_argument('--finding', required=True)
@@ -6011,8 +6756,11 @@ def build_parser():
 
     dep = sub.add_parser('verify-deployment', help='compare on-chain runtime code with a build')
     dep.add_argument('--rpc', required=True, help='read-only JSON-RPC endpoint')
-    dep.add_argument('--address', required=True)
-    dep.add_argument('--artifact', default=None, help='Foundry/Hardhat artifact JSON')
+    dep.add_argument('--address', required=True,
+                     help='EVM contract address, or a base58 Solana program id')
+    dep.add_argument('--artifact', default=None,
+                     help='Foundry/Hardhat artifact JSON; for a Solana program id, the '
+                          'verifiable .so build')
     dep.add_argument('--block', default='latest')
     dep.add_argument('--run', default=None,
                      help='private run directory: also save the full result as '
@@ -6076,7 +6824,7 @@ def main(argv=None):
             print(json.dumps(report, indent=2))
             return 1 if errors else 0
         if args.action == 'dup-check':
-            result = dup_check(args.run)
+            result = dup_check(args.run, args.empty_map_reason)
             print(json.dumps(result, indent=2))
             return 1 if result['map_errors'] or result['collisions'] else 0
         if args.action == 'dup-harvest':
@@ -6115,7 +6863,7 @@ def main(argv=None):
             return 0
         if args.action == 'history':
             if args.history_action == 'check':
-                result = history_check(args.run, args.ledger, args.project)
+                result = history_check(args.run, args.ledger, args.project, args.create_ledger)
             elif args.history_action == 'record':
                 result = history_record(args.run, args.finding, args.outcome, args.ledger,
                                         args.project, args.program, args.case_id, args.reason,

@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import subprocess
 import stat
 import urllib.error
@@ -301,7 +302,9 @@ class RpcTests(unittest.TestCase):
 
     def test_unrecognized_clone_variant_is_never_exact_against_its_own_runtime(self):
         proxy = '0x' + '22' * 20
-        code = '0x363d3d373d3d3d363d73' + '33' * 20 + '5af43d82803e903d91602b57fd5bf3' + 'deadbeef'
+        # The ERC-1167 prefix with a forwarder tail no library emits. (Bytes appended after the
+        # canonical tail are immutable args, a recognised form: see test_evidence_hardening.)
+        code = '0x363d3d373d3d3d363d73' + '33' * 20 + '5af43d82803e903d91602b57fd5bf4'
         node = FakeNode({
             'eth_chainId': '0x1', 'eth_blockNumber': '0x100', 'eth_getCode': code,
             'eth_getStorageAt': '0x' + '00' * 32,
@@ -638,13 +641,17 @@ class RunTests(unittest.TestCase):
         meta = bounty.read_json(self.run / 'run.json')
         meta['project_key'] = 'example.invalid/test'
         bounty.dump(self.run / 'run.json', meta)
+        self.commit = meta['commit']
+        # history check refuses a clean no-match against a ledger that does not exist.
         self.ledger = self.base / 'private' / 'history.jsonl'
+        self.ledger.parent.mkdir()
+        self.ledger.write_text('')
 
     def candidate(self):
         row = bounty.template()
         row.update(title='Example', root_cause='Example mechanism',
                    affected_paths=['src/Vault.sol'], bug_class='aggregate-not-decremented',
-                   revision='abc1234', attacker_capabilities='Unprivileged caller',
+                   revision=self.commit, attacker_capabilities='Unprivileged caller',
                    preconditions='Example state', impact='Demonstrated property change',
                    next_experiment={'question': 'Can an unprivileged user trigger the mismatch?',
                                     'method': 'Run the local test with two actors and compare totals',
@@ -657,8 +664,42 @@ class RunTests(unittest.TestCase):
         if submission:
             bounty.history_check(self.run, self.ledger, project='example.invalid/test')
             self.harvest([])
-            bounty.dup_check(self.run)
+            self.dup_check()
         return bounty.validate(self.run, submission=submission)
+
+    def dup_check(self):
+        """dup-check as this fixture needs it before a submission gate.
+
+        The fixture's map is the empty scaffold, so the reason is recorded with the join; and
+        the review-artifact inventory every submission requires is taken when absent.
+        """
+        if not (self.run / 'audit-inventory.json').exists():
+            bounty.audit_inventory(self.repo, self.run)
+        return bounty.dup_check(self.run, empty_map_reason='Fixture: no known-issues list, '
+                                                           'audit or contest to read')
+
+    def paired(self, row):
+        """Record the executed candidate and negative-control run a verified record stands on."""
+        argv = shlex.split(row['evidence']['command'])
+
+        def case(role, command):
+            return {'id': role, 'pair_id': 'p1', 'role': role, 'argv': command, 'cwd': '.',
+                    'executed': True, 'tests_ran': True, 'timed_out': False, 'status': 'ran',
+                    'exit_code': 0, 'expected_exit': 0, 'matched_expected_exit': True}
+        name = 'native-' + row['id'] + '.json'
+        bounty.dump(self.run / name, {
+            'schema': 1, 'finding_id': row['id'], 'source_revision': self.commit,
+            'source_status': 'clean', 'mode': 'executed', 'result': 'experiments-conformed',
+            'cases': [case('candidate', argv), case('negative-control', argv + ['--control'])]})
+        ledger = bounty.read_json(self.run / 'experiments.json')
+        ledger['experiments'] = [entry for entry in ledger['experiments']
+                                 if entry.get('finding_id') != row['id']]
+        ledger['experiments'].append({
+            'finding_id': row['id'], 'status': 'executed', 'revision': self.commit,
+            'result_path': name,
+            'observation': 'The candidate passed and the negative control failed as expected.'})
+        bounty.dump(self.run / 'experiments.json', ledger)
+        return row
 
     def harvest(self, items, triage=None, labels=('wontfix',)):
         """Record a dup-harvest result from a saved search, without touching the network."""
@@ -734,7 +775,7 @@ class RunTests(unittest.TestCase):
         row['dup_review'] = {'status': 'no-match', 'entry_ids': [],
                              'rationale': 'dup-check clean on 2026-10-09 against the known-issues '
                                           'list and the published audit'}
-        return row
+        return self.paired(row)
 
     # ---- init ----
     def test_inventory_and_empty_run(self):
@@ -898,7 +939,7 @@ class RunTests(unittest.TestCase):
         bounty.dump(self.run / 'findings.json', [self.submittable(), blocked])
         bounty.history_check(self.run, self.ledger, project='example.invalid/test')
         self.harvest([])
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('unverified blocker' in e for e in errors), errors)
 
@@ -909,7 +950,7 @@ class RunTests(unittest.TestCase):
         bounty.dump(self.run / 'findings.json', [self.submittable(), blocked])
         bounty.history_check(self.run, self.ledger, project='example.invalid/test')
         self.harvest([])
-        bounty.dup_check(self.run)
+        self.dup_check()
         self.assertEqual(bounty.validate(self.run, submission=True), [])
 
     def test_a_hypothesis_is_not_held_to_the_blocker_gate(self):
@@ -920,7 +961,7 @@ class RunTests(unittest.TestCase):
         bounty.dump(self.run / 'findings.json', [self.submittable(), blocked])
         bounty.history_check(self.run, self.ledger, project='example.invalid/test')
         self.harvest([])
-        bounty.dup_check(self.run)
+        self.dup_check()
         self.assertEqual(bounty.validate(self.run, submission=True), [])
 
     def test_queue_flags_a_blocker_the_probe_contradicts(self):
@@ -1289,7 +1330,7 @@ class RunTests(unittest.TestCase):
         bounty.dump(self.run / 'findings.json', [target, refuted, open_lead])
         bounty.history_check(self.run, self.ledger, project='example.invalid/test')
         self.harvest([])
-        bounty.dup_check(self.run)
+        self.dup_check()
         self.assertEqual(bounty.validate(self.run, submission=True), [])
         self.assertEqual(bounty.submission_targets(self.run), ['BP-001'])
 
@@ -1301,7 +1342,7 @@ class RunTests(unittest.TestCase):
         bounty.dump(self.run / 'findings.json', [target, broken])
         bounty.history_check(self.run, self.ledger, project='example.invalid/test')
         self.harvest([])
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertEqual(errors, ['finding[1]: open candidate requires next_experiment.method'])
 
@@ -1534,7 +1575,7 @@ class RunTests(unittest.TestCase):
     def test_submission_requires_the_closed_issue_harvest(self):
         row = self.submittable()
         self.ready_for_submission(row)
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('requires the closed-issue harvest' in e for e in errors))
         self.harvest([])
@@ -1544,7 +1585,7 @@ class RunTests(unittest.TestCase):
         row = self.submittable()
         self.ready_for_submission(row)
         self.harvest([self.judged_issue()])
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('untriaged' in e and '#506' in e for e in errors))
         self.harvest([self.judged_issue()],
@@ -1557,7 +1598,7 @@ class RunTests(unittest.TestCase):
         self.ready_for_submission(row)
         self.harvest([self.judged_issue()],
                      triage={'#506': {'disposition': 'in-map', 'entry_id': 'KI-404'}})
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('untriaged' in e and '#506' in e for e in errors))
         bounty.dump(self.run / 'dup-map.json', [{
@@ -1565,7 +1606,7 @@ class RunTests(unittest.TestCase):
             'source': 'https://example.invalid/i/506 (read 2026-10-12)',
             'surfaces': ['src/Zappers/LeverageWETHZapper.sol'],
             'bug_classes': ['caller-supplied-swap-floor'], 'note': 'wontfix'}])
-        bounty.dup_check(self.run)
+        self.dup_check()
         self.assertEqual(bounty.validate(self.run, submission=True), [])
 
     def test_a_harvest_stopped_at_the_limit_blocks_submission(self):
@@ -1575,7 +1616,7 @@ class RunTests(unittest.TestCase):
         data = bounty.read_json(self.run / 'dup-harvest.json')
         data['truncated'] = True
         bounty.dump(self.run / 'dup-harvest.json', data)
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('stopped at --limit' in e for e in errors))
 
@@ -1593,7 +1634,7 @@ class RunTests(unittest.TestCase):
         row = self.collided()
         self.ready_for_submission(row)
         self.harvest([])
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('collided with KI-001' in e for e in errors))
 
@@ -1607,14 +1648,14 @@ class RunTests(unittest.TestCase):
             'surfaces': ['src/Vault.sol'], 'bug_classes': ['donation-inflates-measured-yield']}])
         self.ready_for_submission(row)
         self.harvest([])
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('collided with C4-QA-01' in e for e in errors))
         row['dup_review'] = {'status': 'different-mechanism', 'entry_ids': ['C4-QA-01'],
                              'rationale': 'The QA note reports the yield reading only; this one '
                                           'moves funds between depositors'}
         self.ready_for_submission(row)
-        bounty.dup_check(self.run)
+        self.dup_check()
         self.assertEqual(bounty.validate(self.run, submission=True), [])
 
     def test_a_reviewed_collision_must_cover_every_entry_and_say_why(self):
@@ -1622,7 +1663,7 @@ class RunTests(unittest.TestCase):
         row['dup_review'] = {'status': 'different-mechanism', 'entry_ids': [], 'rationale': ''}
         self.ready_for_submission(row)
         self.harvest([])
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('requires the entry_ids' in e for e in errors))
         self.assertTrue(any('requires the mechanism comparison' in e for e in errors))
@@ -1630,13 +1671,13 @@ class RunTests(unittest.TestCase):
                              'rationale': 'The known issue is about the owner oversizing the loan; '
                                           'this one needs no owner action at all'}
         self.ready_for_submission(row)
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('must cover every dup-check collision; missing KI-001' in e
                             for e in errors))
         row['dup_review']['entry_ids'] = ['KI-001', 'KI-999']
         self.ready_for_submission(row)
-        bounty.dup_check(self.run)
+        self.dup_check()
         self.assertEqual(bounty.validate(self.run, submission=True), [])
 
     def test_same_mechanism_blocks_submission_and_keeps_the_record(self):
@@ -1645,7 +1686,7 @@ class RunTests(unittest.TestCase):
                              'rationale': 'Same actor, same swap floor, same victim'}
         self.ready_for_submission(row)
         self.harvest([])
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('do not submit' in e and 'rejection_reason' in e for e in errors))
 
@@ -1666,7 +1707,7 @@ class RunTests(unittest.TestCase):
             'surfaces': ['src/Vault.sol'], 'bug_classes': ['aggregate-not-decremented']}])
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('duplicate map changed after the join' in e for e in errors))
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('collided with KI-007' in e for e in errors))
 
@@ -1678,7 +1719,7 @@ class RunTests(unittest.TestCase):
         bounty.dump(self.run / 'dup-matches.json', data)
         self.assertTrue(any('belongs to a different run' in e
                             for e in bounty.validate(self.run, submission=True)))
-        bounty.dup_check(self.run)
+        self.dup_check()
         row['root_cause'] = 'Changed after the duplicate join'
         bounty.dump(self.run / 'findings.json', [row])
         self.assertTrue(any('dup-matches.json: candidate mechanisms changed' in e
@@ -1691,7 +1732,7 @@ class RunTests(unittest.TestCase):
         bounty.dump(self.run / 'dup-map.json', [{'id': 'KI-008', 'kind': 'invented',
                                                  'surfaces': ['src/Vault.sol']}])
         bounty.dump(self.run / 'findings.json', [self.candidate()])
-        result = bounty.dup_check(self.run)
+        result = self.dup_check()
         self.assertEqual(result['state'], 'invalid-map')
         self.assertFalse((self.run / 'dup-matches.json').is_file())
 
@@ -1756,7 +1797,7 @@ class RunTests(unittest.TestCase):
         result = bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener)
         self.assertTrue(result['vacuous'])
         self.assertIn('warning', result)
-        bounty.dup_check(self.run)
+        self.dup_check()
         errors = bounty.validate(self.run, submission=True)
         self.assertTrue(any('searched nothing and certifies nothing' in e for e in errors))
         bounty.dup_harvest(self.run, repo='ethereum/go-ethereum', opener=opener,
@@ -1771,7 +1812,7 @@ class RunTests(unittest.TestCase):
         row = self.submittable()
         self.ready_for_submission(row)
         self.harvest([], labels=['wontfix'])
-        bounty.dup_check(self.run)
+        self.dup_check()
         self.assertEqual(bounty.validate(self.run, submission=True), [])
 
     def test_not_planned_is_searched_on_request_and_merged_with_labels(self):
@@ -1939,10 +1980,13 @@ class RunTests(unittest.TestCase):
                        self.artifact('audits/named.pdf', 'unavailable'))
         self.assertEqual(self.check(self.submittable(), submission=True), [])
 
-    def test_a_run_with_no_inventory_is_not_blocked(self):
-        # Older runs, and targets that ship no review at all: neither is a defect.
-        self.assertFalse((self.run / 'audit-inventory.json').exists())
+    def test_a_run_with_no_inventory_is_blocked_and_an_empty_one_is_not(self):
+        # Stage 1 requires the inventory; a target that ships no review writes an empty one.
         self.assertEqual(self.check(self.submittable(), submission=True), [])
+        self.assertEqual(bounty.read_json(self.run / 'audit-inventory.json')['artifacts'], [])
+        (self.run / 'audit-inventory.json').unlink()
+        errors = bounty.validate(self.run, submission=True)
+        self.assertTrue(any(e.startswith('audit-inventory.json: missing') for e in errors), errors)
 
     def test_not_applicable_without_a_reason_is_still_unreviewed(self):
         self.inventory(self.artifact(triage='not-applicable'))
@@ -2165,7 +2209,8 @@ class HistoryTests(unittest.TestCase):
         row.update(title='Fee accounting can be withdrawn twice', status='verified',
                    severity='medium', root_cause='Withdraw does not decrement accrued fee',
                    affected_paths=['src/Vault.sol:Vault.withdraw'],
-                   bug_class='fee-accounting-not-decremented', revision='abc1234',
+                   bug_class='fee-accounting-not-decremented',
+                   revision=bounty.read_json(self.run / 'run.json')['commit'],
                    attacker_capabilities='Unprivileged depositor',
                    preconditions='A fee has accrued', impact='Fee can be claimed twice')
         (self.run / 'poc.py').write_text('assert True\n')
