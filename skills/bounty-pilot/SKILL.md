@@ -54,11 +54,22 @@ If the checkout has no `origin`, later `history` commands take
 ## Stage 0 — Is this target worth the week?
 
 Skip only when the user named the target and does not want it questioned. Read `references/targets.md`,
-fill `<run>/program.json` from the program's published pages, then:
+fill `<run>/program.json` from the program's published pages, then **measure the severity ceiling
+before committing the week**:
 
 ```sh
+python3 $S value --rpc <url> --address <each in-scope address> --token <main assets>
 python3 $S score-target --repo <checkout> --program <run>/program.json
 ```
+
+`value` reports balances in token units, not dollars, so price them yourself and record the source
+— stablecoins need no lookup, and the 100k threshold is coarse enough that a rough spot price is
+fine. Record the total as `value_at_rest_usd` and the published audit reports as
+`public_audit_count`.
+A flawless mechanism over an empty contract pays nothing, so below 100k USD at rest the scorer
+forces `deprioritise` unless the rubric evidences payment for non-fund impact. Volume is not
+balance — routers and proxies settle billions and hold dust between transactions — and an
+unmeasured field is an `unknown`, never a pass.
 
 Report the band and, more importantly, the `unknowns` it lists. If the score says `deprioritise`, say
 so in one short paragraph with the reason, and let the user decide — do not silently hunt a target

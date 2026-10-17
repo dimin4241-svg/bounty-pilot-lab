@@ -48,3 +48,22 @@ Unsupported assumptions, missing deployment evidence, checks not run, and what w
 severity in either direction.
 
 Draft only. Do not submit automatically, do not open a public issue, and do not publish the PoC.
+
+## When every piece is individually excluded
+
+A composition can be real while each of its parts is on the program's exclusion list. Say so, and file
+it as a hardening note rather than inflating it into a claim.
+
+The case that taught this: a dApp frontend had a link guard that compared only the last two hostname
+labels, ignored the URL scheme and failed open on exception; five of the project's own config and API
+origins fed unvalidated URLs into navigation sinks, one of them from the always-loaded bundle with
+`cache:"no-store"`; and no route served a CSP. Individually: missing headers are excluded, out-of-scope
+subdomains are excluded, and a guard with no attacker-controlled source is "theoretical without
+demonstration" — also excluded. Together they mean a single compromise of any one config origin becomes
+script execution on the main origin with wallet access.
+
+So write it as what it is: the composition, each component with the exclusion that covers it, and an
+explicit line saying this is **not** a bounty claim. Two things follow. The project gets something
+actionable it would not otherwise receive, and your submittable records are not contaminated by a claim
+triage would reject — which is what makes the rest of the report readable. Never let a hardening note
+drift into the findings list to raise a count.

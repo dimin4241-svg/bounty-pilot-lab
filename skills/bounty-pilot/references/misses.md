@@ -213,3 +213,93 @@ Rules that follow:
   the node is flaky.
 - A balance that contradicts the contract's design — a pass-through proxy holding funds, a vault
   holding nothing — is first evidence of a misidentified address, and only second evidence of a bug.
+
+## 27. What actually produced a confirmed finding, counted honestly
+
+Keep this ledger, because technique improves faster than target selection and the ledger is the
+only thing that says so. Across roughly fourteen targets run with this skill, two produced a
+confirmed High. Neither came from the dominant activity, which was reading mature, heavily audited
+Solidity for a logic bug.
+
+- **An operational secret in a live configuration.** Publicly reachable message-broker credentials
+  granted a wildcard subscription across every private user channel. No contract involved; the
+  defect was in what was deployed, not in what was committed. Lens 1 in `blind-spots.md`.
+- **A resource cliff above any tested scale.** Vote records sized by member count made proposals
+  unwritable past roughly 106 members, permanently freezing an autonomous multisig. Rust, and the
+  number exists only in the account layout. Lens 9.
+
+What the mature-EVM attempts produced instead, each confirmed as a *real* defect and still
+unpayable: duplicates of acknowledged audit findings; behaviour the project documents as intended;
+and — twice, on a bridge aggregator and a DEX router — mechanisms with no severity left to claim
+because the in-scope contracts hold nothing at a block boundary.
+
+The conclusions worth carrying into target selection:
+
+- **Measure the severity ceiling before the week, not after it.** `value_at_rest_usd` in
+  `targets.md`. Volume is not balance; a router can settle billions and hold dust.
+- **Count the published audits before reading code.** Twenty or more means the custom surface has
+  been read by paid auditors repeatedly, and your edge is only the post-audit delta and the live
+  configuration.
+- **Prefer surfaces that auditors structurally cannot cover**: what is deployed rather than
+  committed, what only appears at scale, and what is wired per chain. Both wins were there.
+- **Being right is not the same as being paid.** Most of these runs ended with a correct technical
+  claim and no eligible impact. When a finding is real but unpayable, record it `parked` with its
+  `revive_if`, and do not let the correctness of the analysis argue you into a submission fee.
+
+## 28. For a spec with several implementations — did you read what the *other* ones fixed?
+
+When the target is one client of a shared specification, every `fix:` commit in a sibling client is a
+bug report its team wrote for you, for free. The question is always the same: **does my target still
+have it?** Run it as a sweep, not a hunch — list every post-release, post-fork `fix:` commit touching
+the feature across all implementations, then check each sibling.
+
+Two properties make this the highest-yield lens on such a target:
+
+- **A fix that landed in two clients independently, within days, is a live divergence.** Two teams do
+  not converge on the same patch by coincidence; they both hit it on a testnet.
+- **The official test vectors frequently do not cover it.** In a live run on the Gloas upgrade, a
+  Lodestar fix's own commit message said so outright: "The `should_apply_proposer_boost_withheld` spec
+  vector never imports a payload for the parent so it does not reach the tiebreak, hence the unit
+  test." A client can implement from the spec, pass the whole vector suite, and still carry the bug —
+  which is precisely why two clients carried that one.
+
+Worked example, start to finish in minutes: Lodestar #10339 "keep proposer boost root for the payload
+tiebreak when boost is withheld" and Nimbus #9248 "don't skip payload tiebreak when boost is
+suppressed" landed the same day, three days after a testnet fork. The mechanism: `should_extend_payload`
+reads `store.proposer_boost_root` unconditionally, but both clients derived that root from the *applied
+boost weight*, so withholding the weight zeroed the root and the head stopped at the parent's FULL
+variant. Checking the siblings refuted it for both remaining implementations in one read each —
+Lighthouse keeps the root in `fc_store` and reads it directly, Grandine the same — so the sweep cost
+little and closed a Critical-class hypothesis with evidence instead of with a guess.
+
+The refutation is the normal outcome and still worth the hour: it is the one lens that produces
+*precise*, immediately checkable hypotheses on a mature target, instead of a reading order.
+
+## 29. Did you compare against the spec revision the implementation pins, or only against HEAD?
+
+An implementation of a moving specification carries its own idea of which revision it targets, often as
+a permalink per function. A difference from HEAD is then two different things, and only one of them is
+reportable: a divergence from the revision the client claims to implement, or an un-merged lag behind a
+later spec change. For an unactivated fork the second is ordinary work-in-progress, and filing it as a
+bug burns credibility.
+
+Diff the function at the pinned revision against the function at HEAD *before* reading the
+implementation. In a live run this inverted the conclusion twice over: the pinned permalink said
+`v1.7.0-alpha.11` while the latest tag was `alpha.14`, so a lag looked likely — and the diff showed the
+spec had changed three ways that the client had *already* implemented. The comment was stale, the code
+was current, and the "it is just behind" explanation was closed before any time went into it.
+
+## 30. Did the tool measure anything, before you believed its verdict?
+
+`score-target` and `coverage-floor` count source files. Point either at a scope that is not source —
+Markdown specifications, a multi-repository client scope, generated code that is not committed — and
+they return a confident-looking verdict computed over nothing: `in_scope_lines: 0` with
+`band: deprioritise`, or `examined_fraction: 0.0` with `state: below-floor`.
+
+Before quoting a band or a floor, read the counts it is derived from. `in_scope_files`,
+`files_in_scope` and `examined_by_source` are the tell: zero, or a file list that is obviously the
+wrong corpus (the repository's build tooling rather than its specs), means the number describes a
+format mismatch and not the target. Say which it was. The verdict may still be right for other
+reasons — in that same run the dup map independently confirmed `deprioritise` for the spec surface —
+but it has to be argued from the evidence that actually exists, and `unparsed_coverage_files` in the
+output means the run's own notes were never credited either.

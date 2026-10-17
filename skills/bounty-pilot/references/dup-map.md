@@ -20,7 +20,25 @@ So the map is built **first**, and it burns surfaces before anyone reads code fo
    here either.
 5. **Closed issues, PRs and release notes** in the target repository: a PR titled "fix rounding in
    redeem" names a class the team already handled.
-6. **Post-mortems** of protocols running the same fork.
+6. **The repository that ASSEMBLES the deployed artifact**, when it is not the one you are reading.
+   A library repo and the repo that composes it into the running system are often different —
+   `paritytech/polkadot-sdk` holds the pallets while `polkadot-fellows/runtimes` builds the chains
+   that actually run; the same split appears wherever a vendored SDK, a fork-with-overrides, or a
+   separate "deployments"/"runtimes"/"infra" repo pins the library by version. **Dup-checking only
+   the library repo is worthless.** Find the assembling repo by matching the live version constant
+   to its tags, then read its `main`/HEAD and its merged PRs for your exact mechanism. Use
+   `git merge-base --is-ancestor <fix-sha> <live-tag>` to separate three states that have
+   completely different value:
+   - fixed and released → dead, do not report;
+   - **fixed on `main` but not in the live tag** → the deployed system is genuinely vulnerable, yet
+     the issue is *known*. Worth telling them operationally; worth nothing as a bounty;
+   - absent from both → candidate.
+   In a live run this single check turned a confident High — a proxy-type privilege escalation,
+   verified against the live runtime and genuinely unfixed in the library repo — into a certain
+   duplicate: the assembling repo's `main` already carried the fix, with a source comment stating
+   the same reasoning, merged five weeks earlier. The sweep that had cleared it checked only the
+   library's `master`.
+7. **Post-mortems** of protocols running the same fork.
 
 Record retrieval dates. A known-issues list is edited, and the version you read is the one you were
 judged against.

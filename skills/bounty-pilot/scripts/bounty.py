@@ -1513,10 +1513,25 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
     fraction = round(len(examined) / len(files), 4) if files else 0.0
     state = ('no-files-in-scope' if not files else
              'at-or-above-floor' if fraction >= min_fraction else 'below-floor')
+    # A run that wrote prose over the table templates scores zero here and reads as having
+    # examined nothing. That happened on a five-pass run with 16 readings and 51 closed
+    # mechanisms: both files had been rewritten as narrative, so every gate saw an empty run.
+    # Say it, rather than returning a silent zero.
+    unparsed = []
+    for name, rows in (('coverage.md', _coverage_md_surfaces(run)),
+                       ('known-hypotheses.md', [r['surface'] for r in
+                                                _known_hypothesis_rows(run)])):
+        candidate = run / name
+        if not candidate.is_file() or rows:
+            continue
+        body = candidate.read_text(encoding='utf-8', errors='replace')
+        if len(body.splitlines()) > 12:
+            unparsed.append(name)
     result = {'state': state, 'scope': list(scope_prefixes or []),
               'files_in_scope': len(files), 'files_examined': len(examined),
               'examined_fraction': fraction, 'min_fraction': min_fraction,
               'examined_by_source': {name: len(hit) for name, hit in sources.items()},
+              'unparsed_coverage_files': unparsed,
               'unexamined_count': len(unexamined), 'unexamined': unexamined,
               'excluded_vendored_count': len(vendored), 'excluded_vendored': vendored[:50],
               'skipped_files': skipped,
@@ -1528,6 +1543,16 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
                         'separator is not credited. Vendored and test paths are excluded and '
                         'counted; --scope is what actually decides the in-scope list, and an '
                         'empty one measures nothing and never passes.'}
+    if unparsed:
+        result['warning'] = (
+            'These files exist and hold content but yielded no parseable row: '
+            + ', '.join(unparsed)
+            + '. Coverage is credited from TABLE rows, so prose written over the templates '
+              'scores zero and the run reads as having examined nothing. Keep the pipe-delimited '
+              'table (coverage.md: `| surface | lens | pass | experiment | result |`; '
+              'known-hypotheses.md: `surface | bug-class | status | why`) and put the narrative '
+              'next to it, never instead of it. Until then this fraction measures formatting, '
+              'not coverage.')
     path = run / 'coverage-floor.json'
     if path.is_symlink():
         raise ValueError(f'{path} is a symlink; refusing to write through it')
@@ -3822,17 +3847,76 @@ def score_target(repo, program_path):
     else:
         unknowns.append('payout_max_usd unknown')
 
+    # Severity ceiling. Every loss-of-funds claim is bounded by what the in-scope
+    # contracts actually hold at a block boundary, so this is measured before the
+    # target is accepted, not after a week of reading. Populate it from
+    # `bounty.py value` over every in-scope address.
+    ceilings = []
+    var = program.get('value_at_rest_usd')
+    pays_nonfund = program.get('pays_non_fund_impact')
+    if isinstance(var, (int, float)) and var >= 0:
+        if var >= 10_000_000:
+            points += 15
+            reasons.append(f'{var:,.0f} USD at rest on in-scope addresses: '
+                           'loss-of-funds severities are real here')
+        elif var >= 100_000:
+            points += 8
+            reasons.append(f'{var:,.0f} USD at rest on in-scope addresses')
+        else:
+            ceilings.append(
+                f'only {var:,.0f} USD at rest on in-scope addresses: every loss-of-funds '
+                'claim is bounded by this, however good the mechanism is')
+            if pays_nonfund is True:
+                reasons.append('low value at rest, but the rubric pays non-fund impact classes '
+                               '(DoS, freeze, griefing) - hunt those, not theft')
+            else:
+                ceilings.append('rubric does not evidence payment for non-fund impact: '
+                                'there is no severity left to claim')
+    else:
+        unknowns.append('value_at_rest_usd unknown: run `value` over every in-scope address '
+                        'BEFORE committing - it is the ceiling on every severity you can claim')
+
+    # Eyes already on the code. A long known-issues list is a free dup map, but a large
+    # published audit corpus means every mechanism has been read by paid auditors.
+    audits = program.get('public_audit_count')
+    if isinstance(audits, int) and audits >= 0:
+        if audits >= 20:
+            points -= 20
+            reasons.append(f'{audits} public audit reports: the custom surface has been read '
+                           'many times over - expect duplicate or intended-behaviour verdicts, '
+                           'and hunt only the post-audit delta and live configuration')
+        elif audits >= 5:
+            points -= 8
+            reasons.append(f'{audits} public audit reports: build the dup corpus first')
+        else:
+            points += 6
+            reasons.append(f'only {audits} public audit report(s): few eyes per dollar')
+    else:
+        unknowns.append('public_audit_count unknown: count the published reports before '
+                        'reading code, and keep their text as the dup corpus')
+
     if total_lines > 60000:
         reasons.append(f'{total_lines} in-scope lines: too large for one sweep, '
                        'prioritise by delta and value-bearing paths')
     score = max(0, min(100, points))
     band = ('hunt' if score >= 60 else 'maybe' if score >= 35 else 'deprioritise')
+    # A measured severity ceiling overrides the points: a flawless mechanism over an
+    # empty contract pays nothing. This is the single check that would have saved the
+    # two longest zero-yield runs in this skill's own history.
+    if ceilings and pays_nonfund is not True:
+        band = 'deprioritise'
+        reasons.append('band forced to deprioritise by the measured severity ceiling')
+    elif ceilings:
+        band = 'maybe' if band == 'hunt' else band
     return {'program': program.get('program'), 'url': program.get('url'),
             'in_scope_files': len(in_scope), 'in_scope_lines': total_lines,
             'files_never_named_in_tests': len(untested),
             'untested_sample': untested[:15],
             'churn_share_since_audit': None if new_share is None else round(new_share, 4),
             'priority_score': score, 'band': band, 'reasons': reasons, 'unknowns': unknowns,
+            'severity_ceiling': ceilings,
+            'value_at_rest_usd': var if isinstance(var, (int, float)) else None,
+            'public_audit_count': audits if isinstance(audits, int) else None,
             'skipped_files': skipped,
             'notice': 'A prioritisation heuristic over code and published program facts. '
                       'It does not predict a payout, a finding, or originality.'}
