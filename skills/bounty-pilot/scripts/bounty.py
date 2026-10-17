@@ -6,6 +6,7 @@ Nothing here audits code or proves a finding. Every subcommand reports what it
 observed and labels what it could not establish.
 """
 import argparse
+import csv
 import hashlib
 import importlib.util
 import json
@@ -261,11 +262,25 @@ def git(repo, *args, check=True):
 
 
 def read_target_file(root, rel, skipped=None, errors='strict', max_bytes=None):
-    """Read one file from the target checkout, or return None and record why it was skipped.
+    """Read one file from the target checkout as text, or None with the reason it was skipped."""
+    data = read_target_bytes(root, rel, skipped, max_bytes)
+    if data is None:
+        return None
+    try:
+        return data.decode('utf-8', errors)
+    except UnicodeDecodeError:
+        if skipped is not None:
+            skipped.append({'path': str(rel), 'reason': 'not UTF-8 text'})
+        return None
+
+
+def read_target_bytes(root, rel, skipped=None, max_bytes=None):
+    """Read one file from the target checkout as bytes, or record why it was skipped.
 
     Target files are untrusted: a tracked symlink can point at ~/.ssh or the run directory, a
     FIFO blocks the read forever, and a huge blob swamps a bundle. Only regular files that stay
-    inside the checkout and under the size cap are read.
+    inside the checkout and under the size cap are read. A PDF audit report is not text, so the
+    bytes are what the artifact inventory hashes.
     """
     def skip(reason):
         if skipped is not None:
@@ -312,10 +327,7 @@ def read_target_file(root, rel, skipped=None, errors='strict', max_bytes=None):
             os.close(fd)
     if len(data) > cap:
         return skip(f'larger than {cap} bytes')
-    try:
-        return data.decode('utf-8', errors)
-    except UnicodeDecodeError:
-        return skip('not UTF-8 text')
+    return data
 
 
 def target_file_size(root, rel):
@@ -644,58 +656,299 @@ def history_record(run, finding_id, disposition, ledger=None, project=None, prog
             'notice': 'Private local metadata only; no report text, source, PoC, wallet or credentials.'}
 
 
-def history_import(project, finding_id, bug_class, surfaces, root_cause, disposition,
-                   ledger=None, program='', case_id=None, reason='unspecified', hours=None,
-                   lens='unattributed'):
+def _history_fields(project, finding_id, bug_class, surfaces, root_cause, disposition,
+                    program='', reason='unspecified', hours=None, lens='unattributed'):
+    """Validate the fields one imported ledger row carries and return them normalised.
+
+    Shared by the single-record import and the bulk one, so a record read out of a platform
+    export is held to exactly the rules a hand-typed one is.
+    """
     project_key = canonical_project(project)
     if not project_key:
-        raise ValueError('--project must be a repository URL or host/owner/repo key')
-    if disposition not in HISTORY_DISPOSITIONS or reason not in HISTORY_REASONS:
-        raise ValueError('Invalid disposition or reason category')
+        raise ValueError('project must be a repository URL or host/owner/repo key')
+    if disposition not in HISTORY_DISPOSITIONS:
+        raise ValueError('outcome must be one of: ' + ', '.join(sorted(HISTORY_DISPOSITIONS)))
+    if reason not in HISTORY_REASONS:
+        raise ValueError('reason must be one of: ' + ', '.join(sorted(HISTORY_REASONS)))
     if not isinstance(finding_id, str) or not finding_id.strip() or len(finding_id) > 120:
-        raise ValueError('--finding-id must be nonempty and at most 120 characters')
+        raise ValueError('finding_id must be nonempty and at most 120 characters')
     if not isinstance(bug_class, str) or not re.fullmatch(r'[a-z0-9]+(-[a-z0-9]+)*', bug_class):
-        raise ValueError('--bug-class must be a kebab-case label')
+        raise ValueError('bug_class must be a kebab-case label')
     if not isinstance(surfaces, list) or not surfaces or not all(has_text(x) for x in surfaces):
-        raise ValueError('At least one --surface is required')
+        raise ValueError('at least one surface is required')
     if any(len(x) > 240 or any(ord(c) < 32 for c in x) for x in surfaces):
-        raise ValueError('Each --surface must be plain text of at most 240 characters')
+        raise ValueError('each surface must be plain text of at most 240 characters')
     if not has_text(root_cause) or len(root_cause) > 500:
-        raise ValueError('--root-cause must be a short mechanism summary (1-500 characters)')
-    if program and (len(program) > 120 or any(ord(c) < 32 for c in program)):
-        raise ValueError('--program must be plain text of at most 120 characters')
+        raise ValueError('root_cause must be a short mechanism summary (1-500 characters)')
+    if program and (not isinstance(program, str) or len(program) > 120
+                    or any(ord(c) < 32 for c in program)):
+        raise ValueError('program must be plain text of at most 120 characters')
     if lens and lens not in LENSES and lens not in ('manual', 'unattributed'):
-        raise ValueError('--lens must name a registered lens or manual')
+        raise ValueError('lens must name a registered lens or manual')
     if hours is not None:
         try:
             hours = float(hours)
         except (TypeError, ValueError) as exc:
-            raise ValueError('--hours must be a finite non-negative number') from exc
+            raise ValueError('hours must be a finite non-negative number') from exc
         if hours < 0 or hours == float('inf') or hours != hours:
-            raise ValueError('--hours must be a finite non-negative number')
+            raise ValueError('hours must be a finite non-negative number')
+    return {'project_key': project_key, 'finding_id': finding_id.strip(), 'bug_class': bug_class,
+            'affected_paths': [item.strip() for item in surfaces],
+            'root_cause_summary': root_cause.strip(), 'disposition': disposition,
+            'program': (program or '').strip(), 'reason': reason, 'effort_hours': hours,
+            'lens': lens or 'unattributed'}
+
+
+def _history_event(fields, case_id):
+    """One ledger line: compact metadata only, never report text, source, a PoC or an address."""
+    return {
+        'schema_version': HISTORY_SCHEMA, 'case_id': case_id,
+        'recorded_at': datetime.now(timezone.utc).isoformat(), 'run_id': None,
+        'project_key': fields['project_key'], 'program': fields['program'],
+        'finding_id': fields['finding_id'], 'revision': '', 'bug_class': fields['bug_class'],
+        'lens': fields['lens'], 'affected_paths': fields['affected_paths'],
+        'root_cause_summary': fields['root_cause_summary'], 'severity': 'unassessed',
+        'disposition': fields['disposition'], 'reason': fields['reason'],
+        'effort_hours': fields['effort_hours'],
+    }
+
+
+def _history_identity(row):
+    """What makes two ledger rows the same report, and what `--case-id` already enforces."""
+    return (row.get('project_key'), row.get('bug_class'), row.get('finding_id'))
+
+
+def history_import(project, finding_id, bug_class, surfaces, root_cause, disposition,
+                   ledger=None, program='', case_id=None, reason='unspecified', hours=None,
+                   lens='unattributed'):
+    missing = [flag for flag, value in (('--project', project), ('--finding-id', finding_id),
+                                        ('--bug-class', bug_class), ('--surface', surfaces),
+                                        ('--root-cause', root_cause), ('--outcome', disposition))
+               if not value]
+    if missing:
+        raise ValueError('history import needs ' + ', '.join(missing)
+                         + ', or --from-file to import a whole export at once')
+    fields = _history_fields(project, finding_id, bug_class, surfaces, root_cause, disposition,
+                             program, reason, hours, lens)
     path = _history_path(ledger)
     old = _latest_history(_history_rows(path))
     if case_id:
         prior = next((row for row in old if row['case_id'] == case_id), None)
         if not prior:
             raise ValueError('Unknown --case-id; omit it to start a new report record')
-        if (prior['project_key'] != project_key or prior['bug_class'] != bug_class or
-                prior['finding_id'] != finding_id.strip()):
+        if _history_identity(prior) != _history_identity(fields):
             raise ValueError('--case-id belongs to a different report, project or bug class')
     else:
         case_id = 'H-' + uuid.uuid4().hex[:12]
-    event = {
-        'schema_version': HISTORY_SCHEMA, 'case_id': case_id,
-        'recorded_at': datetime.now(timezone.utc).isoformat(), 'run_id': None,
-        'project_key': project_key, 'program': program.strip(), 'finding_id': finding_id.strip(),
-        'revision': '', 'bug_class': bug_class, 'lens': lens or 'unattributed',
-        'affected_paths': surfaces, 'root_cause_summary': root_cause.strip(),
-        'severity': 'unassessed', 'disposition': disposition, 'reason': reason,
-        'effort_hours': hours,
-    }
-    _append_history(path, event)
+    _append_history(path, _history_event(fields, case_id))
     return {'case_id': case_id, 'disposition': disposition, 'history': str(path),
             'notice': 'Imported as private metadata; verify every field against the original record.'}
+
+
+# A platform export is written by whoever exported it, so one ledger field answers to several
+# spellings. Every alias below maps onto one field, canonical spelling first; a key that maps
+# onto nothing is reported back as unmapped_keys rather than dropped in silence.
+HISTORY_IMPORT_ALIASES = {
+    'finding_id': ('finding_id', 'id', 'finding', 'report_id', 'report', 'title', 'name'),
+    'bug_class': ('bug_class', 'class', 'category', 'bug_type', 'type'),
+    'surfaces': ('surface', 'surfaces', 'affected_paths', 'paths', 'path', 'location',
+                 'locations'),
+    'root_cause': ('root_cause', 'root_cause_summary', 'mechanism', 'summary', 'description'),
+    'disposition': ('outcome', 'disposition', 'status', 'state', 'result'),
+    'program': ('program', 'program_name', 'contest'),
+    'project': ('project', 'project_key', 'repo', 'repository'),
+    'case_id': ('case_id',),
+    'reason': ('reason', 'reason_category', 'rejection_reason'),
+    'hours': ('hours', 'effort_hours', 'effort'),
+    'lens': ('lens',),
+}
+HISTORY_IMPORT_KEYS = {alias for aliases in HISTORY_IMPORT_ALIASES.values() for alias in aliases}
+# Keys an export uses for the list when the records sit inside an object.
+HISTORY_IMPORT_LIST_KEYS = ('records', 'reports', 'submissions', 'findings', 'items', 'results',
+                            'data', 'rows', 'history')
+# Comparing these decides whether an already-known report is unchanged or carries a new outcome.
+HISTORY_IMPORT_COMPARED = ('disposition', 'reason', 'program', 'lens', 'affected_paths',
+                           'root_cause_summary', 'effort_hours')
+
+
+def _import_key(key):
+    return re.sub(r'[^a-z0-9]+', '_', str(key).strip().lower()).strip('_')
+
+
+def _import_value(value):
+    """True when the export actually filled this cell; '' and [] are an absent field."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict)):
+        return bool(value)
+    return True
+
+
+def _import_text(value):
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
+def _import_word(value):
+    """A label an export spelled its own way: `Out of Scope` and `out_of_scope` are one word."""
+    text = _import_text(value)
+    return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-') if text else None
+
+
+def _import_surfaces(value):
+    if isinstance(value, (list, tuple)):
+        items = [_import_text(item) for item in value]
+    else:
+        text = _import_text(value)
+        items = SURFACE_SPLIT.split(text) if text else []
+    return [item.strip() for item in items if item and item.strip()]
+
+
+def _imported_fields(record, default_project=None, default_program='', unmapped=None):
+    """Map one exported record onto the ledger's fields, or raise why it cannot be mapped."""
+    normalized = {_import_key(key): value for key, value in record.items()
+                  if isinstance(key, str)}
+    if unmapped is not None:
+        unmapped.update(key for key in normalized
+                        if key and key not in HISTORY_IMPORT_KEYS)
+    pick = lambda field: next((normalized[alias] for alias in HISTORY_IMPORT_ALIASES[field]
+                               if _import_value(normalized.get(alias))), None)
+    project = _import_text(pick('project')) or default_project
+    if not project:
+        raise ValueError('no project in the record and no --project default for it')
+    hours = pick('hours')
+    fields = _history_fields(project, _import_text(pick('finding_id')),
+                             _import_word(pick('bug_class')), _import_surfaces(pick('surfaces')),
+                             _import_text(pick('root_cause')), _import_word(pick('disposition')),
+                             _import_text(pick('program')) or default_program,
+                             _import_word(pick('reason')) or 'unspecified',
+                             None if hours is None else hours,
+                             _import_word(pick('lens')) or 'unattributed')
+    fields['case_id'] = _import_text(pick('case_id'))
+    return fields
+
+
+def _import_records(from_file):
+    """Read an export as (label, record, error) triples: a JSON array, an object holding one,
+    JSON Lines or CSV. One unreadable record is rejected, never the whole file."""
+    path = Path(from_file).expanduser()
+    text = path.read_text(encoding='utf-8', errors='replace')
+    if path.suffix.lower() in ('.csv', '.tsv'):
+        reader = csv.DictReader(text.splitlines(),
+                                delimiter='\t' if path.suffix.lower() == '.tsv' else ',')
+        rows = [{key: value for key, value in row.items() if isinstance(key, str)}
+                for row in reader]
+        return [(f'row {number}', row, None)
+                for number, row in enumerate(rows, 2)], 'csv'
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        triples = []
+        for number, line in enumerate(text.splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                triples.append((f'line {number}', json.loads(line), None))
+            except json.JSONDecodeError:
+                triples.append((f'line {number}', None, 'not valid JSON'))
+        # One bad line among parsed ones is a rejected record; a file where nothing parsed is
+        # not an export at all, and reporting it as records rejected would hide that.
+        if not any(record is not None for _, record, _ in triples):
+            raise ValueError('--from-file is neither JSON, JSON Lines nor CSV')
+        return triples, 'json-lines'
+    shape = 'json-array'
+    if isinstance(payload, dict):
+        shape = 'json-object'
+        lists = [key for key, value in payload.items() if isinstance(value, list)]
+        named = [key for key in lists if _import_key(key) in HISTORY_IMPORT_LIST_KEYS]
+        if len(named) == 1:
+            payload = payload[named[0]]
+        elif len(lists) == 1:
+            payload = payload[lists[0]]
+        else:
+            raise ValueError('--from-file holds no single list of records; name it with one of: '
+                             + ', '.join(HISTORY_IMPORT_LIST_KEYS))
+    if not isinstance(payload, list):
+        raise ValueError('--from-file must hold a list of exported reports')
+    return [(f'record {number}', row, None)
+            for number, row in enumerate(payload, 1)], shape
+
+
+def history_bulk_import(from_file, ledger=None, project=None, program='', dry_run=False):
+    """Import a whole platform export of your own submissions, idempotently.
+
+    The single-record form is twelve flags for one report, so an account's worth of submissions
+    never got imported - and a report went out in October duplicating the hunter's own report to
+    the same program from six weeks earlier. Identity is the key `--case-id` already enforces:
+    one report is one (project, bug class, finding id). Re-importing the same export therefore
+    adds nothing, and an export refreshed after the program decided records the new outcome
+    against the same case.
+    """
+    default_project = _explicit_project(project) if project else None
+    if program and (len(program) > 120 or any(ord(c) < 32 for c in program)):
+        raise ValueError('--program must be plain text of at most 120 characters')
+    triples, shape = _import_records(from_file)
+    path = _history_path(ledger)
+    known, by_case = {}, {}
+    for row in _latest_history(_history_rows(path)):
+        known[_history_identity(row)] = row
+        by_case[row['case_id']] = row
+    added, present, updated, rejected, events = [], [], [], [], []
+    unmapped = set()
+    for label, record, error in triples:
+        if error or not isinstance(record, dict):
+            rejected.append({'record': label, 'reason': error or 'not a JSON object'})
+            continue
+        try:
+            fields = _imported_fields(record, default_project, program, unmapped)
+        except ValueError as exc:
+            rejected.append({'record': label, 'reason': str(exc)})
+            continue
+        identity = _history_identity(fields)
+        prior = by_case.get(fields['case_id']) if fields['case_id'] else known.get(identity)
+        if fields['case_id'] and not prior:
+            rejected.append({'record': label, 'reason': 'unknown case_id; omit it to start a '
+                                                        'new report record'})
+            continue
+        if prior and _history_identity(prior) != identity:
+            rejected.append({'record': label, 'reason': 'case_id belongs to a different report, '
+                                                        'project or bug class'})
+            continue
+        summary = {'record': label, 'finding_id': fields['finding_id'],
+                   'project_key': fields['project_key'], 'disposition': fields['disposition']}
+        if prior:
+            if all(prior.get(key) == fields.get(key) for key in HISTORY_IMPORT_COMPARED):
+                present.append(dict(summary, case_id=prior['case_id']))
+                continue
+            case_id = prior['case_id']
+            updated.append(dict(summary, case_id=case_id,
+                                was=prior.get('disposition')))
+        else:
+            case_id = 'H-' + uuid.uuid4().hex[:12]
+            added.append(dict(summary, case_id=case_id))
+        event = _history_event(fields, case_id)
+        events.append(event)
+        known[identity], by_case[case_id] = event, event
+    if not dry_run:
+        for event in events:
+            _append_history(path, event)
+    return {
+        'history': str(path), 'source': str(Path(from_file).expanduser()),
+        'shape': shape, 'dry_run': bool(dry_run), 'records_read': len(triples),
+        'added': len(added), 'already_present': len(present), 'updated': len(updated),
+        'rejected': len(rejected), 'cases_added': added, 'cases_updated': updated,
+        'rejected_records': rejected, 'unmapped_keys': sorted(unmapped),
+        'notice': 'Imported as private metadata; verify every field against the original record. '
+                  'A record already in the ledger under the same project, bug class and finding '
+                  'id is not added twice, and one whose outcome changed updates its case. '
+                  'Nothing here is report text, source, a PoC, a wallet or an address.'
+                  + (' --dry-run: the ledger was not written.' if dry_run else ''),
+    }
 
 
 def _latest_history(rows):
@@ -853,7 +1106,8 @@ def lead_queue(run):
     if errors:
         return {'state': 'invalid', 'errors': errors, 'leads': [],
                 'unread_bundles': unread_bundles, 'unverified_blockers': [],
-                'contradicted_blockers': [], 'coverage_floor': None}
+                'contradicted_blockers': [], 'coverage_floor': None,
+                'audit_inventory': read_audit_inventory(run)}
     leads, weak_refusals, parked, possibly_parked = [], [], [], []
     unverified_blockers = []
     for row in records:
@@ -900,6 +1154,7 @@ def lead_queue(run):
             'unverified_blockers': sorted(unverified_blockers, key=lambda row: row['id']),
             'contradicted_blockers': contradicted_blockers(run, records),
             'coverage_floor': read_coverage_floor(run),
+            'audit_inventory': read_audit_inventory(run),
             'notice': 'Every open lead needs a decisive next experiment. A listed experiment is '
                       'not evidence that it was run. untracked_leads are open rows in '
                       'known-hypotheses.md with no live record, and unrecorded_documents are '
@@ -921,7 +1176,11 @@ def lead_queue(run):
                       'something capability-probe measured as available; the probe is right '
                       'about what it ran, so read the claim again. coverage_floor is the last '
                       'coverage-floor measurement, present only once that command has run: it '
-                      'is what the word exhausted has to answer to.'}
+                      'is what the word exhausted has to answer to. audit_inventory is the '
+                      'review artifacts this repository ships, present once audit-inventory has '
+                      'run: each unreviewed one is a published list of issues the team already '
+                      'knows that nobody in this run has accounted for, and submission is '
+                      'blocked while any remains.'}
 
 
 # --------------------------------------------------------------------------- #
@@ -1513,10 +1772,25 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
     fraction = round(len(examined) / len(files), 4) if files else 0.0
     state = ('no-files-in-scope' if not files else
              'at-or-above-floor' if fraction >= min_fraction else 'below-floor')
+    # A run that wrote prose over the table templates scores zero here and reads as having
+    # examined nothing. That happened on a five-pass run with 16 readings and 51 closed
+    # mechanisms: both files had been rewritten as narrative, so every gate saw an empty run.
+    # Say it, rather than returning a silent zero.
+    unparsed = []
+    for name, rows in (('coverage.md', _coverage_md_surfaces(run)),
+                       ('known-hypotheses.md', [r['surface'] for r in
+                                                _known_hypothesis_rows(run)])):
+        candidate = run / name
+        if not candidate.is_file() or rows:
+            continue
+        body = candidate.read_text(encoding='utf-8', errors='replace')
+        if len(body.splitlines()) > 12:
+            unparsed.append(name)
     result = {'state': state, 'scope': list(scope_prefixes or []),
               'files_in_scope': len(files), 'files_examined': len(examined),
               'examined_fraction': fraction, 'min_fraction': min_fraction,
               'examined_by_source': {name: len(hit) for name, hit in sources.items()},
+              'unparsed_coverage_files': unparsed,
               'unexamined_count': len(unexamined), 'unexamined': unexamined,
               'excluded_vendored_count': len(vendored), 'excluded_vendored': vendored[:50],
               'skipped_files': skipped,
@@ -1528,6 +1802,16 @@ def coverage_floor(repo, run, scope_prefixes=None, min_fraction=COVERAGE_FLOOR_D
                         'separator is not credited. Vendored and test paths are excluded and '
                         'counted; --scope is what actually decides the in-scope list, and an '
                         'empty one measures nothing and never passes.'}
+    if unparsed:
+        result['warning'] = (
+            'These files exist and hold content but yielded no parseable row: '
+            + ', '.join(unparsed)
+            + '. Coverage is credited from TABLE rows, so prose written over the templates '
+              'scores zero and the run reads as having examined nothing. Keep the pipe-delimited '
+              'table (coverage.md: `| surface | lens | pass | experiment | result |`; '
+              'known-hypotheses.md: `surface | bug-class | status | why`) and put the narrative '
+              'next to it, never instead of it. Until then this fraction measures formatting, '
+              'not coverage.')
     path = run / 'coverage-floor.json'
     if path.is_symlink():
         raise ValueError(f'{path} is a symlink; refusing to write through it')
@@ -2295,6 +2579,21 @@ DEPLOYMENT_EVIDENCE_DIR = 'deployments'
 EVM_SOURCE_SUFFIXES = ('.sol', '.vy')
 
 
+# An on-chain identity is not always an EVM address. A Solana program id is base58 and
+# case-significant, so lowercasing it would never match its own file: requiring the hex form
+# made `deployment_status: exact` structurally unreachable on every Solana target, however good
+# the evidence. Reported from a live Squads run that left its gate failing rather than edit it.
+EVM_ADDRESS = re.compile(r'0x[0-9a-fA-F]{40}')
+BASE58_ID = re.compile(r'[1-9A-HJ-NP-Za-km-z]{32,44}')
+
+
+def _evidence_stem(address):
+    """The filename `verify-deployment --run` gives this address, or None if it is not one."""
+    if EVM_ADDRESS.fullmatch(address):
+        return address.lower()
+    return address if BASE58_ID.fullmatch(address) else None
+
+
 def _check_deployment_evidence(row, prefix, run, errors):
     """`exact` must be backed by verify-deployment output saved in this run, never typed in."""
     status = row['deployment_status']
@@ -2336,9 +2635,10 @@ def _check_deployment_evidence(row, prefix, run, errors):
             errors.append(label + ' is not a verify-deployment result')
             continue
         address = data.get('address')
-        if (not isinstance(address, str) or not re.fullmatch(r'0x[0-9a-fA-F]{40}', address)
-                or target.stem != address.lower()):
-            errors.append(label + ' does not name the address it was recorded for')
+        if not isinstance(address, str) or _evidence_stem(address) != target.stem:
+            errors.append(label + ' does not name the address it was recorded for; the file is '
+                          'named after its address, lowercased for an EVM address and verbatim '
+                          'for a base58 program id')
             continue
         if data.get('deployment_status') != 'exact':
             errors.append(label + ' reports ' + str(data.get('deployment_status'))
@@ -2628,6 +2928,7 @@ def validate(run, submission=False, ledger=True):
     if submission:
         _check_dispatch(run, errors)
         _check_blocked_leads(records, errors)
+        _check_audit_inventory(run, errors)
     seen, targets = set(), 0
     for i, row in enumerate(records):
         prefix = f'finding[{i}]'
@@ -3070,6 +3371,206 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
                           'searched. Pass --label, rerun with --include-not-planned, or record '
                           'why with --empty-reason; the submission gate blocks until then.')
     return out
+
+
+# --------------------------------------------------------------------------- #
+# review artifacts the repository ships
+# --------------------------------------------------------------------------- #
+
+# The densest list of issues a team already knows is usually sitting in the checkout. Royco,
+# Squads and marginfi all ship their review reports in the repository - ten of them in the
+# Squads case - and nothing here ever listed them. This enumerates them; it cannot read a PDF,
+# so each one is an accounting entry the hunter has to close, not a summary.
+REVIEW_DIR_NAMES = {'audit', 'audits', 'security', 'reviews'}
+REVIEW_DOC_SUFFIXES = {'.pdf', '.md', '.markdown', '.txt', '.html', '.htm'}
+REVIEW_NAME_HINTS = ('audit', 'review', 'assessment', 'pentest')
+SECURITY_POLICY_NAMES = {'security.md'}
+# The firm names dup-harvest already maintains, minus its three generic label hints: a file
+# called audit-report.pdf names no firm, and attributing one to it would be an invention.
+AUDIT_FIRM_HINTS = tuple(hint for hint in AUDITOR_LABEL_HINTS if not hint.startswith('audit '))
+# `read` is the only state that claims knowledge. `not-applicable` is a judgement and carries
+# its reason; `unavailable` is for a report the repository names but does not contain.
+AUDIT_TRIAGE_STATES = ('unreviewed', 'read', 'not-applicable', 'unavailable')
+AUDIT_UNREVIEWED = 'unreviewed'
+# Audit PDFs are routinely larger than a source file, and one too large to hash still has to
+# appear in the inventory: the point is that it exists, not that it was fingerprinted.
+AUDIT_ARTIFACT_MAX_BYTES = 20_000_000
+
+
+def _audit_firm(path):
+    """Attribute an artifact to a firm by its path, or None: a guess from a name, never a read."""
+    tokens = [token for token in re.split(r'[^a-z0-9]+', str(path).lower()) if token]
+    squashed = ''.join(tokens)
+    best = None
+    for hint in AUDIT_FIRM_HINTS:
+        words = [word for word in re.split(r'[^a-z0-9]+', hint) if word]
+        # A one-word firm has to be a whole path token, or `recon` claims reconciliation.pdf.
+        matched = (words[0] in tokens) if len(words) == 1 else (''.join(words) in squashed)
+        if matched and (best is None or len(hint) > len(best)):
+            best = hint
+    return best
+
+
+def _policy_names_review(root, rel, skipped=None):
+    """SECURITY.md counts as an artifact only when it actually names or links a review."""
+    text = read_target_file(root, rel, skipped, errors='replace')
+    if text is None:
+        return False
+    lowered = text.lower()
+    return (any(hint in lowered for hint in REVIEW_NAME_HINTS)
+            or any(firm in lowered for firm in AUDIT_FIRM_HINTS))
+
+
+def _review_artifacts(root, tracked, skipped=None):
+    """Enumerate the published review artifacts a checkout ships, hashed and attributed.
+
+    Two callers read this: `audit-inventory`, which makes each one an entry to account for, and
+    `score-target`, for which the count alone says how farmed the ground already is.
+    """
+    found = []
+    for path in sorted(tracked):
+        parts = Path(path).parts
+        name = parts[-1].lower()
+        if Path(name).suffix not in REVIEW_DOC_SUFFIXES:
+            continue
+        if any(part.lower() in REVIEW_DIR_NAMES for part in parts[:-1]):
+            matched_by = 'review directory'
+        elif any(hint in name for hint in REVIEW_NAME_HINTS):
+            matched_by = 'review-shaped name'
+        elif name in SECURITY_POLICY_NAMES and _policy_names_review(root, path, skipped):
+            matched_by = 'security policy naming a review'
+        else:
+            continue
+        size = target_file_size(root, path)
+        if size is None:
+            if skipped is not None:
+                skipped.append({'path': path, 'reason': 'not a regular file in the checkout'})
+            continue
+        data = read_target_bytes(root, path, skipped, max_bytes=AUDIT_ARTIFACT_MAX_BYTES)
+        found.append({'path': path, 'bytes': size,
+                      'sha256': None if data is None else hashlib.sha256(data).hexdigest(),
+                      'firm': _audit_firm(path), 'matched_by': matched_by})
+    return found
+
+
+def _audit_inventory_state(run):
+    """What `audit-inventory` listed, and which artifacts nobody has accounted for yet."""
+    path = Path(run) / 'audit-inventory.json'
+    state = {'present': path.is_file(), 'invalid': False, 'artifacts': 0,
+             'unreviewed': [], 'triage': {}}
+    if not state['present']:
+        return state
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        state['invalid'] = True
+        return state
+    rows = data.get('artifacts') if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        state['invalid'] = True
+        return state
+    unreviewed = []
+    for row in rows:
+        # The file is edited by hand, so every field is read defensively: anything that is not
+        # one of the four states, and any not-applicable without its reason, is unreviewed.
+        if not isinstance(row, dict) or not has_text(row.get('path')):
+            state['invalid'] = True
+            continue
+        state['artifacts'] += 1
+        triage = row.get('triage')
+        if triage not in AUDIT_TRIAGE_STATES:
+            triage = AUDIT_UNREVIEWED
+        if triage == 'not-applicable' and not has_text(row.get('note')):
+            triage = AUDIT_UNREVIEWED
+        state['triage'][triage] = state['triage'].get(triage, 0) + 1
+        if triage == AUDIT_UNREVIEWED:
+            unreviewed.append(row['path'])
+    state['unreviewed'] = sorted(set(unreviewed))
+    return state
+
+
+def read_audit_inventory(run):
+    """The run's review-artifact inventory as the queue reports it, or None when it never ran."""
+    state = _audit_inventory_state(run)
+    if not state['present']:
+        return None
+    return {'artifacts': state['artifacts'], 'unreviewed_count': len(state['unreviewed']),
+            'unreviewed': state['unreviewed'], 'triage': state['triage'],
+            'invalid': state['invalid']}
+
+
+def _check_audit_inventory(run, errors):
+    """A review the repository ships and nobody accounted for is a published list of answers."""
+    state = _audit_inventory_state(run)
+    # A run with no inventory is not blocked: older runs predate the command, and a target that
+    # ships no review has nothing to account for.
+    if not state['present']:
+        return
+    if state['invalid']:
+        errors.append('audit-inventory.json: not a result audit-inventory wrote; rerun '
+                      'audit-inventory --repo <checkout> --run <run>')
+    if state['unreviewed']:
+        shown = ', '.join(state['unreviewed'][:8])
+        more = '' if len(state['unreviewed']) <= 8 else \
+            f" and {len(state['unreviewed']) - 8} more"
+        errors.append('audit-inventory.json: review artifacts this repository ships are '
+                      'unreviewed: ' + shown + more + '. Set each one\'s triage to "read", to '
+                      '"not-applicable" with a note saying why (a component or a revision '
+                      'outside this scope), or to "unavailable" when the repository names a '
+                      'report it does not contain')
+
+
+def audit_inventory(repo, run):
+    """List the review artifacts the checkout ships; carry triage forward while the bytes hold."""
+    repo, run = Path(repo).resolve(), Path(run).resolve()
+    root = Path(git(repo, 'rev-parse', '--show-toplevel').strip()).resolve()
+    run = _deployment_run(run)
+    require_private_output(run, root, what='audit-inventory --run')
+    meta = read_json(run / 'run.json')
+    tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
+    skipped = []
+    artifacts = _review_artifacts(root, tracked, skipped)
+    path = run / 'audit-inventory.json'
+    if path.is_symlink():
+        raise ValueError(f'{path} is a symlink; refusing to read or write through it')
+    try:
+        # A hand-broken inventory must not block the rerun that would replace it: it is read
+        # for the triage already recorded, and overwritten either way.
+        previous = read_json(path) if path.is_file() else {}
+    except (OSError, ValueError):
+        previous = {}
+    previous = previous if isinstance(previous, dict) else {}
+    kept = {row['path']: row for row in previous.get('artifacts', [])
+            if isinstance(row, dict) and has_text(row.get('path'))} \
+        if isinstance(previous.get('artifacts'), list) else {}
+    for artifact in artifacts:
+        prior = kept.get(artifact['path'])
+        # Triage survives a rerun only while the bytes are the same: a replaced report is a
+        # report nobody has read.
+        same = (isinstance(prior, dict) and prior.get('sha256') == artifact['sha256']
+                and prior.get('bytes') == artifact['bytes'])
+        artifact['triage'] = (prior.get('triage') if same and prior.get('triage')
+                              in AUDIT_TRIAGE_STATES else AUDIT_UNREVIEWED)
+        artifact['note'] = str(prior.get('note', ''))[:500] if same else ''
+    result = {
+        'repo': str(root), 'run_id': meta.get('run_id'),
+        'inventoried_at': datetime.now(timezone.utc).isoformat(),
+        'artifact_count': len(artifacts),
+        'firms': sorted({row['firm'] for row in artifacts if row['firm']}),
+        'artifacts': artifacts, 'skipped_files': skipped,
+        'notice': 'An accounting of the known-issue sources this repository ships, not a '
+                  'summary of them: nothing here read a PDF, and the firm is attributed from '
+                  'the file name. Each artifact ends as "read", as "not-applicable" with a note '
+                  'saying why, or as "unavailable" when the repository names a report it does '
+                  'not contain; the submission gate blocks while any is "unreviewed". What a '
+                  'report you read already burned belongs in dup-map.json as a past-audit entry '
+                  'at the revision it covered. A sha256 of null means the file was past the '
+                  'size cap and is listed in skipped_files: it still has to be accounted for.',
+    }
+    dump(path, result)
+    state = _audit_inventory_state(run)
+    return dict(result, unreviewed=state['unreviewed'],
+                unreviewed_count=len(state['unreviewed']), triage=state['triage'])
 
 
 # --------------------------------------------------------------------------- #
@@ -3712,7 +4213,41 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
 # target scoring
 # --------------------------------------------------------------------------- #
 
-def score_target(repo, program_path):
+HISTORY_CLOSED_DISPOSITIONS = ('accepted', 'paid', 'duplicate', 'invalid', 'out-of-scope',
+                               'rejected', 'withdrawn')
+HISTORY_LANDED_DISPOSITIONS = ('accepted', 'paid')
+OWN_HISTORY_SHOWN = 5
+
+
+def _own_project_history(project_key, ledger_path):
+    """Your own recorded outcomes on one project, newest first, or a reason there are none.
+
+    Morpheus closed all six reports as already known, Ledger returned DUPLICATE on four, and
+    both records were in this ledger before either week was spent. It is the one Stage 0 fact
+    about duplicate risk that costs nothing to read.
+    """
+    try:
+        rows = [row for row in _latest_history(_history_rows(ledger_path))
+                if row.get('project_key') == project_key]
+    except (OSError, ValueError) as exc:
+        return None, f'private ledger not readable ({exc})'
+    rows.sort(key=lambda row: str(row.get('recorded_at', '')), reverse=True)
+    counts = {}
+    for row in rows:
+        counts[row['disposition']] = counts.get(row['disposition'], 0) + 1
+    recent = [{key: row.get(key) for key in
+               ('case_id', 'finding_id', 'recorded_at', 'program', 'bug_class', 'disposition',
+                'reason')}
+              for row in rows[:OWN_HISTORY_SHOWN]]
+    return {'project_key': project_key, 'ledger': str(ledger_path), 'reports': len(rows),
+            'dispositions': counts,
+            'decided': sum(counts.get(name, 0) for name in HISTORY_CLOSED_DISPOSITIONS),
+            'duplicates': counts.get('duplicate', 0),
+            'landed': sum(counts.get(name, 0) for name in HISTORY_LANDED_DISPOSITIONS),
+            'recent': recent}, None
+
+
+def score_target(repo, program_path, ledger=None):
     program = read_json(program_path)
     repo = Path(repo).resolve()
     root = Path(git(repo, 'rev-parse', '--show-toplevel').strip()).resolve()
@@ -3822,20 +4357,140 @@ def score_target(repo, program_path):
     else:
         unknowns.append('payout_max_usd unknown')
 
+    # Severity ceiling. Every loss-of-funds claim is bounded by what the in-scope
+    # contracts actually hold at a block boundary, so this is measured before the
+    # target is accepted, not after a week of reading. Populate it from
+    # `bounty.py value` over every in-scope address.
+    ceilings = []
+    var = program.get('value_at_rest_usd')
+    pays_nonfund = program.get('pays_non_fund_impact')
+    if isinstance(var, (int, float)) and var >= 0:
+        if var >= 10_000_000:
+            points += 15
+            reasons.append(f'{var:,.0f} USD at rest on in-scope addresses: '
+                           'loss-of-funds severities are real here')
+        elif var >= 100_000:
+            points += 8
+            reasons.append(f'{var:,.0f} USD at rest on in-scope addresses')
+        else:
+            ceilings.append(
+                f'only {var:,.0f} USD at rest on in-scope addresses: every loss-of-funds '
+                'claim is bounded by this, however good the mechanism is')
+            if pays_nonfund is True:
+                reasons.append('low value at rest, but the rubric pays non-fund impact classes '
+                               '(DoS, freeze, griefing) - hunt those, not theft')
+            else:
+                ceilings.append('rubric does not evidence payment for non-fund impact: '
+                                'there is no severity left to claim')
+    else:
+        unknowns.append('value_at_rest_usd unknown: run `value` over every in-scope address '
+                        'BEFORE committing - it is the ceiling on every severity you can claim')
+
     if total_lines > 60000:
         reasons.append(f'{total_lines} in-scope lines: too large for one sweep, '
                        'prioritise by delta and value-bearing paths')
+
+    # How many eyes have already read this code. Two sources measure the same thing: the count
+    # the hunter wrote into program.json, and the review artifacts the repository actually ships.
+    # They are scored ONCE, off whichever is larger - a repo shipping ten reports while
+    # program.json says two means at least ten reviews exist - because penalising both would
+    # double-count one fact, and rewarding both would double-reward a target nobody has audited.
+    # It is an input to a heuristic, not a veto: it moves the score by less than the largest code
+    # factor, so it cannot carry a band on its own.
+    audits = program.get('public_audit_count')
+    declared = audits if isinstance(audits, int) and audits >= 0 else None
+    artifacts = _review_artifacts(root, tracked, skipped)
+    shipped = len(artifacts)
+    eyes = max(declared or 0, shipped)
+    source = ('the repository ships' if shipped >= (declared or 0)
+              else 'program.json declares')
+    if eyes >= 20:
+        points -= 20
+        reasons.append(f'{eyes} review reports ({source} them): the custom surface has been read '
+                       'many times over - expect duplicate or intended-behaviour verdicts, and '
+                       'hunt only the post-audit delta and the live configuration')
+    elif eyes >= 6:
+        points -= 15
+        reasons.append(f'{eyes} review reports ({source} them): heavily farmed ground - select '
+                       'by audit coverage, not by prize')
+    elif eyes >= 3:
+        points -= 10
+        reasons.append(f'{eyes} review reports ({source} them): published reviews have already '
+                       'read these surfaces, so build the dup corpus before reading code')
+    elif eyes:
+        points -= 5
+        reasons.append(f'{eyes} review report(s) ({source} them)')
+    elif declared == 0:
+        points += 5
+        reasons.append('no published review and none shipped in the repository: few eyes per '
+                       'dollar')
+    else:
+        unknowns.append('public_audit_count unknown and no review artifact ships in the '
+                        'repository: count the published reports before reading code, and keep '
+                        'their text as the dup corpus')
+        reasons.append('no review artifact ships in this repository, so none is pre-burning '
+                       'these surfaces - an audit published elsewhere would not show here')
+
+    project_key = project_for_repo(root)
+    own = None
+    if not project_key:
+        unknowns.append('no origin remote: your own report history for this project cannot be '
+                        'looked up, so duplicate risk from your own account is unknown')
+    else:
+        own, failure = _own_project_history(project_key, _history_path(ledger, target_root=root))
+        if failure:
+            unknowns.append(failure + ': your own report history for this project is unknown')
+        elif not own['reports']:
+            unknowns.append(f'no reports of your own for {project_key} in the private ledger: '
+                            'that is no record, not a clear one - import what you have already '
+                            'sent this program with history import --from-file')
+        elif not own['decided']:
+            unknowns.append(f"your {own['reports']} report(s) to {project_key} are all still "
+                            'undecided: duplicate risk from your own history is not measurable '
+                            'yet')
+        elif own['duplicates'] * 2 >= own['decided']:
+            points -= 25
+            reasons.append(f"{own['duplicates']} of your {own['decided']} decided reports to "
+                           'this project closed as duplicate: what you reach first here is '
+                           'ground you have already been told is taken')
+        elif own['duplicates']:
+            points -= 12
+            reasons.append(f"{own['duplicates']} of your {own['decided']} decided reports to "
+                           'this project closed as duplicate')
+        elif own['landed']:
+            points += 8
+            reasons.append(f"{own['landed']} of your {own['decided']} decided reports to this "
+                           'project were accepted or paid and none closed as duplicate')
     score = max(0, min(100, points))
     band = ('hunt' if score >= 60 else 'maybe' if score >= 35 else 'deprioritise')
+    # A measured severity ceiling overrides the points: a flawless mechanism over an
+    # empty contract pays nothing. This is the single check that would have saved the
+    # two longest zero-yield runs in this skill's own history.
+    if ceilings and pays_nonfund is not True:
+        band = 'deprioritise'
+        reasons.append('band forced to deprioritise by the measured severity ceiling')
+    elif ceilings:
+        band = 'maybe' if band == 'hunt' else band
     return {'program': program.get('program'), 'url': program.get('url'),
             'in_scope_files': len(in_scope), 'in_scope_lines': total_lines,
             'files_never_named_in_tests': len(untested),
             'untested_sample': untested[:15],
             'churn_share_since_audit': None if new_share is None else round(new_share, 4),
+            'review_artifacts': {'count': len(artifacts),
+                                 'firms': sorted({row['firm'] for row in artifacts
+                                                  if row['firm']}),
+                                 'paths': [row['path'] for row in artifacts]},
+            'own_history': own,
             'priority_score': score, 'band': band, 'reasons': reasons, 'unknowns': unknowns,
+            'severity_ceiling': ceilings,
+            'value_at_rest_usd': var if isinstance(var, (int, float)) else None,
+            'public_audit_count': audits if isinstance(audits, int) else None,
             'skipped_files': skipped,
-            'notice': 'A prioritisation heuristic over code and published program facts. '
-                      'It does not predict a payout, a finding, or originality.'}
+            'notice': 'A prioritisation heuristic over code, published program facts, the '
+                      'review artifacts the repository ships and your own recorded outcomes on '
+                      'this project. It does not predict a payout, a finding, or originality. '
+                      'Account for the artifacts with audit-inventory before hunting; an empty '
+                      'ledger is an unknown, never a clear record.'}
 
 
 # --------------------------------------------------------------------------- #
@@ -5255,6 +5910,13 @@ def build_parser():
     exp.add_argument('--limit', type=int, default=3)
     exp.add_argument('--gate', action='store_true', help='fail when top leads remain untested or unblocked')
 
+    inv = sub.add_parser('audit-inventory',
+                         help='list the review artifacts the repository ships, to account for')
+    inv.add_argument('--repo', required=True)
+    inv.add_argument('--run', required=True)
+    inv.add_argument('--gate', action='store_true',
+                     help='fail while any listed artifact is still unreviewed')
+
     audit = sub.add_parser('scope-audit', help='check whether source bundles omitted an entire language stack')
     audit.add_argument('--repo', required=True)
     audit.add_argument('--run', required=True)
@@ -5286,14 +5948,23 @@ def build_parser():
     hist_record.add_argument('--case-id', default=None, help='reuse the id printed by the first record')
     hist_record.add_argument('--reason', default='unspecified', choices=sorted(HISTORY_REASONS))
     hist_record.add_argument('--hours', type=float, default=None, help='total hours spent on this report')
-    hist_import = hist_sub.add_parser('import', help='seed the private history from an older report')
-    hist_import.add_argument('--project', required=True, help='repository URL or host/owner/repo key')
-    hist_import.add_argument('--finding-id', required=True, help='your report identifier or local label')
-    hist_import.add_argument('--bug-class', required=True)
-    hist_import.add_argument('--surface', action='append', required=True,
+    hist_import = hist_sub.add_parser('import', help='seed the private history from an older '
+                                                     'report, or from a whole platform export')
+    hist_import.add_argument('--from-file', default=None,
+                             help='export of your own submissions to this program: a JSON array, '
+                                  'an object holding the list, JSON Lines or CSV. Imports every '
+                                  'record at once and adds nothing that is already in the ledger')
+    hist_import.add_argument('--dry-run', action='store_true',
+                             help='with --from-file: report the counts and write nothing')
+    hist_import.add_argument('--project', default=None,
+                             help='repository URL or host/owner/repo key; with --from-file, the '
+                                  'default for records that carry none')
+    hist_import.add_argument('--finding-id', default=None, help='your report identifier or local label')
+    hist_import.add_argument('--bug-class', default=None)
+    hist_import.add_argument('--surface', action='append', default=None,
                              help='affected path or path:function; repeatable')
-    hist_import.add_argument('--root-cause', required=True, help='short mechanism summary, max 500 chars')
-    hist_import.add_argument('--outcome', required=True, choices=sorted(HISTORY_DISPOSITIONS))
+    hist_import.add_argument('--root-cause', default=None, help='short mechanism summary, max 500 chars')
+    hist_import.add_argument('--outcome', default=None, choices=sorted(HISTORY_DISPOSITIONS))
     hist_import.add_argument('--ledger', default=None)
     hist_import.add_argument('--program', default='')
     hist_import.add_argument('--case-id', default=None)
@@ -5334,6 +6005,9 @@ def build_parser():
     score = sub.add_parser('score-target', help='prioritise a target from code and program facts')
     score.add_argument('--repo', required=True)
     score.add_argument('--program', required=True, help='JSON of published program facts')
+    score.add_argument('--ledger', default=None,
+                       help='private JSONL of your own report outcomes; '
+                            'default ~/.bounty-pilot/history.jsonl')
 
     dep = sub.add_parser('verify-deployment', help='compare on-chain runtime code with a build')
     dep.add_argument('--rpc', required=True, help='read-only JSON-RPC endpoint')
@@ -5424,6 +6098,10 @@ def main(argv=None):
             result = coverage_floor(args.repo, args.run, args.scope, args.min_fraction)
             print(json.dumps(result, indent=2))
             return 1 if args.gate and result['examined_fraction'] < args.min_fraction else 0
+        if args.action == 'audit-inventory':
+            result = audit_inventory(args.repo, args.run)
+            print(json.dumps(result, indent=2))
+            return 1 if args.gate and result['unreviewed'] else 0
         if args.action == 'experiment-gate':
             result = load_impact_helper('experiment_gate').review(args.run, args.limit)
             print(json.dumps(result, indent=2))
@@ -5443,9 +6121,16 @@ def main(argv=None):
                                         args.project, args.program, args.case_id, args.reason,
                                         args.hours)
             elif args.history_action == 'import':
-                result = history_import(args.project, args.finding_id, args.bug_class,
-                                        args.surface, args.root_cause, args.outcome, args.ledger,
-                                        args.program, args.case_id, args.reason, args.hours, args.lens)
+                if args.from_file:
+                    result = history_bulk_import(args.from_file, args.ledger, args.project,
+                                                 args.program, args.dry_run)
+                elif args.dry_run:
+                    raise ValueError('--dry-run applies to a --from-file import only')
+                else:
+                    result = history_import(args.project, args.finding_id, args.bug_class,
+                                            args.surface, args.root_cause, args.outcome,
+                                            args.ledger, args.program, args.case_id, args.reason,
+                                            args.hours, args.lens)
             else:
                 result = history_summary(args.ledger)
             print(json.dumps(result, indent=2))
@@ -5465,7 +6150,7 @@ def main(argv=None):
             print(json.dumps(load_stack_route().route(args.repo), indent=2))
             return 0
         if args.action == 'score-target':
-            print(json.dumps(score_target(args.repo, args.program), indent=2))
+            print(json.dumps(score_target(args.repo, args.program, args.ledger), indent=2))
             return 0
         if args.action == 'verify-deployment':
             print(json.dumps(verify_deployment(args.rpc, args.address, args.artifact,

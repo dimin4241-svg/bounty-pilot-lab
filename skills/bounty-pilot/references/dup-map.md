@@ -20,7 +20,25 @@ So the map is built **first**, and it burns surfaces before anyone reads code fo
    here either.
 5. **Closed issues, PRs and release notes** in the target repository: a PR titled "fix rounding in
    redeem" names a class the team already handled.
-6. **Post-mortems** of protocols running the same fork.
+6. **The repository that ASSEMBLES the deployed artifact**, when it is not the one you are reading.
+   A library repo and the repo that composes it into the running system are often different —
+   `paritytech/polkadot-sdk` holds the pallets while `polkadot-fellows/runtimes` builds the chains
+   that actually run; the same split appears wherever a vendored SDK, a fork-with-overrides, or a
+   separate "deployments"/"runtimes"/"infra" repo pins the library by version. **Dup-checking only
+   the library repo is worthless.** Find the assembling repo by matching the live version constant
+   to its tags, then read its `main`/HEAD and its merged PRs for your exact mechanism. Use
+   `git merge-base --is-ancestor <fix-sha> <live-tag>` to separate three states that have
+   completely different value:
+   - fixed and released → dead, do not report;
+   - **fixed on `main` but not in the live tag** → the deployed system is genuinely vulnerable, yet
+     the issue is *known*. Worth telling them operationally; worth nothing as a bounty;
+   - absent from both → candidate.
+   In a live run this single check turned a confident High — a proxy-type privilege escalation,
+   verified against the live runtime and genuinely unfixed in the library repo — into a certain
+   duplicate: the assembling repo's `main` already carried the fix, with a source comment stating
+   the same reasoning, merged five weeks earlier. The sweep that had cleared it checked only the
+   library's `master`.
+7. **Post-mortems** of protocols running the same fork.
 
 Record retrieval dates. A known-issues list is edited, and the version you read is the one you were
 judged against.
@@ -82,6 +100,30 @@ A search that ran and found nothing is a clean result; a search that never ran i
 
 Unauthenticated GitHub search allows only a few queries a minute. Export a read-only token and
 name its variable with `--token-env`; the value is never printed or written to the run.
+
+## Import what you have already sent this program
+
+The other half of the map is private: your own submissions. A finding filed on pump.fun in October
+had the same root cause as the hunter's own report from 4 September, already sitting in a duplicate
+cluster on the same account. Nothing could have caught it, because the ledger was empty — the
+single-record `history import`, one command per report, was too tedious to be used.
+
+```sh
+python3 <skill-dir>/scripts/bounty.py history import --from-file <export> \
+    [--program <name>] [--project <host/owner/repo>] [--dry-run]
+```
+
+It accepts a JSON array, JSON Lines, or an object holding the list, maps each record into the
+private ledger, and is idempotent: re-importing the same export adds nothing, so refreshing it
+mid-hunt is safe. `--program` and `--project` supply the program name and the canonical project key
+for records that carry neither; `--dry-run` prints what would be added and writes nothing.
+
+**Before hunting a program, export or paste what you have already submitted to it and import it.**
+Then `history check` joins it against this run's candidates, and `evidence.md` has the
+`history_review` fields a submission needs. The ledger keeps compact metadata only — project key,
+program, bug class, surfaces, a one-line root cause, disposition, effort — and never report bodies,
+source, PoCs, wallets or addresses. Verify each imported field against the original record: the
+importer checks shapes, not truth.
 
 ## Format — `dup-map.json` in the run directory
 

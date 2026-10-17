@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -1913,6 +1914,238 @@ class RunTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '--from-file'):
             bounty.dup_harvest(self.run, repo='liquity/bold', opener=opener)
 
+    # ---- review artifacts the repository ships ----
+    def inventory(self, *artifacts):
+        """Record an audit-inventory result without walking a checkout."""
+        bounty.dump(self.run / 'audit-inventory.json',
+                    {'repo': str(self.repo), 'artifact_count': len(artifacts),
+                     'artifacts': list(artifacts)})
+
+    def artifact(self, path='audits/report.pdf', triage='unreviewed', note=''):
+        return {'path': path, 'bytes': 10, 'sha256': 'ab' * 32, 'firm': 'spearbit',
+                'matched_by': 'review directory', 'triage': triage, 'note': note}
+
+    def test_an_unreviewed_audit_artifact_blocks_submission(self):
+        self.inventory(self.artifact(), self.artifact('audits/second.pdf', 'read'))
+        errors = self.check(self.submittable(), submission=True)
+        self.assertTrue(any('audits/report.pdf' in error for error in errors), errors)
+        self.assertTrue(any('not-applicable' in error for error in errors), errors)
+        self.assertFalse(any('audits/second.pdf' in error for error in errors), errors)
+
+    def test_a_triaged_audit_artifact_does_not_block_submission(self):
+        self.inventory(self.artifact(triage='read'),
+                       self.artifact('audits/old.pdf', 'not-applicable',
+                                     note='covers v1, out of this scope'),
+                       self.artifact('audits/named.pdf', 'unavailable'))
+        self.assertEqual(self.check(self.submittable(), submission=True), [])
+
+    def test_a_run_with_no_inventory_is_not_blocked(self):
+        # Older runs, and targets that ship no review at all: neither is a defect.
+        self.assertFalse((self.run / 'audit-inventory.json').exists())
+        self.assertEqual(self.check(self.submittable(), submission=True), [])
+
+    def test_not_applicable_without_a_reason_is_still_unreviewed(self):
+        self.inventory(self.artifact(triage='not-applicable'))
+        errors = self.check(self.submittable(), submission=True)
+        self.assertTrue(any('audits/report.pdf' in error for error in errors), errors)
+
+    def test_an_unknown_triage_word_is_never_read_as_accounted_for(self):
+        self.inventory(self.artifact(triage='probably fine'))
+        errors = self.check(self.submittable(), submission=True)
+        self.assertTrue(any('audits/report.pdf' in error for error in errors), errors)
+
+    def test_a_hand_broken_inventory_is_an_error_not_a_crash(self):
+        for payload in ('{not json', '[]', '{"artifacts": {}}', '{"artifacts": [7]}'):
+            (self.run / 'audit-inventory.json').write_text(payload, encoding='utf-8')
+            errors = self.check(self.submittable(), submission=True)
+            self.assertTrue(any('audit-inventory.json' in error for error in errors), payload)
+
+    def test_queue_reports_the_shipped_review_artifacts(self):
+        self.assertIsNone(bounty.lead_queue(self.run)['audit_inventory'])
+        self.inventory(self.artifact(), self.artifact('audits/second.pdf', 'read'))
+        reported = bounty.lead_queue(self.run)['audit_inventory']
+        self.assertEqual(reported['artifacts'], 2)
+        self.assertEqual(reported['unreviewed_count'], 1)
+        self.assertEqual(reported['unreviewed'], ['audits/report.pdf'])
+        self.assertEqual(reported['triage'], {'unreviewed': 1, 'read': 1})
+
+    def test_an_invalid_run_still_reports_the_inventory_field(self):
+        self.inventory(self.artifact())
+        bounty.dump(self.run / 'findings.json', [{'id': 'BP-001'}])
+        result = bounty.lead_queue(self.run)
+        self.assertEqual(result['state'], 'invalid')
+        self.assertEqual(result['audit_inventory']['unreviewed_count'], 1)
+
+
+class AuditInventoryTests(unittest.TestCase):
+    """Royco, Squads and marginfi all ship their reviews in the checkout; nothing listed them."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.repo = self.base / 'repo'
+        (self.repo / 'src').mkdir(parents=True)
+        (self.repo / 'audits').mkdir()
+        (self.repo / 'docs').mkdir()
+        git(self.repo, 'init', '-q')
+        (self.repo / 'src/Vault.sol').write_text('contract Vault {}\n')
+        # A PDF is bytes, not text: the inventory must still list and hash it.
+        (self.repo / 'audits/2023-03-ChainSecurity.pdf').write_bytes(b'%PDF-1.4\x00\xff report')
+        (self.repo / 'audits/notes.md').write_text('findings\n')
+        (self.repo / 'docs/2024-trail-of-bits-assessment.md').write_text('assessment\n')
+        (self.repo / 'docs/reconciliation.md').write_text('how settlement reconciles\n')
+        (self.repo / 'SECURITY.md').write_text('# Security\n\nAudited by Spearbit in 2024.\n')
+        (self.repo / 'README.md').write_text('readme\n')
+        commit(self.repo, 'fixture')
+        self.run = self.base / 'run'
+        bounty.initialize(self.repo, self.run)
+
+    def paths(self, result):
+        return [row['path'] for row in result['artifacts']]
+
+    def test_artifacts_are_found_in_every_location_shape(self):
+        result = bounty.audit_inventory(self.repo, self.run)
+        self.assertEqual(self.paths(result),
+                         ['SECURITY.md', 'audits/2023-03-ChainSecurity.pdf', 'audits/notes.md',
+                          'docs/2024-trail-of-bits-assessment.md'])
+        by_path = {row['path']: row for row in result['artifacts']}
+        self.assertEqual(by_path['audits/notes.md']['matched_by'], 'review directory')
+        self.assertEqual(by_path['docs/2024-trail-of-bits-assessment.md']['matched_by'],
+                         'review-shaped name')
+        self.assertEqual(by_path['SECURITY.md']['matched_by'],
+                         'security policy naming a review')
+        self.assertNotIn('src/Vault.sol', self.paths(result))
+        self.assertNotIn('README.md', self.paths(result))
+
+    def test_a_firm_is_attributed_from_the_name_and_a_pdf_is_hashed_not_read(self):
+        result = bounty.audit_inventory(self.repo, self.run)
+        by_path = {row['path']: row for row in result['artifacts']}
+        self.assertEqual(by_path['audits/2023-03-ChainSecurity.pdf']['firm'], 'chainsecurity')
+        self.assertEqual(by_path['docs/2024-trail-of-bits-assessment.md']['firm'],
+                         'trail of bits')
+        self.assertIsNone(by_path['audits/notes.md']['firm'])
+        self.assertEqual(result['firms'], ['chainsecurity', 'trail of bits'])
+        blob = (self.repo / 'audits/2023-03-ChainSecurity.pdf').read_bytes()
+        self.assertEqual(by_path['audits/2023-03-ChainSecurity.pdf']['sha256'],
+                         hashlib.sha256(blob).hexdigest())
+        self.assertEqual(by_path['audits/2023-03-ChainSecurity.pdf']['bytes'], len(blob))
+
+    def test_the_firm_list_is_the_one_dup_harvest_maintains(self):
+        # One list, two callers: a firm added for the label search is attributable here too.
+        self.assertTrue(set(bounty.AUDIT_FIRM_HINTS).issubset(bounty.AUDITOR_LABEL_HINTS))
+        self.assertNotIn('audit report', bounty.AUDIT_FIRM_HINTS)
+
+    def test_a_short_firm_name_is_not_matched_inside_a_longer_word(self):
+        # `recon` is a firm and also the first five letters of reconciliation.
+        self.assertIsNone(bounty._audit_firm('docs/reconciliation-review.md'))
+        self.assertEqual(bounty._audit_firm('audits/recon-2024.pdf'), 'recon')
+
+    def test_a_security_policy_that_names_no_review_is_not_an_artifact(self):
+        (self.repo / 'SECURITY.md').write_text('# Security\n\nMail security@example.invalid.\n')
+        commit(self.repo, 'plain policy')
+        self.assertNotIn('SECURITY.md', self.paths(bounty.audit_inventory(self.repo, self.run)))
+
+    def test_a_symlinked_artifact_is_never_followed(self):
+        outside = self.base / 'outside.pdf'
+        outside.write_bytes(b'%PDF secret')
+        os.symlink(outside, self.repo / 'audits/linked-audit.pdf')
+        commit(self.repo, 'symlink')
+        result = bounty.audit_inventory(self.repo, self.run)
+        self.assertNotIn('audits/linked-audit.pdf', self.paths(result))
+        self.assertIn({'path': 'audits/linked-audit.pdf',
+                       'reason': 'not a regular file in the checkout'}, result['skipped_files'])
+
+    def test_an_oversize_report_is_listed_without_a_hash_and_disclosed(self):
+        with mock.patch.object(bounty, 'AUDIT_ARTIFACT_MAX_BYTES', 4):
+            result = bounty.audit_inventory(self.repo, self.run)
+        by_path = {row['path']: row for row in result['artifacts']}
+        self.assertIsNone(by_path['audits/2023-03-ChainSecurity.pdf']['sha256'])
+        self.assertTrue(any(row['path'] == 'audits/2023-03-ChainSecurity.pdf'
+                            and 'larger than' in row['reason']
+                            for row in result['skipped_files']), result['skipped_files'])
+        # Unhashable is not the same as absent: it still has to be accounted for.
+        self.assertIn('audits/2023-03-ChainSecurity.pdf', result['unreviewed'])
+
+    def test_every_artifact_starts_unreviewed(self):
+        result = bounty.audit_inventory(self.repo, self.run)
+        self.assertEqual(result['unreviewed_count'], 4)
+        self.assertTrue(all(row['triage'] == 'unreviewed' for row in result['artifacts']))
+        self.assertEqual(bounty.read_json(self.run / 'audit-inventory.json')['artifact_count'], 4)
+
+    def test_triage_survives_a_rerun_while_the_bytes_hold(self):
+        bounty.audit_inventory(self.repo, self.run)
+        data = bounty.read_json(self.run / 'audit-inventory.json')
+        for row in data['artifacts']:
+            row['triage'] = 'read'
+        data['artifacts'][0]['triage'] = 'not-applicable'
+        data['artifacts'][0]['note'] = 'covers the v1 deployment'
+        bounty.dump(self.run / 'audit-inventory.json', data)
+        again = bounty.audit_inventory(self.repo, self.run)
+        self.assertEqual(again['unreviewed'], [])
+        self.assertEqual(again['artifacts'][0]['note'], 'covers the v1 deployment')
+
+    def test_a_replaced_report_is_a_report_nobody_has_read(self):
+        bounty.audit_inventory(self.repo, self.run)
+        data = bounty.read_json(self.run / 'audit-inventory.json')
+        for row in data['artifacts']:
+            row['triage'] = 'read'
+        bounty.dump(self.run / 'audit-inventory.json', data)
+        (self.repo / 'audits/notes.md').write_text('findings, revision two\n')
+        commit(self.repo, 'new revision of the report')
+        again = bounty.audit_inventory(self.repo, self.run)
+        self.assertEqual(again['unreviewed'], ['audits/notes.md'])
+
+    def test_the_gate_fails_while_an_artifact_is_unreviewed(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = bounty.main(['audit-inventory', '--repo', str(self.repo),
+                                '--run', str(self.run), '--gate'])
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out.getvalue())['unreviewed_count'], 4)
+        data = bounty.read_json(self.run / 'audit-inventory.json')
+        for row in data['artifacts']:
+            row['triage'] = 'read'
+        bounty.dump(self.run / 'audit-inventory.json', data)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(bounty.main(['audit-inventory', '--repo', str(self.repo),
+                                          '--run', str(self.run), '--gate']), 0)
+
+    def test_without_the_gate_an_unreviewed_artifact_is_reported_not_failed(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(bounty.main(['audit-inventory', '--repo', str(self.repo),
+                                          '--run', str(self.run)]), 0)
+
+    def test_a_repository_shipping_no_review_writes_an_empty_inventory(self):
+        for name in ('SECURITY.md', 'audits/notes.md', 'audits/2023-03-ChainSecurity.pdf',
+                     'docs/2024-trail-of-bits-assessment.md'):
+            (self.repo / name).unlink()
+        commit(self.repo, 'no reviews')
+        result = bounty.audit_inventory(self.repo, self.run)
+        self.assertEqual(result['artifact_count'], 0)
+        self.assertEqual(result['unreviewed'], [])
+
+    def test_a_hand_broken_inventory_does_not_block_the_rerun_that_replaces_it(self):
+        (self.run / 'audit-inventory.json').write_text('{not json', encoding='utf-8')
+        result = bounty.audit_inventory(self.repo, self.run)
+        self.assertEqual(result['artifact_count'], 4)
+        self.assertEqual(result['unreviewed_count'], 4)
+
+    def test_the_inventory_is_never_written_through_a_symlink(self):
+        os.symlink(self.base / 'elsewhere.json', self.run / 'audit-inventory.json')
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            bounty.audit_inventory(self.repo, self.run)
+
+    def test_the_inventory_is_refused_outside_a_run_directory(self):
+        with self.assertRaisesRegex(ValueError, 'run directory created by init'):
+            bounty.audit_inventory(self.repo, self.base / 'not-a-run')
+
+    def test_the_inventory_is_never_written_into_the_target(self):
+        (self.repo / 'inside').mkdir()
+        (self.repo / 'inside' / 'run.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'outside the target'):
+            bounty.audit_inventory(self.repo, self.repo / 'inside')
+
 
 class HistoryTests(unittest.TestCase):
     def setUp(self):
@@ -2092,6 +2325,312 @@ class HistoryTests(unittest.TestCase):
             'root_cause_summary': 'root cause', 'disposition': 'paid'}) + '\n')
         with self.assertRaisesRegex(ValueError, 'invalid affected_paths'):
             bounty.history_check(self.run, self.ledger)
+
+
+class BulkHistoryImportTests(unittest.TestCase):
+    """A report went out duplicating the hunter's own earlier one, because importing an
+    account's submissions one twelve-flag command at a time never happened."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.ledger = self.base / 'private' / 'history.jsonl'
+        self.records = [
+            {'finding_id': 'C4-123', 'bug_class': 'fee-accounting-not-decremented',
+             'surface': 'src/Vault.sol:Vault.withdraw',
+             'root_cause': 'Withdraw does not decrement the accrued fee',
+             'outcome': 'duplicate', 'reason': 'private-duplicate', 'hours': 4},
+            {'finding_id': 'C4-124', 'bug_class': 'oracle-staleness',
+             'affected_paths': ['src/Oracle.sol', 'src/Feed.sol'],
+             'root_cause': 'A stale round is accepted as fresh', 'outcome': 'paid'},
+        ]
+
+    def write(self, name, text):
+        path = self.base / name
+        path.write_text(text, encoding='utf-8')
+        return path
+
+    def rows(self):
+        return bounty._history_rows(self.ledger.resolve())
+
+    def test_a_json_array_export_imports_every_record(self):
+        source = self.write('export.json', json.dumps(self.records))
+        result = bounty.history_bulk_import(source, self.ledger,
+                                            project='https://example.invalid/org/vault.git')
+        self.assertEqual(result['shape'], 'json-array')
+        self.assertEqual((result['added'], result['already_present'], result['updated'],
+                          result['rejected']), (2, 0, 0, 0))
+        stored = self.rows()
+        self.assertEqual([row['finding_id'] for row in stored], ['C4-123', 'C4-124'])
+        self.assertEqual({row['project_key'] for row in stored}, {'example.invalid/org/vault'})
+        self.assertEqual(stored[0]['effort_hours'], 4.0)
+        self.assertEqual(stored[1]['affected_paths'], ['src/Oracle.sol', 'src/Feed.sol'])
+
+    def test_an_object_holding_the_list_is_read(self):
+        source = self.write('export.json', json.dumps({'total': 2, 'reports': self.records}))
+        result = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual(result['shape'], 'json-object')
+        self.assertEqual(result['added'], 2)
+
+    def test_a_sole_unnamed_list_in_an_object_is_read(self):
+        source = self.write('export.json', json.dumps({'anything': self.records}))
+        self.assertEqual(bounty.history_bulk_import(source, self.ledger,
+                                                    project='example.invalid/org/v')['added'], 2)
+
+    def test_an_object_with_two_lists_is_refused_rather_than_guessed(self):
+        source = self.write('export.json', json.dumps({'a': self.records, 'b': [1]}))
+        with self.assertRaisesRegex(ValueError, 'no single list of records'):
+            bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+
+    def test_json_lines_are_read(self):
+        source = self.write('export.jsonl',
+                            '\n'.join(json.dumps(row) for row in self.records) + '\n')
+        result = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual(result['shape'], 'json-lines')
+        self.assertEqual(result['added'], 2)
+
+    def test_a_csv_export_is_read(self):
+        source = self.write('export.csv',
+                            'ID,Bug Class,Surface,Root Cause,Status,Hours\n'
+                            'C4-123,Fee Accounting,"src/Vault.sol:withdraw",'
+                            'Withdraw keeps the fee,Duplicate,4\n'
+                            'C4-124,oracle-staleness,"src/Oracle.sol;src/Feed.sol",'
+                            'Stale round accepted,Paid,\n')
+        result = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual(result['shape'], 'csv')
+        self.assertEqual((result['added'], result['rejected']), (2, 0))
+        stored = self.rows()
+        self.assertEqual(stored[0]['bug_class'], 'fee-accounting')
+        self.assertEqual(stored[1]['affected_paths'], ['src/Oracle.sol', 'src/Feed.sol'])
+        self.assertIsNone(stored[1]['effort_hours'])
+
+    def test_the_spellings_an_export_uses_all_map_onto_the_ledger(self):
+        source = self.write('export.json', json.dumps([{
+            'id': 'IMM-7', 'title': 'ignored once id is present', 'category': 'Access Control',
+            'paths': 'programs/vault/src/lib.rs:handler', 'summary': 'Missing signer check',
+            'status': 'Out of Scope', 'program_name': 'Immunefi / Vault',
+            'repository': 'example.invalid/org/vault', 'effort': '2.5',
+            'reason_category': 'out-of-scope', 'lens': 'Privileged Path',
+            'platform_url': 'https://example.invalid/report/7'}]))
+        result = bounty.history_bulk_import(source, self.ledger)
+        self.assertEqual(result['added'], 1)
+        self.assertEqual(result['unmapped_keys'], ['platform_url'])
+        row = self.rows()[0]
+        self.assertEqual(row['finding_id'], 'IMM-7')
+        self.assertEqual(row['bug_class'], 'access-control')
+        self.assertEqual(row['disposition'], 'out-of-scope')
+        self.assertEqual(row['program'], 'Immunefi / Vault')
+        self.assertEqual(row['lens'], 'privileged-path')
+        self.assertEqual(row['effort_hours'], 2.5)
+        self.assertEqual(row['affected_paths'], ['programs/vault/src/lib.rs:handler'])
+
+    def test_reimporting_the_same_export_adds_nothing(self):
+        source = self.write('export.json', json.dumps(self.records))
+        bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        again = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual((again['added'], again['already_present'], again['updated']), (0, 2, 0))
+        self.assertEqual(len(self.ledger.read_text().splitlines()), 2)
+
+    def test_a_refreshed_export_updates_the_same_case(self):
+        source = self.write('export.json', json.dumps(self.records))
+        first = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        decided = [dict(self.records[0], outcome='paid'), self.records[1]]
+        source.write_text(json.dumps(decided), encoding='utf-8')
+        again = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual((again['added'], again['already_present'], again['updated']), (0, 1, 1))
+        self.assertEqual(again['cases_updated'][0]['was'], 'duplicate')
+        self.assertEqual(again['cases_updated'][0]['case_id'],
+                         first['cases_added'][0]['case_id'])
+        summary = bounty.history_summary(self.ledger)
+        self.assertEqual(summary['reports'], 2)
+        self.assertEqual(summary['dispositions']['paid'], 2)
+        self.assertEqual(summary['dispositions']['duplicate'], 0)
+
+    def test_a_malformed_record_is_rejected_with_its_reason_while_the_rest_import(self):
+        bad = [{'finding_id': 'X-1', 'bug_class': '', 'surface': 'src/A.sol',
+                'root_cause': 'no class', 'outcome': 'paid'},
+               {'finding_id': 'X-2', 'bug_class': 'ok-class', 'surface': 'src/A.sol',
+                'root_cause': 'bad outcome', 'outcome': 'maybe-someday'},
+               {'finding_id': 'X-3', 'bug_class': 'ok-class', 'surface': '',
+                'root_cause': 'no surface', 'outcome': 'paid'},
+               'not even an object']
+        source = self.write('export.json', json.dumps(self.records + bad))
+        result = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual((result['added'], result['rejected']), (2, 4))
+        reasons = [row['reason'] for row in result['rejected_records']]
+        self.assertTrue(any('bug_class' in reason for reason in reasons), reasons)
+        self.assertTrue(any('outcome must be one of' in reason for reason in reasons), reasons)
+        self.assertTrue(any('surface' in reason for reason in reasons), reasons)
+        self.assertIn('not a JSON object', reasons)
+        self.assertEqual([row['record'] for row in result['rejected_records']],
+                         ['record 3', 'record 4', 'record 5', 'record 6'])
+        self.assertEqual(len(self.rows()), 2)
+
+    def test_one_unparseable_line_does_not_lose_the_others(self):
+        source = self.write('export.jsonl',
+                            json.dumps(self.records[0]) + '\n{broken\n'
+                            + json.dumps(self.records[1]) + '\n')
+        result = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual((result['added'], result['rejected']), (2, 1))
+        self.assertEqual(result['rejected_records'],
+                         [{'record': 'line 2', 'reason': 'not valid JSON'}])
+
+    def test_a_record_with_no_project_and_no_default_is_rejected(self):
+        source = self.write('export.json', json.dumps(self.records))
+        result = bounty.history_bulk_import(source, self.ledger)
+        self.assertEqual((result['added'], result['rejected']), (0, 2))
+        self.assertTrue(all('no project' in row['reason']
+                            for row in result['rejected_records']))
+        self.assertFalse(self.ledger.exists())
+
+    def test_a_record_names_its_own_project_over_the_default(self):
+        source = self.write('export.json', json.dumps(
+            [dict(self.records[0], project='example.invalid/org/other')]))
+        bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/vault')
+        self.assertEqual(self.rows()[0]['project_key'], 'example.invalid/org/other')
+
+    def test_a_project_url_with_credentials_is_stored_without_them(self):
+        source = self.write('export.json', json.dumps(
+            [dict(self.records[0], project='https://user:token@example.invalid/org/vault.git')]))
+        bounty.history_bulk_import(source, self.ledger)
+        self.assertEqual(self.rows()[0]['project_key'], 'example.invalid/org/vault')
+        self.assertNotIn('token', self.ledger.read_text())
+
+    def test_dry_run_reports_the_same_counts_and_writes_nothing(self):
+        source = self.write('export.json', json.dumps(self.records))
+        dry = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v',
+                                         dry_run=True)
+        self.assertTrue(dry['dry_run'])
+        self.assertEqual(dry['added'], 2)
+        self.assertFalse(self.ledger.exists())
+        wet = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual((wet['added'], wet['already_present']), (dry['added'], 0))
+        self.assertEqual(len(self.rows()), 2)
+
+    def test_dry_run_on_a_second_pass_reports_what_is_already_there(self):
+        source = self.write('export.json', json.dumps(self.records))
+        bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        dry = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v',
+                                         dry_run=True)
+        self.assertEqual((dry['added'], dry['already_present']), (0, 2))
+        self.assertEqual(len(self.ledger.read_text().splitlines()), 2)
+
+    def test_the_bulk_ledger_keeps_the_single_record_invariants(self):
+        source = self.write('export.json', json.dumps(self.records))
+        bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v',
+                                   program='Cantina / Vault')
+        self.assertEqual(stat.S_IMODE(self.ledger.stat().st_mode), 0o600)
+        stored = json.loads(self.ledger.read_text().splitlines()[0])
+        self.assertEqual(stored['schema_version'], bounty.HISTORY_SCHEMA)
+        self.assertEqual(stored['program'], 'Cantina / Vault')
+        self.assertTrue(stored['case_id'].startswith('H-'))
+        for private_key in ('report_text', 'source', 'poc_path', 'wallet', 'credentials',
+                            'platform_url', 'nonsense_key'):
+            self.assertNotIn(private_key, stored)
+
+    def test_the_ledger_is_never_written_through_a_symlink(self):
+        self.ledger.parent.mkdir()
+        os.symlink(self.base / 'elsewhere.jsonl', self.ledger)
+        source = self.write('export.json', json.dumps(self.records))
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+
+    def test_a_ledger_inside_the_target_checkout_is_refused(self):
+        repo = self.base / 'repo'
+        repo.mkdir()
+        git(repo, 'init', '-q')
+        (repo / 'src.sol').write_text('contract A {}\n')
+        commit(repo, 'fixture')
+        source = self.write('export.json', json.dumps(self.records))
+        with mock.patch.object(bounty, 'git', return_value=str(repo)):
+            with self.assertRaisesRegex(ValueError, 'outside the target'):
+                bounty.history_bulk_import(source, repo / 'history.jsonl',
+                                           project='example.invalid/org/v')
+
+    def test_a_corrupt_ledger_is_an_error_before_anything_is_appended(self):
+        self.ledger.parent.mkdir()
+        self.ledger.write_text('{not-json}\n')
+        source = self.write('export.json', json.dumps(self.records))
+        with self.assertRaisesRegex(ValueError, 'line 1'):
+            bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+
+    def test_a_bad_program_default_is_refused_before_the_file_is_read(self):
+        with self.assertRaisesRegex(ValueError, '--program'):
+            bounty.history_bulk_import(self.base / 'missing.json', self.ledger,
+                                       project='example.invalid/org/v', program='x' * 121)
+
+    def test_a_file_that_is_no_export_is_an_error_not_a_clean_result(self):
+        source = self.write('export.json', 'this is prose, not an export\n')
+        with self.assertRaisesRegex(ValueError, 'JSON Lines'):
+            bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        source = self.write('number.json', '42')
+        with self.assertRaisesRegex(ValueError, 'list of exported reports'):
+            bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+
+    def test_an_unknown_case_id_in_the_export_is_rejected_not_invented(self):
+        source = self.write('export.json', json.dumps(
+            [dict(self.records[0], case_id='H-neverseen')]))
+        result = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual((result['added'], result['rejected']), (0, 1))
+        self.assertIn('unknown case_id', result['rejected_records'][0]['reason'])
+
+    def test_a_case_id_from_another_report_is_rejected(self):
+        source = self.write('export.json', json.dumps(self.records))
+        first = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        stolen = dict(self.records[1], case_id=first['cases_added'][0]['case_id'])
+        source.write_text(json.dumps([stolen]), encoding='utf-8')
+        result = bounty.history_bulk_import(source, self.ledger, project='example.invalid/org/v')
+        self.assertEqual((result['added'], result['rejected']), (0, 1))
+        self.assertIn('different report', result['rejected_records'][0]['reason'])
+
+    def test_what_was_imported_is_what_history_check_joins_against(self):
+        repo = self.base / 'repo'
+        (repo / 'src').mkdir(parents=True)
+        git(repo, 'init', '-q')
+        git(repo, 'remote', 'add', 'origin', 'https://example.invalid/org/vault.git')
+        (repo / 'src/Vault.sol').write_text('contract Vault {}\n')
+        commit(repo, 'fixture')
+        run = self.base / 'run'
+        bounty.initialize(repo, run)
+        row = bounty.template()
+        row.update(title='Fee can be withdrawn twice', root_cause='Withdraw does not decrement '
+                   'the accrued fee', affected_paths=['src/Vault.sol:Vault.withdraw'],
+                   bug_class='fee-accounting-not-decremented', revision='abc1234',
+                   attacker_capabilities='Depositor', preconditions='A fee accrued',
+                   impact='Fee claimed twice',
+                   next_experiment={'question': 'q', 'method': 'm', 'expected_evidence': 'e',
+                                    'blocker': ''})
+        bounty.dump(run / 'findings.json', [row])
+        source = self.write('export.json', json.dumps(self.records))
+        bounty.history_bulk_import(source, self.ledger,
+                                   project='https://example.invalid/org/vault.git')
+        result = bounty.history_check(run, self.ledger)
+        self.assertEqual(result['state'], 'review-required')
+        self.assertEqual(result['prior_cases_total'], 2)
+        self.assertEqual(result['matches'][0]['disposition'], 'duplicate')
+
+    def test_the_single_record_form_still_asks_for_its_flags(self):
+        with self.assertRaisesRegex(ValueError, '--finding-id.*--from-file'):
+            bounty.history_import('example.invalid/org/v', None, 'fee-accounting',
+                                  ['src/A.sol'], 'cause', 'paid', self.ledger)
+
+    def test_the_cli_wires_both_import_forms(self):
+        source = self.write('export.json', json.dumps(self.records))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = bounty.main(['history', 'import', '--from-file', str(source),
+                                '--ledger', str(self.ledger), '--project',
+                                'example.invalid/org/vault', '--dry-run'])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue())['added'], 2)
+        self.assertFalse(self.ledger.exists())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = bounty.main(['history', 'import', '--ledger', str(self.ledger),
+                                '--project', 'example.invalid/org/vault', '--dry-run'])
+        self.assertEqual(code, 2)
+        self.assertIn('--dry-run', err.getvalue())
 
 
 class BundleTests(unittest.TestCase):
@@ -3252,6 +3791,57 @@ class DeltaTests(unittest.TestCase):
         self.assertIn('src/Risky.sol', result['untested_sample'])
         self.assertTrue(any('first-to-report' in r for r in result['reasons']))
 
+    def test_evidence_filename_accepts_a_base58_program_id(self):
+        """A Solana program id is base58 and case-significant. Requiring the EVM hex form, and
+        lowercasing it, made deployment_status exact unreachable on every Solana target however
+        good the evidence - reported from a live run that left its gate failing rather than
+        edit the skill to pass."""
+        evm = '0xAbC0000000000000000000000000000000000001'
+        self.assertEqual(bounty._evidence_stem(evm), evm.lower())
+        program_id = 'SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf'
+        self.assertEqual(bounty._evidence_stem(program_id), program_id)
+        for junk in ('not-an-address', '0xZZ', '', '0OIl' * 9):
+            self.assertIsNone(bounty._evidence_stem(junk), junk)
+
+    def test_review_count_is_scored_once_from_the_larger_source(self):
+        """program.json's count and the shipped artifacts measure the same fact: eyes on this
+        code. Penalising both double-counts it, and rewarding both double-rewards an unaudited
+        target, so the score takes whichever source is larger and applies one penalty."""
+        audits = self.repo / 'audit'
+        audits.mkdir(exist_ok=True)
+        for n in range(6):
+            (audits / f'firm-{n}-audit.md').write_text(f'review {n}\n')
+        commit(self.repo, 'ship six review reports')
+
+        def score(declared):
+            body = {'program': 'Example', 'in_scope_paths': ['src/']}
+            if declared is not None:
+                body['public_audit_count'] = declared
+            path = Path(self.temp.name) / f'p-{declared}.json'
+            path.write_text(json.dumps(body))
+            return bounty.score_target(self.repo, path)
+
+        shipped_only, both, declared_higher = score(None), score(6), score(20)
+        # Six shipped and six declared is the same six: the penalty must not double.
+        self.assertEqual(shipped_only['priority_score'], both['priority_score'])
+        # One reason mentions the count, never two.
+        for result in (shipped_only, both, declared_higher):
+            counted = [r for r in result['reasons'] if 'review report' in r]
+            self.assertEqual(len(counted), 1, counted)
+        # The larger source wins, so a bigger declared count scores strictly worse.
+        self.assertLess(declared_higher['priority_score'], both['priority_score'])
+        self.assertTrue(any('program.json declares' in r for r in declared_higher['reasons']))
+        self.assertTrue(any('the repository ships' in r for r in shipped_only['reasons']))
+        self.assertEqual(shipped_only['review_artifacts']['count'], 6)
+
+    def test_no_review_anywhere_is_unknown_not_a_clean_bill(self):
+        bare = Path(self.temp.name) / 'no-reviews.json'
+        bare.write_text(json.dumps({'program': 'Bare', 'in_scope_paths': ['src/']}))
+        result = bounty.score_target(self.repo, bare)
+        self.assertEqual(result['review_artifacts']['count'], 0)
+        self.assertTrue(any('public_audit_count unknown' in u for u in result['unknowns']))
+        self.assertFalse(any('few eyes per dollar' in r for r in result['reasons']))
+
     def test_score_target_records_unknowns_instead_of_assuming(self):
         program = Path(self.temp.name) / 'bare.json'
         program.write_text(json.dumps({'program': 'Bare', 'in_scope_paths': ['src/']}))
@@ -3259,6 +3849,163 @@ class DeltaTests(unittest.TestCase):
         self.assertIsNone(result['churn_share_since_audit'])
         self.assertTrue(any('audited_revision' in u for u in result['unknowns']))
         self.assertTrue(any('duplicate_policy' in u for u in result['unknowns']))
+
+    # ---- duplicate risk at stage 0 ----
+    def program_file(self, name='program.json', **facts):
+        path = Path(self.temp.name) / name
+        payload = {'program': 'Example', 'in_scope_paths': ['src/']}
+        payload.update(facts)
+        path.write_text(json.dumps(payload))
+        return path
+
+    def remote(self):
+        git(self.repo, 'remote', 'add', 'origin', 'https://example.invalid/org/vault.git')
+
+    def seed_ledger(self, *outcomes):
+        """Prior reports of your own to this project, through the real import path.
+
+        Each call gets its own ledger, so two records can be scored in one test.
+        """
+        self.ledgers = getattr(self, 'ledgers', 0) + 1
+        ledger = Path(self.temp.name) / f'private-{self.ledgers}' / 'history.jsonl'
+        for number, outcome in enumerate(outcomes, 1):
+            bounty.history_import('example.invalid/org/vault', f'OLD-{number}',
+                                  'fee-accounting-not-decremented', ['src/Audited.sol'],
+                                  'a prior mechanism of mine', outcome, ledger)
+        return ledger
+
+    def ship_reviews(self, count):
+        (self.repo / 'audits').mkdir(exist_ok=True)
+        for number in range(count):
+            (self.repo / 'audits' / f'report-{number}.pdf').write_bytes(b'%PDF ' + bytes([number]))
+        commit(self.repo, 'ship reviews')
+
+    def test_score_target_reads_your_own_outcomes_on_this_project(self):
+        self.remote()
+        ledger = self.seed_ledger('duplicate', 'duplicate', 'paid')
+        result = bounty.score_target(self.repo, self.program_file(), ledger)
+        own = result['own_history']
+        self.assertEqual(own['project_key'], 'example.invalid/org/vault')
+        self.assertEqual(own['reports'], 3)
+        self.assertEqual(own['dispositions'], {'duplicate': 2, 'paid': 1})
+        self.assertEqual((own['decided'], own['duplicates'], own['landed']), (3, 2, 1))
+        self.assertEqual([row['finding_id'] for row in own['recent']],
+                         ['OLD-3', 'OLD-2', 'OLD-1'])
+        self.assertTrue(all(row['recorded_at'] for row in own['recent']))
+        self.assertTrue(any('closed as duplicate' in reason for reason in result['reasons']),
+                        result['reasons'])
+
+    def test_a_duplicate_only_record_scores_worse_than_a_clean_one(self):
+        self.remote()
+        program = self.program_file(duplicate_policy='first-to-report', deposit_required=False)
+        duplicates = bounty.score_target(self.repo, program,
+                                         self.seed_ledger('duplicate', 'duplicate'))
+        landed = bounty.score_target(self.repo, program, self.seed_ledger('paid', 'accepted'))
+        self.assertLess(duplicates['priority_score'], landed['priority_score'])
+        self.assertTrue(any('accepted or paid and none closed as duplicate' in reason
+                            for reason in landed['reasons']), landed['reasons'])
+
+    def test_one_duplicate_among_several_weighs_less_than_a_mostly_duplicate_record(self):
+        self.remote()
+        program = self.program_file(duplicate_policy='first-to-report', deposit_required=False)
+        one = bounty.score_target(self.repo, program,
+                                  self.seed_ledger('duplicate', 'paid', 'paid'))
+        most = bounty.score_target(self.repo, program,
+                                   self.seed_ledger('duplicate', 'duplicate', 'paid'))
+        self.assertGreater(one['priority_score'], most['priority_score'])
+
+    def test_an_empty_ledger_is_an_unknown_and_never_a_clear_record(self):
+        self.remote()
+        result = bounty.score_target(self.repo, self.program_file(),
+                                     Path(self.temp.name) / 'none' / 'history.jsonl')
+        self.assertEqual(result['own_history']['reports'], 0)
+        self.assertTrue(any('no reports of your own' in unknown
+                            for unknown in result['unknowns']), result['unknowns'])
+        self.assertFalse(any('duplicate' in reason for reason in result['reasons']),
+                         result['reasons'])
+
+    def test_undecided_reports_of_your_own_are_scored_as_neither(self):
+        self.remote()
+        result = bounty.score_target(self.repo, self.program_file(),
+                                     self.seed_ledger('submitted', 'pending'))
+        self.assertEqual(result['own_history']['decided'], 0)
+        self.assertTrue(any('still undecided' in unknown
+                            for unknown in result['unknowns']), result['unknowns'])
+
+    def test_a_repository_with_no_remote_says_your_history_cannot_be_looked_up(self):
+        result = bounty.score_target(self.repo, self.program_file())
+        self.assertIsNone(result['own_history'])
+        self.assertTrue(any('no origin remote' in unknown
+                            for unknown in result['unknowns']), result['unknowns'])
+
+    def test_an_unreadable_ledger_is_an_unknown_not_a_crash(self):
+        self.remote()
+        ledger = Path(self.temp.name) / 'private' / 'history.jsonl'
+        ledger.parent.mkdir()
+        ledger.write_text('{not-json}\n')
+        result = bounty.score_target(self.repo, self.program_file(), ledger)
+        self.assertIsNone(result['own_history'])
+        self.assertTrue(any('private ledger not readable' in unknown
+                            for unknown in result['unknowns']), result['unknowns'])
+
+    def test_score_target_counts_the_review_artifacts_the_repository_ships(self):
+        program = self.program_file()
+        bare = bounty.score_target(self.repo, program)
+        self.assertEqual(bare['review_artifacts']['count'], 0)
+        self.assertTrue(any('no review artifact' in reason for reason in bare['reasons']),
+                        bare['reasons'])
+        self.ship_reviews(6)
+        farmed = bounty.score_target(self.repo, program)
+        self.assertEqual(farmed['review_artifacts']['count'], 6)
+        self.assertEqual(len(farmed['review_artifacts']['paths']), 6)
+        self.assertLess(farmed['priority_score'], bare['priority_score'])
+        self.assertTrue(any('audit coverage, not by prize' in reason
+                            for reason in farmed['reasons']), farmed['reasons'])
+
+    def test_a_handful_of_reviews_weighs_less_than_a_shelf_of_them(self):
+        program = self.program_file()
+        self.ship_reviews(3)
+        some = bounty.score_target(self.repo, program)
+        self.ship_reviews(8)
+        many = bounty.score_target(self.repo, program)
+        self.assertEqual((some['review_artifacts']['count'], many['review_artifacts']['count']),
+                         (3, 8))
+        self.assertGreater(some['priority_score'], many['priority_score'])
+
+    def test_the_finder_is_the_one_audit_inventory_uses(self):
+        # One helper, two callers: what the score counts is what the inventory accounts for.
+        self.ship_reviews(2)
+        run = Path(self.temp.name) / 'run'
+        bounty.initialize(self.repo, run)
+        inventory = bounty.audit_inventory(self.repo, run)
+        scored = bounty.score_target(self.repo, self.program_file())
+        self.assertEqual(scored['review_artifacts']['paths'],
+                         [row['path'] for row in inventory['artifacts']])
+
+    def test_neither_duplicate_factor_decides_a_band_on_its_own(self):
+        # Both are inputs to a heuristic. Each moves the score by less than the largest code
+        # factor (churn at 30), so neither can carry a target into or out of a band alone.
+        self.remote()
+        program = self.program_file(audited_revision=self.audited,
+                                    duplicate_policy='first-to-report', deposit_required=False,
+                                    known_issues_count=7, upstream_fork='aave-v3',
+                                    payout_max_usd=100000)
+        empty = Path(self.temp.name) / 'none' / 'history.jsonl'
+        base = bounty.score_target(self.repo, program, empty)
+        self.assertEqual(base['band'], 'hunt')
+        duplicates = bounty.score_target(self.repo, program,
+                                         self.seed_ledger('duplicate', 'duplicate'))
+        self.assertLessEqual(abs(duplicates['priority_score'] - base['priority_score']), 30)
+        self.assertNotEqual(duplicates['band'], 'deprioritise')
+        self.ship_reviews(10)
+        farmed = bounty.score_target(self.repo, program, empty)
+        self.assertLessEqual(abs(farmed['priority_score'] - base['priority_score']), 30)
+        self.assertNotEqual(farmed['band'], 'deprioritise')
+
+    def test_the_notice_still_refuses_to_predict(self):
+        result = bounty.score_target(self.repo, self.program_file())
+        self.assertIn('does not predict', result['notice'])
+        self.assertIn('your own recorded outcomes', result['notice'])
 
 
     def test_cross_directory_rename_keeps_the_real_path(self):
@@ -3703,7 +4450,12 @@ class CliTests(unittest.TestCase):
                       '--finding-id', 'C4-001', '--bug-class', 'bad-accounting',
                       '--surface', 'src/Vault.sol:withdraw', '--root-cause', 'missing decrement',
                       '--outcome', 'duplicate'],
+                     ['history', 'import', '--from-file', 'export.json'],
+                     ['history', 'import', '--from-file', 'export.json', '--ledger', 'l.jsonl',
+                      '--program', 'Cantina', '--project', 'github.com/org/repo', '--dry-run'],
                      ['history', 'summary'],
+                     ['audit-inventory', '--repo', '.', '--run', 'x'],
+                     ['audit-inventory', '--repo', '.', '--run', 'x', '--gate'],
                      ['delta', '--repo', '.', '--since', 'HEAD'],
                      ['bundle', '--repo', '.', '--run', 'x', '--lens', 'attack'],
                      ['bundle', '--repo', '.', '--run', 'x', '--lens', 'triage'],
@@ -3714,6 +4466,8 @@ class CliTests(unittest.TestCase):
                      ['backtest', 'seal', '--case', 'c', '--run', 'r'],
                      ['backtest', 'score', '--case', 'c'],
                      ['score-target', '--repo', '.', '--program', 'p.json'],
+                     ['score-target', '--repo', '.', '--program', 'p.json',
+                      '--ledger', 'l.jsonl'],
                      ['verify-deployment', '--rpc', 'u', '--address', 'a'],
                      ['verify-deployment', '--rpc', 'u', '--address', 'a', '--artifact', 'f',
                       '--block', '1', '--run', 'r'],

@@ -194,6 +194,61 @@ missing lockfile, a public registry asked for a local sibling, an endpoint that 
 archive node — before the blocker enters the record at all. When one is lifted, say which pass
 recorded it and what the real cause was.
 
+## 9. The cliff at a scale nobody's fixtures ever reach
+
+Every test fixture picks the smallest number that exercises the code: two signers, three members,
+one market, a handful of entries. Auditors inherit those fixtures, and reviewers reason about the
+loop body rather than the loop bound. So a limit that only bites far up the growth curve is read by
+nobody — not because it is subtle, but because no execution anyone has ever run gets near it.
+
+In a live run this was the single confirmed High among a long stretch of zero-yield targets: in a
+Solana multisig, per-proposal vote records are stored in vectors sized by the member count, and past
+roughly **106 members** the proposal account can no longer be written. Creating or approving
+proposals then fails — and for an *autonomous* multisig, shrinking the membership itself requires a
+proposal, so the configuration is permanently stuck. One member adding colleagues reaches it. The
+number 106 appears nowhere in the source: it falls out of the account layout, and every test in the
+repository uses two or three members.
+
+How to run this lens:
+
+- For each unbounded collection in persisted state, ask what the account, struct or transaction
+  size becomes at the largest membership the system itself permits — then compare that against the
+  platform's real limits (account size and realloc steps, transaction and instruction size, call
+  stack depth, gas or compute budget per block). Compute the crossover, do not estimate it.
+- Find the governing parameter's **own** declared maximum. A bug that needs more than the system
+  permits is not a bug; a cliff *below* the permitted maximum is one, and the gap between the two
+  is where the finding lives.
+- Ask the recovery question second, because that is what sets the severity: once the cliff is
+  crossed, who can step back? If the only path to shrinking the parameter runs through the very
+  operation the cliff blocks, griefing becomes a permanent freeze — and a freeze is an impact class
+  most rubrics pay for. See `escalate.md`, amplifier `freeze-instead-of-theft`.
+- Check the fixtures to confirm the blind spot rather than assuming it: grep the tests for the
+  parameter and record the largest value any of them uses. A repository whose maximum tested
+  membership is three has not tested the hundredth.
+
+This lens also survives the common objection that reaching the scale is unrealistic: growth is
+usually the *intended* use of the parameter, so the precondition arrives on its own, and a single
+participant can often drive it there deliberately.
+
+## 8. Absent from the deny-list is not the same as reachable
+
+A guard written as a deny-list over an enum invites the obvious move: list the enum, subtract the denied
+entries, and treat the remainder as attack surface. That step is wrong often enough to waste a pass, and
+it wasted one here. Being undenied only matters if the **executor dispatches it**.
+
+On one target two guards denied three enum entries out of thirty-three, and the undenied remainder
+appeared to include every token-moving action. Driving all thirty-three ids through the real executor
+showed that four of the most promising — the two broadest take variants, a settle-all and a donate —
+were never dispatched at all: they fall through to `revert UnsupportedAction`. The two best exfiltration
+primitives did not exist. The deny-list was also *complete* on one of the two pool types for a reason no
+enum listing shows: fees there capitalise into pool reserves and are realised only through the single
+entry that was denied.
+
+So: enumerate the dispatcher, not the constants file. Then read the guard against it, and when you claim
+an omission is exploitable, name the dispatch arm that executes it. The inverse is also a finding — an
+enum entry the executor dispatches but no guard mentions, and an enum entry deleted at HEAD that the
+deployed revision still dispatches (see §7).
+
 ## Recording a clean result
 
 For each item above, write the surface, the method, and the readings — not "checked". A closed

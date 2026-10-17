@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.18.0
+
+One version again. Four sessions had each been told, in their own chat, to "update the pilot";
+each read that as *improve it* rather than *reinstall your copy*, none could see the others, and
+the installed skill is not a git repository — so a day of good work existed only as files, and one
+VERSION bump was already destroyed by a later write that never re-read the file. Everything is
+preserved here with attribution, the overlaps are resolved, and the recurrence is addressed.
+
+### Preserved, with attribution
+
+- **Web and dApp frontend lens** (`hunt-agents/web-frontend-agent.md`, `lenses.md`): twenty-one
+  hunt agents existed and none covered XSS, DOM sinks or `postMessage`, while `hack-patterns.md`
+  says web scope pays and has few competent competitors. Both of this toolkit's confirmed Highs
+  came from outside Solidity.
+- **`blind-spots.md` 7, 8 and 9**, `verify-tools.md`, `report.md`, `misses.md` 24 to 30 — each
+  earned from a live hunt.
+- **`score_target`'s `value_at_rest_usd` severity ceiling**: below 100k USD it forces
+  `deprioritise` unless `pays_non_fund_impact`. Two of the longest zero-yield runs ended with every
+  candidate real and none payable, because the in-scope contracts held dust between transactions.
+- **Substrate/FRAME adapter** and its route in `stack_route.py`. Its detection sits outside the
+  workspace-root branch on purpose: a Substrate monorepo declares dependencies under
+  `[workspace.dependencies]`, which `has_deps` misses, so moving it inside silently drops roots.
+- **`coverage_floor` reports `unparsed_coverage_files`**: it credits coverage from table rows and
+  returned 0.0 where the templates had been overwritten with prose.
+
+### Duplicate evidence moves before the week
+
+- `history import --from-file` takes a JSON array, JSON Lines, an object holding the list, CSV or
+  TSV, is idempotent, and maps common key spellings. The single-record form needed twelve flags, so
+  nobody used it — and a report went out duplicating the hunter's own submission from six weeks
+  earlier, already in a duplicate cluster on the same account.
+- `audit-inventory --repo --run [--gate]` lists the review artifacts a repository ships, attributes
+  a firm, and holds each at `unreviewed` until it is marked `read`, `not-applicable` with a note, or
+  `unavailable`. It cannot read a PDF and does not pretend to; the point is that each is an
+  accounted-for known-issue source. An unreviewed artifact blocks submission; a target shipping none
+  never does.
+- `score-target --ledger` reports your own prior outcomes on this project. Duplicates at half or
+  more of decided reports costs 25 points — the most decisive signal available, still below the
+  largest code factor so it cannot carry a band alone.
+
+### Fixed
+
+- **The two audit-count signals were double-counting.** `public_audit_count` from `program.json`
+  and the artifacts the repository ships measure the same fact. A target declaring twenty and
+  shipping six was penalised twice; one declaring none and shipping none was rewarded twice. They
+  are now one signal scored once, off whichever source is larger, naming which one drove it.
+- **`deployment_status: exact` was unreachable on Solana.** The evidence filename was validated
+  against `0x[0-9a-fA-F]{40}` and lowercased, so a base58 program id could never match its own
+  file. Found by a live Squads run that left its gate failing rather than edit the skill to pass.
+
 ## 0.16.0
 
 Fifteen hunts, zero payouts. Reading the records, most were not lost at triage — they stopped

@@ -72,6 +72,14 @@ Preserve these invariants when editing:
   writes `"endpoint": "not recorded"` and scrubs the URL and its bare hostname out of every error
   string it reports.
 
+- **This repository is the skill; the installed copy is a build artifact.** Edit here, run the
+  tests, then install. Never edit `~/.claude/skills/bounty-pilot` directly: it is not a git
+  repository, every session shares it, and nothing there survives a reinstall. On 2026-10-17 four
+  sessions each improved it in the same six minutes, none able to see the others, and one
+  destroyed another's VERSION bump with a write that never re-read the file. If you are a hunt
+  session and the skill is missing something, say so to the user and let the maintaining session
+  land it in git — a lesson that is not committed is a lesson that will be lost.
+
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.
 Bump `VERSION` and `skills/bounty-pilot/VERSION` together; `.claude-plugin/plugin.json` carries the
