@@ -93,3 +93,16 @@ reports files omitted by the size budget. This is a starting context, not a comp
 when scope depends on another file, pass it explicitly with `--include` and record why it matters.
 Never assume a tracked deployment config equals production; establish that from an authoritative
 source or mark it unknown.
+
+## Stacks with no adapter here
+
+- **ZK circuits (Circom, Noir).** Source is bundled and counted, but this package has no circuit
+  lens. Soundness — an under-constrained signal, a missing range check, a value computed but never
+  constrained — is its own discipline; delegate a bounded stage to `zksecurity/zk-skills`
+  `circom-auditor` for Circom and say in `coverage.md` that Noir had no specialised review.
+- **TON (FunC, Tact).** Asynchronous messages, bounce handling and send modes have no EVM analogue.
+  Use `sanbir/ton-auditor-skills` as a vector list and model every message chain, including the
+  bounced one, as separate transactions.
+
+Both are listed with their caveats in `integrations.md`.
+

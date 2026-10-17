@@ -28,6 +28,42 @@ result proposes a collision; it does not decide one.
 
 https://github.com/OpenZeppelin/openzeppelin-skills
 
+## Vetted additions by stage
+
+Checked on 2026-10-17 by reading each repository's files at its HEAD, without installing or running
+anything. Pin the commit you review; an update needs a new review. None is bundled, none has a
+measured effect on findings, and every one is optional.
+
+| Upstream | Stage or lens it serves | What it adds here | Before you use it |
+| --- | --- | --- | --- |
+| [trailofbits/slither-mcp](https://github.com/trailofbits/slither-mcp) | Bundles; `privileged-path`, `upgrade`, `seam` | Compiler-accurate queries by function: callers, callees, modifiers, inheritance, storage layout | AGPL-3.0. Telemetry is on by default — run with `--disable-metrics`, never `--enhanced-error-reporting`. Installs from an unpinned `git+` URL: pin a commit. Writes `artifacts/` into the target, so use a disposable checkout |
+| [cdump/evmole](https://github.com/cdump/evmole) (`agent/mcp`, `evm-bytecode-analysis`) | `verify-deployment`, `live-reality` | Selectors, arguments, mutability and storage access recovered from deployed bytecode, offline — functions live on chain but absent from the source, unverified implementations | MIT. Pin the version instead of `@latest`. Recovered signatures are inference, not fact |
+| [cholakovvv/foundry-poc-mainnet-fork](https://github.com/cholakovvv/foundry-poc-mainnet-fork) | Stage 5 (EVM) | Rules that keep a fork PoC honest: real deployed addresses, no mid-chain `vm.store`, no `deal` into protocol contracts, end at realised impact | MIT. Pass your own RPC (it falls back to public ones). It writes no negative control; this workflow still requires one |
+| [zksecurity/zk-skills](https://github.com/zksecurity/zk-skills) `circom-auditor` | A ZK circuit stage this package does not have | Constraint soundness: under-constrained signals, range checks, field arithmetic, binding | MIT, v0.1. Circom only, sized for small circuits. It is a multi-agent orchestrator: delegate a bounded stage, never nest it |
+| [pantheraudits/move-auditor](https://github.com/pantheraudits/move-auditor) | `adapters/move.md` | Sui and Aptos checklists, DeFi packs and a false-positive catalogue far deeper than the adapter here | README says MIT but there is no LICENSE file. It auto-activates on `.move` files and starts its own phases — read it as reference, do not install it globally |
+| [keep-starknet-strange/starknet-agentic](https://github.com/keep-starknet-strange/starknet-agentic) `skills/cairo-auditor` | `adapters/cairo.md` | About thirty Cairo bug classes from real audits, Semgrep rules, a findings schema | MIT. Its SKILL.md shows a state-changing `invoke` with a private key for "exploit-path validation" — that breaks this workflow's read-only rule; never run it. Copy only the skill folder |
+| [sanbir/ton-auditor-skills](https://github.com/sanbir/ton-auditor-skills), [solana-auditor-skills](https://github.com/sanbir/solana-auditor-skills) | TON (no adapter here); Solana | 120 FunC/Tact vectors (bounce handling, send modes, async re-entrancy, spoofed jetton notifications); 105 Solana vectors | MIT, textbook level, not updated since March. Each run fetches a remote VERSION file — remove that line |
+| [trailofbits/skills](https://github.com/trailofbits/skills) newer modules | `economics`, `accounting`; CosmWasm; entry points on non-EVM stacks | `dimensional-analysis` (units, decimals, WAD/RAY), `cosmos-vulnerability-scanner`, `entry-point-analyzer` | Licence is CC-BY-SA-4.0. `dimensional-analysis` writes comments and a scope file into the target — disposable checkout only |
+| [J4X-Security/K.I.T](https://github.com/J4X-Security/K.I.T) | Stage 1 `dup-map.json`, `audit-inventory` | Turns audit PDFs and folders into a known-issues list and checks a candidate against it — the PDF reading `audit-inventory` does not do | MIT; needs `pdfplumber` and `pypdf`. Copy what it finds into `dup-map.json` with the source; a match proposes a collision, it does not decide one |
+| [hackenproof-public/skills](https://github.com/hackenproof-public/skills) | Stage 7, HackenProof programs only | The platform's own PoC and report rubrics | No LICENSE file. It rates `forge test --fork-url` PoCs as invalid and a mainnet attack transaction as top evidence — never act on that tier; this workflow never broadcasts. Check the program's own PoC rule |
+| [han-sec/trident-fuzz-skill](https://github.com/han-sec/trident-fuzz-skill) | Stage 5, Solana invariant campaigns | A five-phase Trident procedure | Small and young; pin it |
+
+For finding more, [pashov/ai-web3-security](https://github.com/pashov/ai-web3-security) is the best
+maintained index seen, and [gonzaloetjo/awesome-solidity-skills](https://github.com/gonzaloetjo/awesome-solidity-skills)
+keeps a table of risky repositories.
+
+### Looked at and not recommended
+
+| Repository | Why not |
+| --- | --- |
+| PraneshASP/foundry-mcp-server, mcpdotdirect/evm-mcp-server | Read a private key from the environment and can send transactions; `cast` in the shell already reads everything needed |
+| bountyoperator/bounty-operator | Its hosted review sends source, report and API key to a third-party service |
+| JoranHonig/grimoire | Its session hook loads a `GRIMOIRE.md` from the project into context, so a target repository can inject instructions |
+| DarkNavySecurity/web3-skills | Needs explorer and RPC keys plus extra tooling, overlaps this workflow, fetches a remote VERSION each run |
+| heavyw8t/The-Judge | No licence; generic invalidation reasons conflict with the anchored-objection rule |
+| monad-developers/ultrafuzz | Runs agents with permissions skipped; its own authors say to use a throwaway VM |
+| Solodit wrappers other than claudit, generic Solidity sweeps, web2 bounty dumps | Duplicate what is already integrated |
+
 ## Optional analysis and test tools
 
 Choose a tool only when it fits the repository's pinned stack. Run it against the existing build
