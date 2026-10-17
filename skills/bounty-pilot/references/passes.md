@@ -152,7 +152,8 @@ multiple runtimes or asynchronous components participate. Apply adapter guidance
 pass over earlier records; it does not replace independent composition search.
 
 Avoid exploding the budget: after the initial ranked pass, choose the single most plausible
-hypothesis and attempt its cheapest decisive native test before duplicating readings.
+hypothesis and run its cheapest decisive native test while the next readings run, rather than
+dispatching a second copy of a lens to argue about it.
 The lexical `state_graph.py` output can guide selection but is not a reachability graph.
 
 ## Evidence-First checkpoint — alongside the passes, not between them
@@ -269,7 +270,7 @@ python3 $S queue --run <run>
 python3 $S history check --run <run>
 ```
 
-Run the cheapest decisive queued test before another broad pass. Review same-project history matches
+Run the cheapest decisive queued test while the next pass reads, never as a wait before it. Review same-project history matches
 for exact repeats; use them to steer later passes toward distinct root causes. A shared path is not a
 reason to drop a lead, and a similar pattern in another repository is context, not a duplicate.
 
@@ -324,7 +325,7 @@ more useful than three inflated ones: say which surfaces you closed and on what 
 ## Before you report — answer `misses.md`
 
 The last step of the loop is not a pass; it is a check against your own output.
-`references/misses.md` lists twenty-six ways a hunt stops short, each with a cheap fix: concluding from
+`references/misses.md` lists thirty-one ways a hunt stops short, each with a cheap fix: concluding from
 a name, stopping at the first consequence, skipping the privileged path because a checklist said
 "do not report admin can rug", never reading the dependency, never checking the compiler, auditing
 HEAD when scope is pinned to deployed addresses, dropping leads silently, and letting an unanchored

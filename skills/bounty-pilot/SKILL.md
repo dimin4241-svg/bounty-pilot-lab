@@ -108,8 +108,9 @@ block, compared artifact and hash, and a digest of the record). It takes an EVM 
 Solana program id (compared with the `.so` build the way `solana-verify` hashes it); it resolves
 EIP-1967, beacon, `implementation()`-getter proxies and OpenZeppelin and Solady clones, including
 clones with immutable args, and records linked-library code. A finding claiming `deployment_status: exact` names that file in
-`deployment_evidence`; the gate re-checks the file and the artifact, so a typed status — or a file
-written by hand — is never enough. `not-applicable` needs a `deployment_rationale` and is refused
+`deployment_evidence`; the gate re-checks the record against the artifact, the build output and the
+program's addresses, so a typed status is never enough. These checks stop shortcuts and mistakes,
+not deliberate forgery of files in your own run — the honest use of the gate is yours. `not-applicable` needs a `deployment_rationale` and is refused
 for on-chain code. Move and Cairo deployments cannot be compared by this tool, so their status stays
 `unknown`. Without an RPC, a build or a network, record the step as **blocked** and leave the status
 unknown.
@@ -172,8 +173,8 @@ Read `references/passes.md`; it settles lens selection, dispatch and stop rules.
    `config`, `logic`, `cross-stack`, `anchor-account`, `web` when a website or app is in scope.
 3. **Classic classes.** The `attack` group includes `classic`: Part A (post-2023 EVM semantics —
    EIP-7702, transient storage, Permit2, signatures, L2 differences, v4 hooks, ERC-4337) runs on
-   every EVM target; Part B (the classic bug-class sweep) is delegated to `solidity-auditor` when it
-   is installed — see below — and read by `classic` itself when it is not.
+   every EVM target; Part B (the classic bug-class sweep) is `solidity-auditor`'s ground when it ran
+   on this revision — see below — and read by `classic` itself when it did not.
 4. **Attack.** Dispatch **one agent per bundle, each in its own context**, at most four concurrent.
 
 ```sh
@@ -193,7 +194,8 @@ Every `CANDIDATE` and `LEAD` carries `next_experiment` (`question`, `method`, `e
 and `blocker` when it cannot run yet). Hunt agents never refute themselves; that is Stage 4.
 
 **`solidity-auditor` (pashov/skills).** On Solidity, delegate the classic sweep to it when installed
-— in a disposable copy of the checkout, with `--loop 3` so it does not stop to ask, and always with
+— in a disposable copy of the checkout, with `--loop 3` so it does not ask for a pass count (it
+still asks once which model its agents use; answer before leaving it to run), and always with
 the explicit in-scope file list from `scope.md`, ranked by the delta (its default discovery skips
 `src/lib/` and any file named `*Test*`) — then import its output as hypotheses:
 

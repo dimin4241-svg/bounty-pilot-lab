@@ -44,8 +44,11 @@ cannot see.
   recomputed after a fork. The typehash must bind the action, so one signature cannot be replayed on
   a sibling function. `abi.encodePacked` with two dynamic arguments collides.
 - **L2 and alt-EVM semantics.** A Chainlink feed on an L2 needs the sequencer-uptime feed and a grace
-  period. `block.number` on Arbitrum is an approximate L1 number. A cross-domain `msg.sender` from L1
-  is aliased on most rollups. zkSync Era derives `CREATE`/`CREATE2` addresses differently from
+  period. `block.number` on Arbitrum is an approximate L1 number. A call relayed from L1 arrives as
+  the messenger contract, with the real sender in `xDomainMessageSender()`; a direct L1→L2
+  transaction sent by a contract arrives with an aliased address (offset by
+  `0x1111…1111`) on Arbitrum and the OP Stack, so a check against the L1 address fails or, worse,
+  an alias collides with an L2 address. zkSync Era derives `CREATE`/`CREATE2` addresses differently from
   Ethereum and routes value transfers through system contracts. `PUSH0` breaks deployment on chains
   without Shanghai. Check
   which chains the program lists and read each one's documented differences.

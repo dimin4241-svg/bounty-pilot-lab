@@ -74,7 +74,8 @@ say so in `coverage.md`. On a Solidity target worth a week, installing it is the
 2. **Run `solidity-auditor` in a disposable copy of the checkout**, at the revision you recorded. It
    scans the working directory and writes `.solidity-auditor/` into it, and the target checkout must
    stay clean. Pass `--loop 3` (or another number): without a pass count it stops at an interactive
-   question, which an orchestrated run cannot answer.
+   question. It still asks once which model its agents should use, in Claude Code; answer that
+   before leaving it to run.
 3. **Aim it with file names, not prose.** It has no input channel for a ranked list or a dup map:
    its agents receive bundles assembled by shell from fixed files. What it does accept is a list of
    files — `$filename ...` mode scans exactly those, with no exclude pattern. Always pass the full

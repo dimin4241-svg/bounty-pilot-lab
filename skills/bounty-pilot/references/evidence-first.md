@@ -42,8 +42,8 @@ The review gate checks execution records from scenario_runner.py. It requires
 executed candidate and negative-control commands that differ (in argv or working
 directory), no zero-test selectors or timeouts, matching exit codes, the observed
 Git checkout SHA matching the pinned revision, and a concrete observed outcome.
-Each plan case names its `finding_id`; a result must belong to the finding that
-cites it, and one result file cannot back two findings. Zero-test detection reads
+The plan names the `finding_id` it tests at its top level (one plan per
+finding); a result must belong to the finding that cites it, and one result file cannot back two findings. Zero-test detection reads
 the real output of forge, cargo, go, pytest, unittest, mocha/Hardhat, anchor and
 the Sui and Aptos Move test runners. The gate does not check that a command is a
 test runner at all — read the plan. A dirty worktree remains possible for local

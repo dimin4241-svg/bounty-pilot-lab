@@ -8,7 +8,7 @@ merged distinct bugs into one "closed" line. This release fixes those, measures 
 function, makes the odd one out mechanical, and turns the `solidity-auditor` integration from prose
 into a command.
 
-### Evidence that cannot be typed in
+### Evidence that takes more than typing
 
 - **A `verified` record needs an executed paired run.** `check --submission` now reads
   `experiments.json`: a verified record whose experiment is `blocked`, queued or missing fails, and
