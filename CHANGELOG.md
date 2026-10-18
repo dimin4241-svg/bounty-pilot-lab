@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.20.0
+
+### Deployed code with no source: read its functions out of the bytecode
+
+A live run had to park an in-scope finding because a factory implementation's source was never
+published — the blind spot `references/blind-spots.md` §7 describes and nothing here could measure.
+
+- **New `selectors` command.** From an address (one read-only `eth_getCode`) or from bytecode you
+  already hold, it walks the dispatcher and returns the 4-byte selectors the contract compares
+  against: named where a known signature matches, unnamed ones listed first because those are the
+  surface nobody published. Takes `--abi` (repeatable), `--signatures`, `--block` and `--run`.
+- **`verify-deployment` attaches the same lead** to its result and evidence file, from runtimes it
+  has already fetched — no extra RPC call. A `partial` or `mismatch` now arrives with "which
+  functions differ?" answered, and a resolved proxy implementation gets its own reading.
+- **Accuracy, measured.** Across **766 compiled contracts the extracted selectors equal the
+  contract's own ABI in 754 (98.4%)**: OpenZeppelin v5.1.0 (150 concrete contracts × four compiler
+  settings, including a 45-function Governor that forces the binary-search dispatcher, UUPS, the
+  ERC-1967/Transparent/Beacon proxies and clones), 19 hand-written shapes × seven settings (1, 5, 40
+  and 200 functions, overloads, nested struct and array arguments, `fallback`/`receive`, payable,
+  leading-zero selectors) and 33 Vyper 0.4.0/0.3.10 contracts. ABI canonicalisation was checked
+  against solc's own `hashes` map on every case with no mismatch, and `has_fallback`/`has_receive`
+  was decided on 525 of 733 solc cases with none wrong.
+- **The twelve that are not equal are both explained, not silent:** a hand-written assembly
+  dispatcher (its selectors cannot be in a fallback-only ABI — that gap is the signal the lead
+  exists for) and Vyper's `--optimize codesize` dense dispatch, whose table lives in copied data;
+  both are named in `notes`.
+- **It is a lead and nothing more.** Not reachability, not semantics, not a severity; a name is a
+  hypothesis. It never sets `deployment_status`, no gate reads it, and a selector handled inside a
+  fallback — as `TransparentUpgradeableProxy` handles `upgradeToAndCall` — is invisible to any
+  selector list, which the documentation says plainly.
+- The signature table is derived from signatures with the bundled keccak, never pasted hex, with a
+  test asserting the derived values equal the published ones.
+- The module is `evm_selectors.py`: a file named `selectors.py` there shadows the standard library
+  module `subprocess` imports and stops every script in the package from starting. Recorded in
+  `AGENTS.md`.
+
 ## 0.19.1
 
 Three independent reviews of 0.19.0, each by an agent that had not written the code, rebuilt the

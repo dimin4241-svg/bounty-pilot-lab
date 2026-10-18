@@ -31,6 +31,10 @@ Its parts each decide whether a hunt finds anything:
 
 **It is an agent skill, not a hosted scanner.** Your agent reads the instructions, inspects the target, runs available tools, and records evidence. The included Python helpers organize results, read live chain state and check structure; they do not discover or prove vulnerabilities by themselves.
 
+## What changed in 0.20
+
+- **Deployed code with no published source is readable.** The new `selectors` command walks the dispatcher in deployed bytecode and lists the functions a contract accepts, naming the standard ones and putting the unknown ones first; `verify-deployment` attaches the same lead, so a bytecode mismatch comes with the list of functions the source does not have. Across 766 compiled contracts the extraction equals the contract's own ABI in 754 — the twelve exceptions (an assembly dispatcher, Vyper's dense dispatch) are reported, not silent. It is a lead: never a status, and no gate reads it.
+
 ## What changed in 0.19
 
 - **`verified` means a paired run executed.** The submission gate reads `experiments.json`, binds each runner result to its finding, and checks that evidence points at real, distinct files at the recorded commit. Deployment records for addresses the program does not list or for local dev chains, non-standard proxies read as `exact`, test runs that selected no tests, succeeded commands filed as blockers and secrets in evidence are refused. The gates stop shortcuts and mistakes, not deliberate forgery of your own run files.
@@ -303,7 +307,8 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [PoC templates](skills/bounty-pilot/templates) | Fork, local, invariant and Solana harnesses |
 | [bounty.py](skills/bounty-pilot/scripts/bounty.py) | Run scaffolding, delta, triage, on-chain checks, gates |
 | [keccak.py](skills/bounty-pilot/scripts/keccak.py) | Dependency-free Keccak-256, so proxy slots are derived, not pasted |
-| [Tests](tests) | 681 helper regression and workflow checks |
+| [evm_selectors.py](skills/bounty-pilot/scripts/evm_selectors.py) | The functions a deployed contract accepts, read out of its dispatcher |
+| [Tests](tests) | 748 helper regression and workflow checks |
 
 ```sh
 S=skills/bounty-pilot/scripts/bounty.py

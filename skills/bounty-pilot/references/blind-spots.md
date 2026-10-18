@@ -137,7 +137,28 @@ the deployed implementation:
 ## 7. Code that is deployed but is not in the repository
 
 Every audit covers what is in the repository, so the gap is not a file somebody skimmed — it is code
-no report could have contained. It arrives three ways, and all three are cheap to check:
+no report could have contained. It arrives three ways, and all three are cheap to check.
+
+**First, read the functions out of the bytecode.** Source is not required to learn what a deployed
+contract accepts:
+
+```sh
+python3 $S selectors --rpc <url> --address <addr> --abi <the-interface-you-do-have.json>
+python3 $S selectors --code <runtime.hex> --signatures <your-signature-list.txt>
+```
+
+It walks the dispatcher and returns the 4-byte selectors it compares against, naming the ones that
+match a known signature and listing the rest first, because the unnamed ones are the surface nobody
+published. `verify-deployment` now attaches the same lead to its own result and evidence file, so a
+`partial` or `mismatch` comes with the question "which functions differ?" already answered.
+
+Hold it to what it is: **a selector list is not reachability, not semantics and not a severity.** A
+name is a hypothesis to confirm against source or an on-chain read. The dispatcher is invisible when
+a contract routes in hand-written assembly, computes selectors at runtime or keeps them in a data
+table (Vyper's `--optimize codesize`), and a selector handled *inside* a fallback is never dispatched
+at all — OpenZeppelin's `TransparentUpgradeableProxy` compares `msg.sig` against `upgradeToAndCall`
+in its fallback, so that admin entry point is real and absent from any selector list. The lead never
+sets `deployment_status`, and no gate reads it.
 
 **Deleted, not decommissioned.** A commit removes a contract from `src/` and its address from the
 deployment configs in the same change. The contract is still live, still holds whatever the commit

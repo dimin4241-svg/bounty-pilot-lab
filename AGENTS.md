@@ -96,6 +96,16 @@ Preserve these invariants when editing:
 - **`odd-one-out.json` and lexical entry-point lists are leads.** They come from syntax, not
   intent; never treat an asymmetry as a finding or a clean list as coverage of logic.
 
+- **The selector lead never sets a status.** `extract_selectors` reads a dispatcher heuristically:
+  it cannot see an assembly dispatcher, a runtime-computed selector, a data-table dispatch or a
+  selector handled inside a fallback. It is attached to `verify-deployment`'s result as a lead, no
+  gate reads it, and it must never influence `deployment_status` or the `comparison` object. Its
+  signature table stays **derived** from signatures with the bundled keccak — never a pasted hex
+  selector — and a test asserts the derived values equal the published ones.
+- **The selector module is `evm_selectors.py`, never `selectors.py`.** A module named `selectors` in
+  that directory shadows the standard library module `subprocess` imports, and every script in the
+  package fails to start. The CLI command is still `selectors`.
+
 - **This repository is the skill; the installed copy is a build artifact.** Edit here, run the
   tests, then install. Never edit `~/.claude/skills/bounty-pilot` directly: it is not a git
   repository, every session shares it, and nothing there survives a reinstall. On 2026-10-17 four

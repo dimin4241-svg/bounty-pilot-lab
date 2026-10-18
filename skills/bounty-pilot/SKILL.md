@@ -98,6 +98,7 @@ python3 $S dup-harvest --run <run>
 python3 $S audit-inventory --repo <checkout> --run <run> --gate
 python3 $S verify-deployment --rpc <url> --address <addr> --artifact <build-artifact.json> --run <run>
 python3 $S solc-bugs --repo <checkout>
+python3 $S selectors --rpc <url> --address <addr> --abi <build-artifact.json> --run <run>
 ```
 
 Duplicate work comes first because `dup-map.json` travels in every bundle: ground burned before the
@@ -109,7 +110,12 @@ records that without a network call. Fill `in_scope_addresses` and `chain_ids` i
 block, compared artifact and hash, and a digest of the record). It takes an EVM address or a base58
 Solana program id (compared with the `.so` build the way `solana-verify` hashes it); it resolves
 EIP-1967, beacon, `implementation()`-getter proxies and OpenZeppelin and Solady clones, including
-clones with immutable args, and records linked-library code. A finding claiming `deployment_status: exact` names that file in
+clones with immutable args, and records linked-library code. It also attaches a **selector lead**:
+the functions the deployed dispatcher actually accepts, named where a known signature matches, which
+turns a `partial` or `mismatch` into a list of the functions the source does not have
+(`blind-spots.md` §7). `selectors` runs the same reading on its own, from an address or from bytecode
+you already hold, and is the first move on a deployed contract whose source was never published. The
+lead sets no status and no gate reads it. A finding claiming `deployment_status: exact` names that file in
 `deployment_evidence`; the gate re-checks the record against the artifact, the build output and the
 program's addresses, so a typed status is never enough. These checks stop shortcuts and mistakes,
 not deliberate forgery of files in your own run — the honest use of the gate is yours. `not-applicable` needs a `deployment_rationale` and is refused
