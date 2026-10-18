@@ -170,6 +170,25 @@ def load_impact_helper(name):
     return module
 
 
+_SELECTORS = None
+
+
+def load_selectors():
+    """Load the bundled selector helper once per process.
+
+    It owns the runtime-bytecode primitives as well: hex coercion, the metadata boundary and
+    the opcode walker. One copy of those rules means the dispatcher reading and the bytecode
+    comparison can never disagree about where a runtime's code ends. The file is named
+    evm_selectors.py, not selectors.py: a module called `selectors` in this directory shadows
+    the standard library module of that name, which subprocess imports, and every script here
+    would stop starting.
+    """
+    global _SELECTORS
+    if _SELECTORS is None:
+        _SELECTORS = load_impact_helper('evm_selectors')
+    return _SELECTORS
+
+
 def impact_plan(repo=None, solc=None, out=None, scope=None):
     """Create non-proving source graph and backwards risk queue for a pinned checkout.
 
@@ -7983,24 +8002,12 @@ OP_DELEGATECALL = 0xf4
 
 
 def _code_bytes(code):
-    if isinstance(code, (bytes, bytearray)):
-        return bytes(code)
-    text = code[2:] if code.startswith('0x') else code
-    try:
-        return bytes.fromhex(text)
-    except ValueError:
-        raise ValueError('bytecode is not hex - an unlinked library placeholder with no '
-                         'linkReferences in the artifact, or not bytecode at all')
+    return load_selectors().code_bytes(code)
 
 
 def evm_instructions(raw):
     """Yield (pc, opcode, push operand), stepping over PUSH data so it never reads as code."""
-    pc = 0
-    while pc < len(raw):
-        op = raw[pc]
-        width = op - 0x5f if 0x60 <= op <= 0x7f else 0
-        yield pc, op, raw[pc + 1:pc + 1 + width]
-        pc += 1 + width
+    return load_selectors().instructions(raw)
 
 
 # Instructions after which execution never falls through: STOP, JUMP, RETURN, REVERT, INVALID,
@@ -8131,31 +8138,15 @@ def looks_like_minimal_clone(code_hex):
     return any(raw.startswith(bytes.fromhex(prefix)) for _, prefix, _, _ in CLONE_FORMS)
 
 
-# solc appends a CBOR map then its own 2-byte big-endian length. The map starts with a
-# CBOR major-type-5 header (0xa1..0xaf for 1..15 pairs) and names its hash algorithm.
-METADATA_MARKERS = (b'solc', b'ipfs', b'bzzr0', b'bzzr1')
-METADATA_MIN_BYTES = 0x20
-
-
 def strip_metadata(code_hex):
     """Remove the trailing solc CBOR metadata, and only if the tail really is that.
 
     Stripping on the trailing length alone makes unrelated bytecodes compare equal: any two
     runtimes ending in the same small number would have their differing bodies cut away. So the
-    tail must look like solc metadata before a single byte is removed.
+    tail must look like solc metadata before a single byte is removed. The rules that decide
+    that live in evm_selectors.py, which reads the same boundary when it walks the dispatcher.
     """
-    raw = _code_bytes(code_hex)
-    if len(raw) < METADATA_MIN_BYTES + 2:
-        return raw, 0
-    length = int.from_bytes(raw[-2:], 'big')
-    if not METADATA_MIN_BYTES <= length <= len(raw) - 2:
-        return raw, 0
-    blob = raw[-(length + 2):-2]
-    if not blob or not 0xa1 <= blob[0] <= 0xaf:
-        return raw, 0
-    if not any(marker in blob for marker in METADATA_MARKERS):
-        return raw, 0
-    return raw[:-(length + 2)], length + 2
+    return load_selectors().strip_metadata(code_hex)
 
 
 def _reference_ranges(refs, kind):
@@ -8393,8 +8384,13 @@ def read_artifact_details(path):
 
 
 def _with_vyper(data, evm, runtime, details):
-    """Add the Vyper footer of the artifact's creation code, when it has one, to its details."""
-    details.update(vyper=None, appended_immutables=None)
+    """Add the Vyper footer of the artifact's creation code, when it has one, and its ABI.
+
+    The ABI travels with the bytecode so the selector lead can say which deployed selectors
+    this build declares. It is read by a person; no comparison depends on it.
+    """
+    details.update(vyper=None, appended_immutables=None,
+                   abi=data.get('abi') if isinstance(data.get('abi'), list) else None)
     if not runtime:
         return details
     for value in (data.get('bytecode'), evm.get('bytecode')):
@@ -8618,6 +8614,109 @@ def verify_solana_program(rpc, address, artifact=None, block='latest', opener=No
     return finish()
 
 
+# The selector lead is written for a person to read. A selector list says what a dispatcher
+# compares calldata against: not that a function is reachable, not what it does, and nothing
+# about deployment status. Only verify-deployment's comparison sets deployment_status, and
+# nothing here may touch it or the comparison object.
+SELECTOR_EVIDENCE_DIR = 'selectors'
+SELECTOR_TOOL = 'bounty.py selectors'
+PROXY_SELECTOR_NOTE = (
+    'this address is a proxy: its own runtime forwards calls, so it dispatches almost nothing '
+    'of what a caller can reach. The selectors that matter are the implementation\'s - reported '
+    'under implementation when it was resolved - and an admin can point the proxy at a '
+    'different implementation at any later block')
+
+
+def selector_block(code_hex, abi=None, known=None, read_at=None):
+    """What one runtime dispatches, named where a signature matches, diffed against an ABI.
+
+    `read_at` says which runtime this is, because a proxy and its implementation are two.
+    `abi` is a build's ABI array and `known` a {selector: signature} map from signatures the
+    hunter supplied; both name selectors and both take part in the diff. Names from the
+    built-in table are hypotheses - a known signature hashes to the same four bytes - and the
+    unknown ones come first because a selector no signature explains is the one to read next.
+    """
+    helper = load_selectors()
+    found = helper.extract_selectors(code_hex)
+    supplied = dict(known or {})
+    if abi:
+        supplied.update(helper.selectors_from_abi(abi))
+    items = helper.name_selectors(found['selectors'], supplied)
+    unknown = [item['selector'] for item in items if 'name' not in item]
+    named = [item for item in items if 'name' in item]
+    block = {'read_at': read_at, 'onchain_count': found['count'],
+             'dispatcher': found['dispatcher'], 'has_fallback': found['has_fallback'],
+             'has_receive': found['has_receive'],
+             # unknown first: a selector no signature explains is the one to read next
+             'selectors': unknown + [item['selector'] for item in named],
+             'unknown': unknown, 'named': named,
+             'secondary_dispatch': found['secondary_dispatch'],
+             'notes': list(found['notes']), 'notice': found['notice']}
+    if supplied:
+        diff = helper.diff_selectors(found['selectors'], supplied)
+        block['only_onchain'] = helper.name_selectors(diff['only_onchain'])
+        block['only_known'] = [{'selector': selector, 'name': supplied[selector]}
+                               for selector in diff['only_known']]
+        block['counts'] = diff['counts']
+        if diff['only_onchain']:
+            block['notes'].append(
+                str(len(diff['only_onchain'])) + ' selector(s) the dispatcher compares against '
+                'are in no supplied ABI or signature list. That is a lead to read, not a '
+                'finding: an unpublished name, an inherited helper, a build that differs from '
+                'the one passed here, or an entry point nobody documented')
+        if diff['only_known']:
+            block['notes'].append(
+                str(len(diff['only_known'])) + ' declared selector(s) were not found in this '
+                'runtime: a different build, a declaration that was never deployed, or a '
+                'dispatch shape this extraction cannot read')
+    return block
+
+
+def _deployment_selectors(result, runtimes, details):
+    """The selector lead verify-deployment attaches to its result, per runtime it already read.
+
+    No extra RPC call: the runtimes are the ones the comparison itself fetched. The ABI diff is
+    attached to whichever runtime the artifact was compared against, because that is the code
+    the ABI is supposed to describe.
+    """
+    abi = (details or {}).get('abi')
+    at_implementation = result.get('compared') == 'implementation'
+    lead = selector_block(runtimes['address'], abi=None if at_implementation else abi,
+                          read_at='address runtime')
+    if result.get('proxy'):
+        lead['notes'].insert(0, PROXY_SELECTOR_NOTE)
+    implementation = runtimes.get('implementation')
+    if implementation and len(_code_bytes(implementation)):
+        block = selector_block(implementation, abi=abi if at_implementation else None,
+                               read_at='implementation runtime')
+        block['address'] = (result.get('proxy_implementation') or {}).get('address')
+        lead['implementation'] = block
+    return lead
+
+
+def pin_block(rpc, block, opener=None):
+    """(chain id as the node reports it, the block parameter every read of one run must use).
+
+    A tag moves between calls, so it is resolved to the number it meant when the code was read,
+    and that number is what the evidence records.
+    """
+    chain_id = rpc_call(rpc, 'eth_chainId', [], opener)
+    tip = rpc_call(rpc, 'eth_blockNumber', [], opener)
+    if block == 'latest':
+        pinned = tip  # pin the tip once, so every read below sees one block
+    elif isinstance(block, str) and block.isdigit():
+        pinned = hex(int(block))
+    elif block in BLOCK_TAGS:
+        header = rpc_call(rpc, 'eth_getBlockByNumber', [block, False], opener)
+        number = header.get('number') if isinstance(header, dict) else None
+        if not isinstance(number, str) or not re.fullmatch(r'0x[0-9a-fA-F]+', number):
+            raise ValueError(f'the node returned no block number for tag {block}')
+        pinned = number
+    else:
+        pinned = block
+    return chain_id, pinned
+
+
 def _stored_code(code_hex):
     """The runtime a comparison read, kept so the submission gate can rerun the comparison."""
     raw = _code_bytes(code_hex)
@@ -8634,21 +8733,7 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
                          'program id')
     run = _deployment_run(run)
     details = read_artifact_details(artifact) if artifact else None
-    chain_id = rpc_call(rpc, 'eth_chainId', [], opener)
-    tip = rpc_call(rpc, 'eth_blockNumber', [], opener)
-    if block == 'latest':
-        pinned = tip  # pin the tip once, so every read below sees one block
-    elif isinstance(block, str) and block.isdigit():
-        pinned = hex(int(block))
-    elif block in BLOCK_TAGS:
-        # A tag moves; the evidence records the number it meant when the code was read.
-        header = rpc_call(rpc, 'eth_getBlockByNumber', [block, False], opener)
-        number = header.get('number') if isinstance(header, dict) else None
-        if not isinstance(number, str) or not re.fullmatch(r'0x[0-9a-fA-F]+', number):
-            raise ValueError(f'the node returned no block number for tag {block}')
-        pinned = number
-    else:
-        pinned = block
+    chain_id, pinned = pin_block(rpc, block, opener)
     code = rpc_call(rpc, 'eth_getCode', [address, pinned], opener) or '0x'
     result = {'address': address, 'chain_id': int(chain_id, 16),
               'block': int(pinned, 16) if isinstance(pinned, str) and pinned.startswith('0x')
@@ -8657,11 +8742,19 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
               'runtime_code_keccak256': keccak.keccak_hex(bytes.fromhex(code[2:]))
                                         if len(code) > 2 else None,
               'proxy': {}, 'deployment_status': 'unknown'}
+    # The runtimes this run reads, kept so the selector lead costs no further RPC call.
+    runtimes = {'address': code}
 
     def finish():
         kinds = [kind for kind in PROXY_KINDS if kind in result['proxy']]
         result['proxy_kind'] = kinds[0] if kinds else 'none'
         result['implementation_address'] = (result.get('proxy_implementation') or {}).get('address')
+        # A reading aid: which selectors the deployed dispatcher compares against, and which of
+        # them the artifact's ABI does not declare. It decides nothing - deployment_status and
+        # comparison are set only by the bytecode comparison, and the submission gate reads
+        # those and the stored code, never this.
+        if result['runtime_code_bytes']:
+            result['selectors'] = _deployment_selectors(result, runtimes, details)
         if run:
             result['evidence_file'] = str(record_deployment(run, result))
         return result
@@ -8785,6 +8878,7 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
         result['proxy_resolution_errors'] = resolution_errors
     if implementation:
         impl_code = code_at(implementation)
+        runtimes['implementation'] = impl_code
         result['proxy_implementation'] = {
             'address': implementation,
             'runtime_code_bytes': max(0, (len(impl_code) - 2) // 2),
@@ -9222,6 +9316,99 @@ def solc_bugs(repo=None, versions=None, opener=None):
             'notes': notes, 'source': SOLC_BUGS_BY_VERSION,
             'notice': 'A listed bug is a lead, not a finding: establish that the affected feature '
                       'is used on a reachable path, and that this version built the DEPLOYED code.'}
+
+
+def _runtime_from_code(value):
+    """(runtime hex, where it came from) for --code: inline hex, a file of hex, or an artifact.
+
+    A 0x-prefixed argument is bytecode, always: a runtime is longer than any file name, and
+    asking the filesystem about it is what raises "file name too long".
+    """
+    text = str(value).strip()
+    if text.startswith('0x'):
+        return ''.join(text.split()), {'read_from': 'bytecode argument'}
+    path = Path(text)
+    try:
+        exists = path.is_file()
+    except OSError:
+        exists = False
+    if exists:
+        text = path.read_text(encoding='utf-8').strip()
+        if text.startswith('{'):
+            details = read_artifact_details(path)
+            return details['code'], {'read_from': 'build artifact', 'path': str(path.resolve()),
+                                     'field': details['field']}
+        return ''.join(text.split()), {'read_from': 'bytecode file', 'path': str(path.resolve())}
+    return ''.join(str(value).split()), {'read_from': 'bytecode argument'}
+
+
+def _signature_lines(path):
+    """Canonical signatures from a file, one per line; blank lines and # comments are skipped."""
+    text = Path(path).read_text(encoding='utf-8')
+    return [line.strip() for line in text.splitlines()
+            if line.strip() and not line.strip().startswith('#')]
+
+
+def record_selectors(run, result, stem):
+    """Save a selector lead in the run. A lead carries no digest: no gate may depend on it."""
+    folder = run / SELECTOR_EVIDENCE_DIR
+    if folder.is_symlink():
+        raise ValueError('the run\'s selectors/ folder must not be a symlink')
+    folder.mkdir(mode=0o700, exist_ok=True)
+    path = folder / (stem + '.json')
+    if path.is_symlink():
+        raise ValueError(f'{path} is a symlink; refusing to write through it')
+    dump(path, dict(result, recorded_at=datetime.now(timezone.utc).isoformat(),
+                    tool=SELECTOR_TOOL, skill_version=skill_version()))
+    return path
+
+
+def selectors_report(rpc=None, address=None, code=None, abi=None, signatures=None,
+                     block='latest', run=None, opener=None):
+    """Read the selectors a runtime dispatches, from a node or from bytecode already in hand.
+
+    From a node this is one read-only eth_getCode at the same pinned block verify-deployment
+    uses, and nothing else - no call, no transaction. The answer is a lead: it says what the
+    dispatcher compares calldata against, not what is reachable, not what the code does, and
+    it sets no deployment status. Deployed code that no published source accounts for is the
+    reason this exists; reading it is still the hunter's job.
+    """
+    if bool(rpc) != bool(address):
+        raise ValueError('--rpc and --address go together')
+    if bool(address) == bool(code):
+        raise ValueError('pass --rpc with --address, or --code, but not both')
+    run = _deployment_run(run) if run else None
+    keccak = load_keccak()
+    helper = load_selectors()
+    known = {}
+    for path in (abi or []):
+        known.update(helper.selectors_from_abi(read_json(path)))
+    if signatures:
+        known.update(helper.selectors_from_signatures(_signature_lines(signatures)))
+    if address:
+        if not re.fullmatch(r'0x[0-9a-fA-F]{40}', address):
+            raise ValueError('--address must be 0x followed by 40 hex characters')
+        chain_id, pinned = pin_block(rpc, block, opener)
+        runtime = rpc_call(rpc, 'eth_getCode', [address, pinned], opener) or '0x'
+        source = {'read_from': 'eth_getCode', 'address': address, 'chain_id': int(chain_id, 16),
+                  'block': int(pinned, 16) if isinstance(pinned, str)
+                           and pinned.startswith('0x') else pinned}
+        stem = _evidence_stem(address)
+    else:
+        runtime, source = _runtime_from_code(code)
+        stem = None
+    raw = _code_bytes(runtime)
+    source.update(runtime_code_bytes=len(raw),
+                  runtime_code_keccak256=keccak.keccak_hex(raw) if raw else None)
+    if not raw:
+        source['empty'] = ('no runtime code: an address with no contract at this block, an '
+                           'artifact that holds creation bytecode only, or an empty file')
+    result = dict(selector_block(runtime, known=known, read_at=source['read_from']),
+                  source=source, known_signatures_supplied=len(known))
+    if run:
+        result['lead_file'] = str(record_selectors(
+            run, result, stem or 'code-' + keccak.keccak_hex(raw)[2:18]))
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -9913,6 +10100,25 @@ def build_parser():
                      help='private run directory: also save the full result as '
                           'deployments/<address>.json, the evidence the submission gate reads')
 
+    sel = sub.add_parser('selectors',
+                         help='read the function selectors a deployed runtime dispatches (a lead)')
+    sel.add_argument('--rpc', default=None, help='read-only JSON-RPC endpoint, with --address')
+    sel.add_argument('--address', default=None,
+                     help='EVM contract address; read with one eth_getCode at --block')
+    sel.add_argument('--code', default=None,
+                     help='bytecode you already have instead of an RPC read: 0x-hex, a file of '
+                          'hex, or a build artifact holding deployedBytecode')
+    sel.add_argument('--abi', action='append', default=None,
+                     help='build artifact or plain ABI JSON: names selectors and diffs against '
+                          'the deployed set; repeatable')
+    sel.add_argument('--signatures', default=None,
+                     help='file of canonical signatures, one per line, e.g. '
+                          'transfer(address,uint256)')
+    sel.add_argument('--block', default='latest')
+    sel.add_argument('--run', default=None,
+                     help='private run directory: also save the lead as '
+                          'selectors/<address>.json')
+
     bugs = sub.add_parser('solc-bugs',
                           help="check compiler versions against Solidity's published bug list")
     bugs.add_argument('--repo', default=None)
@@ -10069,6 +10275,10 @@ def main(argv=None):
                 print(json.dumps(backtest_seal(args.case, args.run), indent=2))
             else:
                 print(json.dumps(backtest_score(args.case), indent=2))
+            return 0
+        if args.action == 'selectors':
+            print(json.dumps(selectors_report(args.rpc, args.address, args.code, args.abi,
+                                              args.signatures, args.block, args.run), indent=2))
             return 0
         if args.action == 'solc-bugs':
             print(json.dumps(solc_bugs(args.repo, args.version), indent=2))
