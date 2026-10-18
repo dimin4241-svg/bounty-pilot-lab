@@ -55,49 +55,65 @@ A passed gate is not proof of an exploit or a payout. See
 
 ## Quick start
 
-### 1. Give this to your coding agent
+### 1. Install it
 
-Replace `OWNER/TARGET` with the repository you want to review:
+**This repository is private**, so an agent cannot fetch it from a URL on its own — it needs your
+GitHub access. Three routes, in order of convenience:
 
-```text
-Install https://github.com/dimin4241-svg/bounty-pilot
-and run Bounty Pilot on https://github.com/OWNER/TARGET.
-Read skills/bounty-pilot/SKILL.md and follow it.
-Keep findings private. Explain results in English.
-```
-
-Claude Code can install it as a plugin instead:
+**As a Claude Code plugin** (works when your own `git` can already clone this repository — check with
+`git ls-remote https://github.com/dimin4241-svg/bounty-pilot`; if that asks for credentials, run
+`gh auth login` first):
 
 ```text
 /plugin marketplace add dimin4241-svg/bounty-pilot
 /plugin install bounty-pilot@bounty-pilot
 ```
 
-### 2. Reuse it for the next project
-
-```text
-Bounty Pilot: https://github.com/OWNER/TARGET
-```
-
-A bounty program URL is useful, but optional for starting source review. Without verified program rules or deployment information, submission eligibility remains **unknown**.
-
-<details>
-<summary><strong>Manual setup or an agent without skill auto-discovery</strong></summary>
-
-Clone this repository and ask the agent to read the skill directly:
+**By copying the skill** into the agent's skills directory — the most portable route, and the one to
+use when the plugin command cannot reach a private repository:
 
 ```sh
 git clone https://github.com/dimin4241-svg/bounty-pilot.git
+mkdir -p ~/.claude/skills
+rm -rf ~/.claude/skills/bounty-pilot
+cp -r bounty-pilot/skills/bounty-pilot ~/.claude/skills/
 ```
+
+The skill is self-contained (about 2 MB: `SKILL.md`, `references/`, `scripts/`, `templates/`) and
+needs nothing but Python 3.9+ and Git. **Install by copying from git, and never edit the installed
+copy** — it is a build artifact that no reinstall preserves and every session shares.
+
+**Without installing anything**, point the agent at the file:
 
 ```text
 Read /absolute/path/to/bounty-pilot/skills/bounty-pilot/SKILL.md
 and use it to review my target repository.
 ```
 
-Alternatively, copy `skills/bounty-pilot` into your agent's supported skills directory. Review changes before replacing an existing installation. Installation locations depend on the client and version.
+In a cloud or container session the filesystem is discarded when the session ends, so the install
+has to happen per session: attach this repository to the session alongside the target, or install it
+from a `SessionStart` hook.
 
-</details>
+Check the install took: `cat ~/.claude/skills/bounty-pilot/VERSION` should match this repository's
+`VERSION`, and `python3 -m unittest discover -s tests` in the clone should be green.
+
+### 2. Run it
+
+Replace `OWNER/TARGET` with the repository you want to review:
+
+```text
+Run Bounty Pilot on https://github.com/OWNER/TARGET.
+Follow skills/bounty-pilot/SKILL.md.
+Keep findings private. Explain results in English.
+```
+
+Then, for the next project:
+
+```text
+Bounty Pilot: https://github.com/OWNER/TARGET
+```
+
+A bounty program URL is useful, but optional for starting source review. Without verified program rules or deployment information, submission eligibility remains **unknown**.
 
 ## What you get
 

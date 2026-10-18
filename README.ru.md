@@ -41,51 +41,67 @@ Rust-релея при проверке только Solidity). Это конт�
 подтверждение эксплойта или обещание выплаты. Подробности:
 [Evidence-First](skills/bounty-pilot/references/evidence-first.md).
 
-## Запуск за минуту
+## Установка и запуск
 
-**1. Отправь агенту команду**, заменив `OWNER/TARGET` на нужный проект:
+### 1. Установка
 
-```text
-Install https://github.com/dimin4241-svg/bounty-pilot
-and run Bounty Pilot on https://github.com/OWNER/TARGET.
-Read skills/bounty-pilot/SKILL.md and follow it.
-Keep findings private. Explain results in Russian.
-```
+**Репозиторий приватный**, поэтому агент не скачает его по ссылке сам — нужен твой доступ к GitHub.
+Три способа, от простого к надёжному:
 
-В Claude Code можно поставить как плагин:
+**Плагином в Claude Code** — работает, если твой `git` уже умеет клонировать этот репозиторий
+(проверка: `git ls-remote https://github.com/dimin4241-svg/bounty-pilot`; если спрашивает пароль,
+сначала `gh auth login`):
 
 ```text
 /plugin marketplace add dimin4241-svg/bounty-pilot
 /plugin install bounty-pilot@bounty-pilot
 ```
 
-**2. После установки для следующего проекта достаточно:**
-
-```text
-Bounty Pilot: https://github.com/OWNER/TARGET
-```
-
-Можно приложить ссылку на bounty-программу. Без неё анализ исходников начнётся, но пригодность находки для подачи и выплаты останется неподтверждённой.
-
-<details>
-<summary><strong>Если агент не умеет устанавливать skills автоматически</strong></summary>
-
-Склонируй репозиторий:
+**Копированием каталога навыка** — самый переносимый способ и единственный, если команда плагина не
+достаёт до приватного репозитория:
 
 ```sh
 git clone https://github.com/dimin4241-svg/bounty-pilot.git
+mkdir -p ~/.claude/skills
+rm -rf ~/.claude/skills/bounty-pilot
+cp -r bounty-pilot/skills/bounty-pilot ~/.claude/skills/
 ```
 
-Затем попроси агента прочитать файл:
+Навык самодостаточен (около 2 МБ: `SKILL.md`, `references/`, `scripts/`, `templates/`) и требует
+только Python 3.9+ и Git. **Ставить нужно копированием из git, а установленную копию не править** —
+это артефакт сборки: он общий для всех сессий и не выживает переустановку.
+
+**Без установки вообще** — просто дай агенту путь к файлу:
 
 ```text
 Прочитай /полный/путь/bounty-pilot/skills/bounty-pilot/SKILL.md
 и используй этот навык для аудита моего проекта.
 ```
 
-Либо скопируй каталог `skills/bounty-pilot` в поддерживаемую клиентом папку навыков. Точный путь зависит от агента и версии. Перед заменой существующей установки просмотри изменения.
+В облачной или контейнерной сессии файловая система стирается вместе с сессией, поэтому установку
+придётся делать каждый раз: подключи этот репозиторий к сессии рядом с целевым или ставь навык из
+хука `SessionStart`.
 
-</details>
+Проверка, что установка прошла: `cat ~/.claude/skills/bounty-pilot/VERSION` должен совпадать с
+`VERSION` в репозитории, а `python3 -m unittest discover -s tests` в клоне — быть зелёным.
+
+### 2. Запуск
+
+Замени `OWNER/TARGET` на нужный проект:
+
+```text
+Запусти Bounty Pilot на https://github.com/OWNER/TARGET.
+Следуй skills/bounty-pilot/SKILL.md.
+Находки держи приватными. Объясняй результаты по-русски.
+```
+
+Дальше для следующего проекта достаточно:
+
+```text
+Bounty Pilot: https://github.com/OWNER/TARGET
+```
+
+Можно приложить ссылку на bounty-программу. Без неё анализ исходников начнётся, но пригодность находки для подачи и выплаты останется неподтверждённой.
 
 ## Что он делает
 
