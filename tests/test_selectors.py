@@ -169,6 +169,14 @@ class DispatchShapeTests(unittest.TestCase):
         self.assertEqual(found['dispatcher'], 'unknown')
         self.assertTrue(any('no dispatch comparison' in note for note in found['notes']))
 
+    def test_a_forwarder_is_told_apart_from_a_contract_with_no_entry_points(self):
+        # The EIP-1167 clone runtime: it dispatches nothing and delegates everything.
+        clone = ('0x363d3d373d3d3d363d73' + '33' * 20 + '5af43d82803e903d91602b57fd5bf3')
+        found = selectors.extract_selectors(clone)
+        self.assertEqual(found['selectors'], [])
+        self.assertEqual(found['dispatcher'], 'unknown')
+        self.assertTrue(any('DELEGATECALL' in note for note in found['notes']), found['notes'])
+
     def test_empty_code_is_reported_rather_than_guessed(self):
         found = selectors.extract_selectors('0x')
         self.assertEqual(found['selectors'], [])

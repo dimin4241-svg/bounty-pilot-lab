@@ -104,7 +104,7 @@ OP_CALLDATALOAD, OP_CALLDATASIZE, OP_CALLVALUE, OP_POP = 0x35, 0x36, 0x34, 0x50
 OP_AND, OP_OR = 0x16, 0x17
 OP_JUMP, OP_JUMPI, OP_JUMPDEST = 0x56, 0x57, 0x5b
 OP_CODECOPY = 0x39
-OP_REVERT, OP_INVALID = 0xfd, 0xfe
+OP_REVERT, OP_INVALID, OP_DELEGATECALL = 0xfd, 0xfe, 0xf4
 # How a dispatcher tests the selector it loaded. solc's leaves use EQ; via_ir's last leaf
 # subtracts and jumps when the difference is non-zero; Vyper asks the same question with XOR,
 # sometimes negated by ISZERO. Its optimised binary search compares against a pivot with GT (or
@@ -510,6 +510,13 @@ def extract_selectors(runtime_hex):
         notes.append('no dispatch comparison was recognised: a runtime with no external '
                      'functions (a forwarder, a library, a minimal clone), or a dispatcher '
                      'this does not read')
+        if any(op == OP_DELEGATECALL for _, op, _ in ops):
+            # Most proxies look exactly like this. Saying so turns an empty list into the
+            # right next step instead of "this contract has no entry points".
+            notes.append('the code section contains a DELEGATECALL and dispatches nothing '
+                         'itself, which is what a proxy or forwarder looks like: the selectors '
+                         'a caller reaches are the implementation\'s. Resolve it with '
+                         'verify-deployment and read that runtime instead')
     has_fallback, has_receive = _tail_functions(ops, by_pc)
     if has_fallback is None:
         notes.append('the path taken by calldata that matches no selector was not recognised, '
