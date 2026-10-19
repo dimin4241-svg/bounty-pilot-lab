@@ -282,6 +282,65 @@ an omission is exploitable, name the dispatch arm that executes it. The inverse 
 enum entry the executor dispatches but no guard mentions, and an enum entry deleted at HEAD that the
 deployed revision still dispatches (see §7).
 
+## 11. The delta is where every tool already looks
+
+Sections 1-10 are places review does not look. This one is about where *this skill* does not look,
+measured across a run of consecutive targets, because the default aim is itself a heuristic every
+automated reviewer shares.
+
+**Hunting the post-audit delta is diff-driven, and so is every scanner.** It is necessary and it is
+not where the surviving bugs are. The findings nobody has is usually in code that **did not change
+and was audited**, because everyone — auditors included — assumes it is settled. One hunter's only
+paid finding across that stretch was in a codebase audited by a well-known firm, and not in a delta.
+So aim the delta pass, then deliberately aim a second pass at the *oldest untouched* in-scope file
+that moves value.
+
+Three axes stayed unused across every target in that run, and each is also a blind spot of
+code-reading review:
+
+1. **Profit, in numbers, before reading code.** Programs increasingly demand it in writing — one
+   requires "net impact after subtracting required capital, fees, repayments" and states that "gross
+   borrowed funds are not profit" — which is exactly the arithmetic a code-only sweep never does.
+   Write the attacker's P&L for the mechanism first; if no parameterisation clears zero, do not read
+   the contract. And when a defect *is* real, the measured number is what makes it submittable:
+   analysis correctly concluded "no funds are frozen" twice on one mechanism, but only an executed
+   harness produced the figure — **4.76% of stake lost per subsequent participant** — that turned a
+   shrug into a report.
+2. **State you can prepare now so somebody else's later call behaves differently.** The question is
+   not "what does this function do" but "which persistent mapping can I write cheaply, and who reads
+   it afterwards". Applied once in that run, to a relayer's chained-reference storage, it produced
+   the only genuinely live primitive found; never repeated, though every target had persistent
+   per-user mappings that qualified. Enumerate them and ask the question of each.
+3. **Protocol math under load, not math in a diff.** Reading a pricing or interest-rate delta is not
+   testing it. Where the target ships `*.invariant.t.sol` or a `disabled_tests/fuzzing/` directory,
+   that harness is free infrastructure — one protocol shipped a 667 KB fuzz corpus the hunt never
+   ran. Measure which in-scope contracts that corpus covers: the team's own uncovered set is a
+   second, independent gap map alongside the audit one, and on that protocol it was the zappers and
+   position managers that had **zero** invariant coverage while an out-of-scope optimizer had 116
+   references.
+
+**And verify in-body gates mechanically, never by modifier.** A regex over modifiers mis-flags both
+ways. One contract's six external pause functions carried **no modifier at all** and called an
+internal `_checkOwner()` as the first statement of each body; a modifier scan reports six unguarded
+emergency entry points. Parse each `external` body and assert the check is present:
+
+```sh
+python3 - <<'EOF'
+import re, io
+s = io.open("Target.sol", encoding="utf-8").read()
+fns = list(re.finditer(r'function\s+(\w+)\s*\([^)]*\)\s*external[^{]*\{', s))
+for i, m in enumerate(fns):
+    body = s[m.end(): fns[i+1].start() if i+1 < len(fns) else len(s)]
+    print(m.group(1), "_checkOwner" in body)
+EOF
+```
+
+The inverse trap is §5's: a guard that *looks* live but is never called. A contract overriding OpenZeppelin 4.x's
+`_beforeTokenTransfer` while the project's default import is 5.x — where that hook no longer exists
+— appears to be a dead blacklist on a live bridged token. Resolve the **parent's** import, not the
+project default: in that case a vendored dependency pinned `@openzeppelin/contracts@4.8.3` itself, so
+the hook was live and the finding was nothing. The versioned remapping in `foundry.toml` is the tell.
+
 ## Recording a clean result
 
 For each item above, write the surface, the method, and the readings — not "checked". A closed

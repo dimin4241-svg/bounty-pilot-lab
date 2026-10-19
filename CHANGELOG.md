@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.21.0
+
+### Selection and duplicates, after five consecutive zero-yield targets
+
+No new command. Five targets in a row produced real defects and nothing payable, and the post-mortem
+put the cause in Stage 0 and Stage 1 rather than in the hunt. Four corrections, each from a specific
+run.
+
+- **Churn is not risk** (`references/targets.md`). `score-target`'s post-audit churn share was being
+  read as a bleeding edge. One lending protocol showed **283 commits to the in-scope tree since its
+  newest audit** — and every commit subject was `feat: harden…` / `fix: …edge cases`, each with its
+  reasoning in the message and a matching regression test. A hardening campaign yields the same
+  number as a bleeding edge and is the opposite target. Read the commit subjects; rank on **signs of
+  haste** (a product shipped with no audit of its own, deployed bytecode that does not match the
+  repository, an absent invariant suite) rather than on commit volume.
+
+- **The target's own adversarial tests are a duplicate source, and a selection signal**
+  (`references/dup-map.md` source 2, `targets.md`). One `find | grep -iE "poc|exploit|attack|regression"`
+  returned **29 files** covering by name the exact surfaces a day of hunting had probed, and one
+  header was a finished verdict in this skill's own format — fixed fork block, live address, graded
+  `Low`, with the reasoning. Run it beside `pdftotext` at Stage 1; a `*PoC*` or `P_T<n>*` filename
+  is evidence of a previously reported issue even when no audit mentions it.
+
+- **Absence claims about documents need the same standard as absence claims about code**
+  (`references/intake.md`). Two runs were steered badly: "no audit in the repository" when the
+  `## Audits` table was in `README.md` with an **Acknowledged** finding on the very lane under
+  investigation, and "no bounty program" when the program sat at the *sibling* of the page already
+  fetched. Exhaust and name `sitemap.xml`, `llms.txt`, the **`.md` twin** (which prints collapsed
+  `<details>` blocks a rendered page hides — one hid an entire smart-contract known-issues list),
+  sibling security paths, and the vendor's `<project>-audits` repository. **The scope page is usually
+  not the rewards page**: one program's bounty page listed no contracts at all while the
+  authoritative 21-address list lived elsewhere and contained two contracts absent from every audit,
+  every repository and the project's own API.
+
+- **A known issue that asserts a bound is an invitation to test the bound**
+  (`references/dup-map.md`). Published text conceding an accounting defect while claiming "no
+  principal is lost or frozen, and any voucher can withdraw their full stake at any time" draws the
+  eligibility line inside its own sentence. Declare falsification criteria first, then run them. In
+  that run the bound held — and the harness instead measured a different actor's loss the sentence
+  never mentions, at **4.76% of stake per subsequent participant**.
+
+- **New `references/blind-spots.md` §11 — the delta is where every tool already looks.** Hunting the
+  post-audit delta is diff-driven, like every scanner; the surviving bugs are usually in audited code
+  that did not change. Also records the three axes that went unused across the whole run — profit
+  arithmetic before reading code, state prepared now for somebody else's later call, and protocol
+  math under load using the target's own shipped fuzz harness (one protocol's 667 KB corpus was never
+  run, and measuring its coverage gave a second gap map in which the in-scope zappers had **zero**
+  invariant coverage while an out-of-scope optimizer had 116 references) — plus the mechanical way to
+  verify in-body access checks, since a modifier scan reported six unguarded emergency functions that
+  each call `_checkOwner()` as their first statement.
+
+- **Practical:** Sourcify v2 (`/server/v2/contract/<chainId>/<address>?fields=sources,compilation`)
+  answers keyless where an explorer API is blocked, and **normalise line endings before diffing
+  deployed source against an audit snapshot** — without `tr -d '\r'` on both sides `diff` reports one
+  whole-file hunk and the real delta is invisible. That one step turned an unreadable 2,341-line diff
+  into 5 hunks, +63/−14.
+
+- **Release fixes.** The `tr -d` above and in `references/intake.md` held a literal carriage return
+  between the quotes — invisible when rendered, read as `tr -d ''`, which deletes nothing — and is
+  now the escape `'\r'`. `.claude-plugin/plugin.json` was still 0.20.0. The skill `description` now
+  names Substrate/FRAME and dApp web frontends and backends, both covered since 0.17–0.18 but absent
+  from the text that decides when the skill loads. New `tests/test_release.py` asserts the three
+  version numbers agree, the changelog leads with the current one, shipped text carries no control
+  bytes and the description fits the frontmatter limit; it fails on the original 0.21.0 tree for both
+  defects.
+
 ## 0.20.0
 
 ### Deployed code with no source: read its functions out of the bytecode

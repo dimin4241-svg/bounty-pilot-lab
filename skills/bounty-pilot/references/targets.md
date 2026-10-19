@@ -10,6 +10,16 @@ code returns something. Spend an hour here.
   measurable: `bounty.py score-target` reports the share of in-scope lines churned since the audited
   revision. A protocol whose scope is identical to its audited revision is a poor target no matter
   how large the bounty.
+  **But churn measures activity, not risk, and on a well-run team it inverts.** Read the commit
+  *subjects* over that delta before believing the number. In a live run a lending protocol showed
+  **283 commits to the in-scope tree since its newest audit** — the thesis that selected it — and
+  every one read `feat: harden…`, `fix: …edge cases`, `Feat: Removing pruning logic for greater
+  position scrutiny`, each with its reasoning in the message and a matching regression test. Every
+  guard the passes went looking for was already there. A hardening campaign produces exactly the
+  same churn figure as a bleeding edge and is the opposite target. What actually predicts risk is
+  **signs of haste**: a product shipped with no audit of its own while the repository ships many for
+  other products, deployed bytecode that does not match the repository, an absent invariant suite,
+  a deployment whose source was never published.
 - **The custom part is the scope.** A fork's own deviation, the chain-specific adapters, the glue
   between two systems. Vanilla upstream code is audited, public and in every known-issues list.
 - **The rubric prices paths, not just severities.** Read the payout table for per-path structure
@@ -62,6 +72,18 @@ code returns something. Spend an hour here.
   condition and measure both on chain: one pool carrying a non-zero slash armed a code path, but
   with no sub-pool actually diluted the realisable loss was zero across all 207 live pools, which
   moves the finding from live to latent and under the second clause.
+- **A clause excluding every issue, closed PR, prior contest and audit.** Quote this one into
+  `program.json` verbatim when present, because it is near-fatal and it is easy to read past. It
+  removes the *deployed-versus-main divergence* — normally the best gap on a mature target — since
+  any fix that landed on main arrives through a PR, and a `fix:` PR documents its own bug. In a live
+  run a perps protocol carried exactly that clause plus "keepers are a trusted role" plus no
+  rounding errors and no design choices; the measured gap was real and every single thing in it was
+  excluded by one of those four. Rank a modest Critical behind a narrow exclusion list above a $1M
+  Critical behind a wall of carve-outs.
+- **The team runs its own red team, and ships the evidence.** Before anything else, list the
+  target's own adversarial tests (see `dup-map.md`). A suite of `*PoC*` files whose names map onto
+  the surfaces you were about to probe means you are not racing a six-month-old audit but a
+  continuous internal programme using your method, and the easy surface is gone.
 - Unverifiable payment history, or a program with no public rules at all — hunt it only knowingly.
 - **In-scope contracts that hold nothing at a block boundary, in a program that pays only for
   loss of funds.** Measure this first; see `value_at_rest_usd` below. In this skill's own history

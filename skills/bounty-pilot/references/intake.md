@@ -50,6 +50,37 @@ its workspace list (`blind-spots.md` §8).
   `capabilities.json` answers all three, and `--deep` is what makes the last one a recorded exit
   code rather than a claim.
 
+### Before claiming a rule, an audit or a program does not exist
+
+A negative claim about a *document* needs the same evidence standard as a negative claim about code,
+and it is the cheapest claim to get wrong. Two live runs were steered badly by one each: a Solana
+target recorded as having "no audit in the repository at all" because `SECURITY.md` only pointed at
+the bounty program — the `## Audits` table was in `README.md`, eight days old, and its one
+**Acknowledged** finding was verbatim the lane two agents were already on; and a second target
+recorded as having no bounty program at all, from a security page that did not mention one plus an
+empty platform listing, when the program was at `/security/bug-bounty`, the **sibling of the page
+already fetched**.
+
+Before writing "there is none", exhaust and then *name* what was checked:
+
+- the site's `sitemap.xml` and `llms.txt`, grepped for `bounty|secur|audit`;
+- the **Markdown twin**, where appending `.md` to a docs URL returns source that renders collapsed
+  `<details>` blocks. A rendered page hid an entire smart-contract known-issues list that the `.md`
+  twin printed in full — and that list contained the exact mechanism then under investigation;
+- sibling paths of any security page found: `/security/bug-bounty`, `/bug-bounty`, `/security`,
+  `/responsible-disclosure`, `/.well-known/security.txt`;
+- in the repository: `README.md`, `SECURITY.md`, `.github/SECURITY.md`, an `audits/` directory, and
+  the vendor's separate `<project>-audits` repository.
+
+A platform page that is empty or delisted means *that* listing is gone, not that no program exists;
+the team may have moved it in-house.
+
+**The scope page is usually not the rewards page.** One program's bounty page named reward tiers and
+no contracts at all; the authoritative in-scope list — 21 addresses — lived on
+`/security/contracts-and-ownership`, and it held two in-scope contracts that appear in no audit, in
+no repository and not even in the project's own contracts API. Find the scope page separately and
+record its URL and retrieval date beside the rules.
+
 ## Write these three files before any pass reads code for bugs
 
 1. **`program.json`** — the published program facts, in the shape `targets.md` defines. It drives
@@ -146,6 +177,16 @@ invisible to every other hunter reading HEAD. Two checks, both cheap:
 If the deployed implementation is not in any in-scope repository, say so in `scope.md`: a defect
 there is probably not an in-scope asset, and the defensible framing is the in-scope seam — the
 audited contract that grants authority to the unpublished one.
+
+**Getting the deployed source, and comparing it without a false positive.** Where an explorer API is
+blocked, Sourcify answers keyless and per chain:
+`GET https://sourcify.dev/server/v2/contract/<chainId>/<address>?fields=sources,compilation` returns
+every verified source file plus the compiler settings; a contest or audit snapshot of the same file
+is usually fetchable from the auditor's own repository. **Normalise line endings before diffing** —
+`tr -d '\r' < a.sol > /tmp/a.sol` on both sides — or `diff` reports one whole-file hunk and the
+real delta is invisible. In a live run that one step turned an unreadable 2,341-line diff into
+**5 hunks, +63/−14**, small enough to read in full; the same comparison on a second contract gave
+21 hunks, +392/−155 of unaudited code on the contract holding the entire protocol TVL.
 
 ### Never infer configuration from bytecode
 
