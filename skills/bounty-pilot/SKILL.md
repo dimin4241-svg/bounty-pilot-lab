@@ -70,6 +70,15 @@ class in `references/hack-patterns.md`. Record that as `approval_exposure_usd` w
 unmeasured on a router-shaped repository it is listed as an unknown instead of forcing the band.
 An unmeasured field is an `unknown`, never a pass.
 
+Two cheap reads decide more than the score does, and both belong here. **Quote the exclusion list
+into `program.json` and name which of your usual finding shapes each clause removes** — a clause
+excluding every repo issue, closed PR, prior contest and audit removes the deployed-versus-main
+divergence outright, which is normally the best gap on a mature target (`targets.md`). And **list
+the target's own adversarial tests** (`dup-map.md` source 2): a `*PoC*` suite whose names match the
+surfaces you were going to probe means the easy ground is already taken. Churn is not the same as
+risk — read the commit subjects over the post-audit delta before trusting the number, because a
+hardening campaign and a bleeding edge produce the same figure.
+
 The score also reports your own prior outcomes on this project from the private ledger and how many
 review artifacts the repository ships: a program where your last reports closed as duplicate, or
 one with ten shipped audits, is a worse target whatever it pays. Report the band and its `unknowns`.
@@ -127,6 +136,12 @@ unknown.
 skip nearby code. `history check` never creates a ledger silently — pass `--create-ledger` to start
 one — and a `no-match` against a missing ledger is refused: personal history without a ledger or a
 canonical project key is `unavailable`, never a clean `no-match`.
+
+Before recording that a rule, an audit or a program **does not exist**, exhaust and name the
+locations checked — `sitemap.xml`, `llms.txt`, the `.md` twin that reveals collapsed `<details>`
+blocks, the sibling paths of any security page found, and the vendor's separate `<project>-audits`
+repository (`intake.md`). Two live runs were steered badly by one such claim each. The scope page is
+usually not the rewards page: find it separately.
 
 If program rules cannot be found, continue with `scope_status: unknown`, claim no eligibility, and do
 no live testing beyond read-only reads the environment already permits.

@@ -12,15 +12,34 @@ So the map is built **first**, and it burns surfaces before anyone reads code fo
 1. **The program's own known-issues or out-of-scope list.** Highest authority: the team is telling
    you what it will reject. Read every line and record it, including the ones that sound like real
    bugs — especially those, because they are the tempting ones.
-2. **Published audit reports** for this protocol, with their exact reviewed revision. A finding
+2. **The target's own adversarial tests.** Often absent from every audit, and on a mature team it is
+   a triage log. Run this before reading contracts for bugs:
+
+   ```sh
+   find . -path ./node_modules -prune -o -name '*.sol' -print      | grep -iE "poc|exploit|attack|regression|griefing|manipulation|boundary"
+   ```
+
+   also checking any `test/audit/`, `tests/integrations/` or `disabled_tests/` directory, and read
+   the **header comment** of every hit, not just the filename. A `*PoC*` or `P_T<n>*` name is
+   evidence of a *previously reported* issue even when no audit mentions it, so the whole surface it
+   names carries dup risk. In a live run this returned **29 files** on one lending protocol, covering
+   by name the exact surfaces a day of hunting had probed — a zapper zero-minimum boundary, a swap
+   checker's custody-and-receiver binding, an aggregator referral fee, oracle quote cycles, an IRM
+   migration linkage. One header was a finished verdict in the same format this skill produces:
+   *"Fixed-block deployment differential for the product-reached … zapper. The live runtime predates
+   the current nonzero expected-shares entry guard. This proves a **Low** deployment/integration-safety
+   gap, not extraction, profitability, or an app bypass."* A fixed fork block, the live address and a
+   graded severity. Treat that as both a dup source and the target-selection signal in `targets.md`.
+
+3. **Published audit reports** for this protocol, with their exact reviewed revision. A finding
    fixed at a later revision is still a dup signal for the mechanism; check whether the fix landed.
-3. **Public contest results** (Sherlock, Code4rena, Cantina and similar), which publish every valid
+4. **Public contest results** (Sherlock, Code4rena, Cantina and similar), which publish every valid
    finding and often the invalid ones.
-4. **The upstream's public issues** when the target is a fork: upstream's known bugs are not novel
+5. **The upstream's public issues** when the target is a fork: upstream's known bugs are not novel
    here either.
-5. **Closed issues, PRs and release notes** in the target repository: a PR titled "fix rounding in
+6. **Closed issues, PRs and release notes** in the target repository: a PR titled "fix rounding in
    redeem" names a class the team already handled.
-6. **The repository that ASSEMBLES the deployed artifact**, when it is not the one you are reading.
+7. **The repository that ASSEMBLES the deployed artifact**, when it is not the one you are reading.
    A library repo and the repo that composes it into the running system are often different —
    `paritytech/polkadot-sdk` holds the pallets while `polkadot-fellows/runtimes` builds the chains
    that actually run; the same split appears wherever a vendored SDK, a fork-with-overrides, or a
@@ -38,7 +57,13 @@ So the map is built **first**, and it burns surfaces before anyone reads code fo
    duplicate: the assembling repo's `main` already carried the fix, with a source comment stating
    the same reasoning, merged five weeks earlier. The sweep that had cleared it checked only the
    library's `master`.
-7. **Post-mortems** of protocols running the same fork.
+8. **Post-mortems** of protocols running the same fork.
+
+**Reconcile a report's severity table against its enumerated finding ids before believing it.**
+Two-column PDF layouts offset the counts from the labels under `pdftotext`, and the error is not
+subtle in consequence: one report's table read as "4 Critical / 13 High" was in fact **0/0/0 with 9
+Low and 4 Informational** — the difference between a bleeding target and a clean one, and it steered
+a whole day. Count the `C-`/`H-`/`M-`/`L-`/`I-` ids and make them sum to the stated total.
 
 Record retrieval dates. A known-issues list is edited, and the version you read is the one you were
 judged against.
@@ -170,6 +195,20 @@ a `rationale`:
 - **Same mechanism, different consequence** (`different-consequence`) → keep it only when the new
   consequence changes severity materially, and lead the report with the consequence rather than the
   mechanism.
+
+- **The published entry makes a falsifiable claim** (`different-consequence`, pursued deliberately)
+  → a known-issues entry that concedes a defect while asserting a bound is an invitation to test the
+  bound, and the bound is the eligibility line. One program published: *"a direct vouch against the
+  former profile can drop out of that subject's voucher accounting; **no principal is lost or frozen,
+  and any voucher can withdraw their full stake at any time**."* Everything inside that sentence is
+  excluded; anything outside it is not. Declare the falsification criteria before building — here,
+  *(a)* a legitimate withdrawal reverts, *(b)* a voucher recovers materially less than their stake,
+  *(c)* one id appears twice in an array that credits per entry — then run them. In that run the
+  bound **held** (guards on `arr.length > 0` meant no revert and no short payout), and the harness
+  instead measured a different actor's loss the sentence never mentions: a third party's live
+  position silently evicted by an unrelated withdrawal, costing **4.76% of stake per subsequent
+  participant**. Note honestly that one line of fix closes both, so a triager may still rule it the
+  same root cause — record that probability in the report rather than discovering it at triage.
 
 `no-match` is for a finding the join did not hit at all, and it carries no `entry_ids`. Claiming it
 over a collision fails the gate.
