@@ -2995,7 +2995,8 @@ class ConvergeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        # resolved: converge reports resolved paths, and macOS tempdirs sit under the /var symlink
+        self.base = Path(self.temp.name).resolve()
         self.repo = self.base / 'repo'
         (self.repo / 'src').mkdir(parents=True)
         git(self.repo, 'init', '-q')
