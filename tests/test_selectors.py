@@ -598,7 +598,8 @@ class DeploymentLeadTests(unittest.TestCase):
 class SelectorsCommandTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.dir = Path(self.temp.name)
+        # resolved: the lead file is reported resolved, and macOS tempdirs sit under the /var symlink
+        self.dir = Path(self.temp.name).resolve()
         self.case = fixture('Five', 'default')
 
     def tearDown(self):
