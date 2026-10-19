@@ -1,6 +1,6 @@
 ---
 name: bounty-pilot
-description: Run an evidence-driven Web3 bug bounty hunt (Immunefi, Cantina, HackenProof, Sherlock or a project's own program) from a repository URL or local checkout, including mixed on-chain and off-chain projects. Use for choosing a bounty target, program scope and duplicate mapping, checking deployed bytecode against the source, Solidity/EVM, Rust/Solana, Move, Cairo or CosmWasm bounty hunting, post-audit delta review, validating or refuting a bounty candidate, severity and impact-class placement, and preparing a private bounty report. Not for reviewing your own contracts during development (use solidity-auditor) or a pre-audit readiness report (use x-ray).
+description: Run an evidence-driven Web3 bug bounty hunt (Immunefi, Cantina, HackenProof, Sherlock or a project's own program) from a repository URL or local checkout, including mixed on-chain and off-chain projects. Use for choosing a bounty target, program scope and duplicate mapping, checking deployed bytecode against the source, Solidity/EVM, Rust/Solana, Substrate/FRAME, Move, Cairo or CosmWasm bounty hunting, in-scope dApp web frontends and backends (XSS that leads to a malicious signature, DOM sinks, postMessage), post-audit delta review, validating or refuting a bounty candidate, severity and impact-class placement, and preparing a private bounty report. Not for reviewing your own contracts during development (use solidity-auditor) or a pre-audit readiness report (use x-ray).
 ---
 # Bounty Pilot
 

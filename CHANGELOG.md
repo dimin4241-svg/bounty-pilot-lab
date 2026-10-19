@@ -53,9 +53,18 @@ run.
 
 - **Practical:** Sourcify v2 (`/server/v2/contract/<chainId>/<address>?fields=sources,compilation`)
   answers keyless where an explorer API is blocked, and **normalise line endings before diffing
-  deployed source against an audit snapshot** — without `tr -d ''` on both sides `diff` reports one
+  deployed source against an audit snapshot** — without `tr -d '\r'` on both sides `diff` reports one
   whole-file hunk and the real delta is invisible. That one step turned an unreadable 2,341-line diff
   into 5 hunks, +63/−14.
+
+- **Release fixes.** The `tr -d` above and in `references/intake.md` held a literal carriage return
+  between the quotes — invisible when rendered, read as `tr -d ''`, which deletes nothing — and is
+  now the escape `'\r'`. `.claude-plugin/plugin.json` was still 0.20.0. The skill `description` now
+  names Substrate/FRAME and dApp web frontends and backends, both covered since 0.17–0.18 but absent
+  from the text that decides when the skill loads. New `tests/test_release.py` asserts the three
+  version numbers agree, the changelog leads with the current one, shipped text carries no control
+  bytes and the description fits the frontmatter limit; it fails on the original 0.21.0 tree for both
+  defects.
 
 ## 0.20.0
 

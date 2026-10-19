@@ -183,7 +183,7 @@ blocked, Sourcify answers keyless and per chain:
 `GET https://sourcify.dev/server/v2/contract/<chainId>/<address>?fields=sources,compilation` returns
 every verified source file plus the compiler settings; a contest or audit snapshot of the same file
 is usually fetchable from the auditor's own repository. **Normalise line endings before diffing** —
-`tr -d '' < a.sol > /tmp/a.sol` on both sides — or `diff` reports one whole-file hunk and the
+`tr -d '\r' < a.sol > /tmp/a.sol` on both sides — or `diff` reports one whole-file hunk and the
 real delta is invisible. In a live run that one step turned an unreadable 2,341-line diff into
 **5 hunks, +63/−14**, small enough to read in full; the same comparison on a second contract gave
 21 hunks, +392/−155 of unaudited code on the contract holding the entire protocol TVL.
