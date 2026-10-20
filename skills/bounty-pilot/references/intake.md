@@ -93,6 +93,32 @@ record its URL and retrieval date beside the rules.
 3. **The delta baseline** — the exact commit of the last audit, written into `run.json` as
    `audited_revision`, so `bounty.py delta` can rank what nobody has reviewed.
 
+### Fetch every published report before the first pass, not after it
+
+`audit-inventory` sees only what the repository ships. The reports that actually decide a finding
+are usually published elsewhere — a firm's site, a CDN, a contest platform — and they are the
+cheapest duplicate evidence that exists. Pull them in Stage 1 and keep the text beside the run:
+
+```sh
+mkdir -p <run>/dup-sources/<name> && cd <run>/dup-sources/<name>
+curl -sSL -A "Mozilla/5.0" -o report.pdf "<url>" && pdftotext -layout report.pdf report.txt
+grep -n -i -E "<your candidate's mechanism>|<its primitive>" report.txt
+```
+
+**A Download button that does nothing when you read the page is not a paywall.** On one program the
+competition report looked login-gated: the button carried no `href` and the obvious findings
+endpoint answered `401`. The page's own API held the answer — `/api/v0/reports/<id>` returned a
+field `reportPdfLink` pointing at a plain public CDN URL that needed no cookie at all. That file
+contained the load-bearing primitive of a finding already verified on a mainnet fork, stated in one
+sentence in an acknowledged Low-risk entry, which ended its eligibility outright. A full week of
+work rested on a file that was one `curl` away on day one.
+
+So before recording any published report as unreadable, from inside the page: `fetch` a few endpoint
+shapes and print the status with the first few hundred bytes, and look for a `*PdfLink`, `*Url` or
+`downloadUrl` field in whatever object the page already loaded. If a direct URL comes back, fetch it
+with the shell. Record `unavailable` only with the list of endpoints tried — the same standard an
+absence claim about code has to meet.
+
 ### Account for every audit the repository ships
 
 The densest list of issues a team already knows is usually sitting in the checkout. Royco, Squads

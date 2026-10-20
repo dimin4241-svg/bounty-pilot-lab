@@ -121,6 +121,9 @@ came from. Never infer a fact to make the score better.
   "public_audit_count": 109,
   "value_at_rest_usd": 0,
   "pays_non_fund_impact": false,
+  "severity_denominator": {"kind": "client-share", "measured_fraction": 0.0141,
+                           "source": "clientdiversity.org, read 2026-10-20",
+                           "ceiling_payout_usd": 2000},
   "upstream_fork": "aave-v3",
   "deployment_addresses_url": "https://docs.example.com/contract-addresses",
   "in_scope_addresses": ["0x…", {"address": "0x…", "chain_id": 8453}],
@@ -161,6 +164,42 @@ The score is a reading order over targets, not a prediction. It reports its own 
 unknown is a question to answer, not a reason to round up. `band: deprioritise` on a program you
 have a specific reason to hunt is fine — write the reason down, so the next scan can check whether
 it held.
+
+## What the payout is proportional to — measure it before reading code
+
+`payout_max_usd` is what the page advertises. `severity_denominator` is what you can actually
+reach, and on some programs the two are far apart because the rubric multiplies every severity by a
+fraction you cannot change. Record it as an object:
+
+- `kind`: `client-share`, `market-share`, `usage-share` or `window-specific` when the ceiling is a
+  share of something; `fixed-usd`, `value-at-risk` or `impact-class` when the mechanism you find
+  sets the band.
+- `measured_fraction`: the share, measured and dated, not estimated.
+- `source`: where you read it.
+- `ceiling_payout_usd`: the highest payout actually reachable at that share, from the program's own
+  ladder. This is the number that does the work; the fraction is its evidence.
+
+`score-target` reports the reachable figure and **sizes the effort from it**: under 5,000 USD it
+says the target is worth a day rather than a week, under 25,000 USD two or three days. The band
+drops one step at most, and **`pays_non_fund_impact: true` is no escape from the ceiling** — a share
+denominator multiplies the non-fund classes too, which is the difference from the value ceiling: a
+rubric graded on a client's share of the network caps a chain-split finding exactly as hard as a
+griefing one.
+
+**A low ceiling is a budget question, not a veto.** 2,000 USD for a report that lands beats 62,500
+USD for one closed as duplicate, and on this skill's own record the "better" targets paid zero: two
+verified reports closed duplicate on one program, a mainnet-fork PoC ruled excluded-impact on
+another, four drafts withdrawn on a third. So the field never throws a target away for being cheap.
+The **only** hard stop is `ceiling_payout_usd: 0` — a ladder that pays nothing at all at the measured
+share, like a rubric whose lowest rung is unpaid. There is no severity left to claim there, and that
+is the one case where reading the code cannot pay.
+
+What the field is really for is the question "how long is this target worth?". Three consecutive runs
+on one client family ended with real mechanisms and nothing payable; the share was 1.41% and the
+ladder capped everything at about 2,000 USD, which is a day of work, not a week. Measure it first,
+then decide how much week to spend — and where the ceiling is low, prefer the spec, or a dependency
+every implementation shares, over any single implementation, because that is the only way to move
+the ceiling itself.
 
 ## Duplicate risk is decided here, not at submission
 

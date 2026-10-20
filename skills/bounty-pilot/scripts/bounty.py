@@ -7637,6 +7637,17 @@ def _own_project_history(project_key, ledger_path):
 
 # The floor below which value at rest caps every loss-of-funds severity.
 VALUE_CEILING_USD = 100_000
+# A low reachable payout is a reason to spend less time, not to skip the target: a 2,000 USD report
+# that lands beats a 62,500 USD one closed as duplicate. These size the effort; only a ladder that
+# pays literally nothing at the measured share stops a run.
+SHARE_BUDGET_DAY_USD = 5_000
+SHARE_BUDGET_FEW_DAYS_USD = 25_000
+# Rubrics whose ceiling is a fraction the hunter cannot change: the band is fixed by which target
+# you pick, before any code is read.
+SEVERITY_DENOMINATOR_SHARED = frozenset({'client-share', 'market-share', 'usage-share',
+                                         'window-specific'})
+# Rubrics whose ceiling is set by the mechanism itself.
+SEVERITY_DENOMINATOR_OWN = frozenset({'fixed-usd', 'value-at-risk', 'impact-class'})
 # A router or aggregator holds little at rest: what it can lose is every standing approval users
 # gave it. Lexical signals of that shape - a user-sourced transferFrom beside an external call
 # whose target is not a constant - make an unmeasured approval exposure an unknown, not zero.
@@ -7837,6 +7848,86 @@ def score_target(repo, program_path, ledger=None):
         unknowns.append('value_at_rest_usd unknown: run `value` over every in-scope address '
                         'BEFORE committing - it is the ceiling on every severity you can claim')
 
+    # What the payout is actually proportional to. On some programs the rubric multiplies every
+    # severity by something the hunter cannot change - a client's share of the network, a
+    # fork-window carve-out, a usage share - so the band is decided by target selection before any
+    # code is read. Three consecutive zero-yield runs on one client family ended this way: the
+    # mechanisms were real and the ladder capped them at Low regardless. Unlike the value ceiling
+    # this one is NOT escapable by pays_non_fund_impact, because a share denominator multiplies the
+    # non-fund classes too.
+    share_ceilings = []
+    share_pays_nothing = False
+    recommended_budget = None
+    denominator = program.get('severity_denominator')
+    if isinstance(denominator, str) and has_text(denominator):
+        denominator = {'kind': denominator}
+    if isinstance(denominator, dict):
+        kind = denominator.get('kind')
+        fraction = denominator.get('measured_fraction')
+        fraction = fraction if isinstance(fraction, (int, float)) and \
+            not isinstance(fraction, bool) and 0 <= fraction <= 1 else None
+        stated_cap = denominator.get('ceiling_payout_usd')
+        stated_cap = stated_cap if isinstance(stated_cap, (int, float)) and \
+            not isinstance(stated_cap, bool) and stated_cap >= 0 else None
+        source = denominator.get('source')
+        cited = f' (source: {source})' if has_text(source) else ''
+        if kind in SEVERITY_DENOMINATOR_SHARED:
+            if not has_text(source):
+                unknowns.append(f'severity_denominator.kind is "{kind}" but no source: record '
+                                'where the share or window figure was read, with its date')
+            effective = stated_cap
+            if effective is None and fraction is not None and \
+                    isinstance(payout, (int, float)) and payout > 0:
+                effective = payout * fraction
+            shown = (f' and the measured share is {fraction:.2%}' if fraction is not None else '')
+            if effective is None:
+                unknowns.append(
+                    f'the rubric is denominated by {kind}, but neither measured_fraction nor '
+                    'ceiling_payout_usd is recorded: measure the share BEFORE reading code - it '
+                    'sets how much time this target is worth')
+            elif effective <= 0:
+                # The only hard stop: the ladder pays nothing at all at this share, so there is no
+                # severity left to claim however good the mechanism is.
+                share_pays_nothing = True
+                share_ceilings.append(
+                    f'the rubric is denominated by {kind}{shown}{cited}, and at that share its '
+                    'ladder pays nothing: there is no severity left to claim')
+            else:
+                if effective < SHARE_BUDGET_DAY_USD:
+                    budget = (f'about {effective:,.0f} USD is the most this target can pay, so it '
+                              'is worth a day, not a week: aim only at mechanisms that reach the '
+                              "ladder's lowest paying rung, and stop at the first dead pass")
+                elif effective < SHARE_BUDGET_FEW_DAYS_USD:
+                    budget = (f'about {effective:,.0f} USD is the most this target can pay, so it '
+                              'is worth two or three days rather than a full week')
+                else:
+                    budget = None
+                if budget:
+                    recommended_budget = budget
+                    reasons.append(budget)
+                if isinstance(payout, (int, float)) and payout > 0 and effective < payout / 5:
+                    share_ceilings.append(
+                        f'the rubric is denominated by {kind}{shown}{cited}: the reachable payout '
+                        f'is about {effective:,.0f} USD against an advertised {payout:,.0f} USD. '
+                        'That is a reason to spend less time here, not to skip it - a small report '
+                        'that lands beats a large one closed as duplicate')
+                else:
+                    reasons.append(f'the rubric is denominated by {kind}{cited}, and at the '
+                                   f'measured share about {effective:,.0f} USD is reachable')
+        elif kind in SEVERITY_DENOMINATOR_OWN:
+            reasons.append(f'severity is denominated by {kind}: the band is set by the mechanism '
+                           'you find, not by a share you cannot change')
+        elif has_text(kind):
+            unknowns.append(f'severity_denominator.kind "{kind}" is not one of '
+                            + ', '.join(sorted(SEVERITY_DENOMINATOR_SHARED
+                                               | SEVERITY_DENOMINATOR_OWN)))
+    else:
+        unknowns.append('severity_denominator unknown: read the rubric and record what the payout '
+                        'is proportional to. Where it is a share of a network, of usage or of a '
+                        'release window, measure that share BEFORE reading code - on a '
+                        'share-denominated ladder the ceiling is chosen by target selection, not '
+                        'by the bug')
+
     if total_lines > 60000:
         reasons.append(f'{total_lines} in-scope lines: too large for one sweep, '
                        'prioritise by delta and value-bearing paths')
@@ -7922,6 +8013,15 @@ def score_target(repo, program_path, ledger=None):
         reasons.append('band forced to deprioritise by the measured severity ceiling')
     elif ceilings:
         band = 'maybe' if band == 'hunt' else band
+    # A share denominator multiplies the non-fund classes too, so pays_non_fund_impact is no
+    # escape from it. But a low ceiling is a budget question, not a veto: it drops the band one
+    # step and sizes the effort. Only a ladder that pays nothing at the measured share stops a run.
+    if share_pays_nothing:
+        band = 'deprioritise'
+        reasons.append('band forced to deprioritise: at the measured share this rubric pays '
+                       'nothing, so there is no severity left to claim')
+    elif share_ceilings:
+        band = 'maybe' if band == 'hunt' else band
     return {'program': program.get('program'), 'url': program.get('url'),
             'in_scope_files': len(in_scope), 'in_scope_lines': total_lines,
             'files_never_named_in_tests': len(untested),
@@ -7934,6 +8034,9 @@ def score_target(repo, program_path, ledger=None):
             'own_history': own,
             'priority_score': score, 'band': band, 'reasons': reasons, 'unknowns': unknowns,
             'severity_ceiling': ceilings,
+            'severity_denominator_ceiling': share_ceilings,
+            'severity_denominator_pays_nothing': share_pays_nothing,
+            'recommended_budget': recommended_budget,
             'value_at_rest_usd': var if isinstance(var, (int, float)) else None,
             'approval_exposure_usd': approvals,
             'approval_exposure_source': approval_source if has_text(approval_source) else None,

@@ -70,6 +70,16 @@ class in `references/hack-patterns.md`. Record that as `approval_exposure_usd` w
 unmeasured on a router-shaped repository it is listed as an unknown instead of forcing the band.
 An unmeasured field is an `unknown`, never a pass.
 
+**And record what the payout is proportional to.** `payout_max_usd` is advertised; the reachable
+number is `severity_denominator` (`targets.md`). Where the rubric grades every severity by a share
+you cannot change — a client's share of a network, a usage share, a release window — measure that
+share **before reading code** and record `ceiling_payout_usd` from the program's own ladder. The
+scorer then sizes the run from it: under 5,000 USD reachable the target is worth a day, not a week.
+A low ceiling is a budget, not a veto — a small report that lands beats a large one closed as
+duplicate — so the band drops one step at most, and the only hard stop is a ladder that pays nothing
+at all at that share. `pays_non_fund_impact` is no escape from the ceiling, because a share
+denominator multiplies the non-fund classes too.
+
 Two cheap reads decide more than the score does, and both belong here. **Quote the exclusion list
 into `program.json` and name which of your usual finding shapes each clause removes** — a clause
 excluding every repo issue, closed PR, prior contest and audit removes the deployed-versus-main
@@ -98,6 +108,11 @@ Read `references/intake.md`. Before any pass reads code for bugs, produce:
 4. **Compiler and value checks** — both one command, both have preceded real losses.
 5. **`audit-inventory.json`** — the review artifacts the repository ships, each marked `read`,
    `not-applicable` with a reason, or `unavailable`. The submission gate requires the file.
+   `audit-inventory` sees only what the repo ships, so **fetch the reports published elsewhere too
+   — firm sites, CDNs, contest platforms — and grep them** (`intake.md`). A Download button that
+   does nothing is not a paywall: read the page's own API for the direct URL before recording a
+   report as unreadable. One such file, one `curl` away, held the load-bearing primitive of a
+   finding that had already passed the submission gate.
 6. **`history-matches.json`** — after importing what you already submitted to this program.
 
 ```sh
