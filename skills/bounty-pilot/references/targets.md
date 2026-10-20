@@ -121,6 +121,9 @@ came from. Never infer a fact to make the score better.
   "public_audit_count": 109,
   "value_at_rest_usd": 0,
   "pays_non_fund_impact": false,
+  "severity_denominator": {"kind": "client-share", "measured_fraction": 0.0141,
+                           "source": "clientdiversity.org, read 2026-10-20",
+                           "ceiling_payout_usd": 2000},
   "upstream_fork": "aave-v3",
   "deployment_addresses_url": "https://docs.example.com/contract-addresses",
   "in_scope_addresses": ["0x…", {"address": "0x…", "chain_id": 8453}],
@@ -161,6 +164,32 @@ The score is a reading order over targets, not a prediction. It reports its own 
 unknown is a question to answer, not a reason to round up. `band: deprioritise` on a program you
 have a specific reason to hunt is fine — write the reason down, so the next scan can check whether
 it held.
+
+## What the payout is proportional to — measure it before reading code
+
+`payout_max_usd` is what the page advertises. `severity_denominator` is what you can actually
+reach, and on some programs the two are far apart because the rubric multiplies every severity by a
+fraction you cannot change. Record it as an object:
+
+- `kind`: `client-share`, `market-share`, `usage-share` or `window-specific` when the ceiling is a
+  share of something; `fixed-usd`, `value-at-risk` or `impact-class` when the mechanism you find
+  sets the band.
+- `measured_fraction`: the share, measured and dated, not estimated.
+- `source`: where you read it.
+- `ceiling_payout_usd`: the highest payout actually reachable at that share, from the program's own
+  ladder. This is the number that does the work; the fraction is its evidence.
+
+`score-target` forces `deprioritise` when a shared denominator leaves under 10,000 USD reachable,
+and **`pays_non_fund_impact: true` is no escape from it** — a share denominator multiplies the
+non-fund classes too. That is the difference from the value ceiling, and it is the whole point: a
+rubric graded on a client's share of the network caps a chain-split finding exactly as hard as a
+griefing one.
+
+This came out of three consecutive zero-yield runs on one client family. The mechanisms were real,
+two were reproduced on a live binary, and the ladder capped all of them at Low because the client
+held 1.41% of the network — about 2,000 USD, decided before a line of code was read. **On a
+share-denominated ladder the band is chosen by target selection, so measure the share first and
+prefer the spec, or a dependency every implementation shares, over any single implementation.**
 
 ## Duplicate risk is decided here, not at submission
 

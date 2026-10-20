@@ -333,3 +333,28 @@ source (`intake.md`); `history import --from-file` loads what you already sent t
 the ledger, and `dup-harvest` retrieves the closed issues the team already judged (both in
 `dup-map.md`). If any of them ran only after the reading passes, write that here — it is the gap,
 not a clean answer.
+
+## 32. Did you measure what the payout is proportional to, before you read the code?
+
+Three consecutive runs on one client family produced real, reproduced mechanisms and nothing
+payable, because the rubric graded every severity by the client's share of the network: 1.41%, about
+2,000 USD, fixed before a line was read. A share denominator multiplies the non-fund classes too, so
+"the program pays DoS" is no escape from it.
+
+The fix is one field and one minute: `severity_denominator` in `program.json`
+(`references/targets.md`), with the share measured and dated and the reachable payout taken from the
+program's own ladder. `score-target` then forces `deprioritise` below 10,000 USD reachable. On a
+share-denominated ladder, prefer the spec or a dependency every implementation shares over any
+single implementation — that is the only way to move the ceiling.
+
+## 33. Did you fetch the published reports, or only the ones the repository ships?
+
+A finding verified on a mainnet fork, hardened through a hostile triage round and past the
+submission gate, died on one sentence in an acknowledged Low-risk entry of a competition report —
+a report recorded as "behind a login" because its Download button had no `href` and one guessed API
+endpoint answered `401`. The file was on a public CDN the whole time, named in a field of the page's
+own `/api/v0/reports/<id>` response.
+
+A button handled in JavaScript says nothing about authorization, and a 401 on one endpoint says
+nothing about the others. Pull every published report in Stage 1 and grep it
+(`references/intake.md`); record a source as unavailable only with the list of endpoints tried.
