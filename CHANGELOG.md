@@ -12,15 +12,24 @@ Two fixes, both from measured zero-yield runs rather than from review.
   rubric multiplies every severity by a fraction the hunter cannot change, or `fixed-usd` /
   `value-at-risk` / `impact-class` when the mechanism sets the band; `measured_fraction` carries the
   share with its `source`, and `ceiling_payout_usd` the highest payout the program's own ladder
-  still allows at that share. Below 10,000 USD reachable the band is **forced to
-  `deprioritise`**, and — unlike the value ceiling — **`pays_non_fund_impact: true` is no escape**,
-  because a share denominator multiplies the non-fund classes too. An absent field is an unknown
+  still allows at that share. The scorer **sizes the run** from it — under 5,000 USD
+  reachable it says a day rather than a week, under 25,000 USD two or three days — reported as
+  `recommended_budget`. Unlike the value ceiling, **`pays_non_fund_impact: true` is no escape** from
+  the ceiling, because a share denominator multiplies the non-fund classes too.
+  **A low ceiling is a budget question, not a veto:** the band drops one step at most, because
+  2,000 USD for a report that lands beats 62,500 USD for one closed as duplicate, and on this
+  skill's own record the "better" targets paid zero. The only hard stop is `ceiling_payout_usd: 0`,
+  a ladder that pays nothing at the measured share, where no severity is left to claim.
+  An absent field is an unknown
   with the instruction to measure the share *before* reading code.
   This came out of three consecutive runs on one client family: the mechanisms were real, two were
   reproduced on a live binary, and a 1.41% network share capped every one of them at Low (about
-  2,000 USD) before a line was read. The new field reports `severity_denominator_ceiling` beside
-  `severity_ceiling` and is exercised across eight shapes, including the one that matters — real
-  share numbers on a program that does pay non-fund impact.
+  2,000 USD) before a line was read. Honest correction, after the first cut of this release: the cap
+  did not actually kill those three runs — they died on triage, on public prior art and on
+  reachability — so this field is a budget signal, not a post-mortem of them. It reports
+  `severity_denominator_ceiling`, `severity_denominator_pays_nothing` and `recommended_budget`, and
+  is exercised across the field's shapes including the one that matters: real share numbers on a
+  program that does pay non-fund impact.
 
 - **Fetch every published report in Stage 1** (`references/intake.md`, `references/misses.md` 33).
   `audit-inventory` only sees what the repository ships, while the reports that decide a finding sit

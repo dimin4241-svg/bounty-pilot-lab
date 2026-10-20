@@ -73,10 +73,12 @@ An unmeasured field is an `unknown`, never a pass.
 **And record what the payout is proportional to.** `payout_max_usd` is advertised; the reachable
 number is `severity_denominator` (`targets.md`). Where the rubric grades every severity by a share
 you cannot change — a client's share of a network, a usage share, a release window — measure that
-share **before reading code** and record `ceiling_payout_usd` from the program's own ladder. Below
-10,000 USD reachable the scorer forces `deprioritise`, and `pays_non_fund_impact` is no escape,
-because a share denominator multiplies the non-fund classes too. Three consecutive zero-yield runs
-on one client family ended exactly here: real mechanisms, capped at Low by a 1.41% share.
+share **before reading code** and record `ceiling_payout_usd` from the program's own ladder. The
+scorer then sizes the run from it: under 5,000 USD reachable the target is worth a day, not a week.
+A low ceiling is a budget, not a veto — a small report that lands beats a large one closed as
+duplicate — so the band drops one step at most, and the only hard stop is a ladder that pays nothing
+at all at that share. `pays_non_fund_impact` is no escape from the ceiling, because a share
+denominator multiplies the non-fund classes too.
 
 Two cheap reads decide more than the score does, and both belong here. **Quote the exclusion list
 into `program.json` and name which of your usual finding shapes each clause removes** — a clause

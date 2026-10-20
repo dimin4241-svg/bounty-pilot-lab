@@ -6,6 +6,11 @@ network. The decisive property is the one asserted in
 test_a_share_ceiling_is_not_escapable_by_non_fund_impact: a share denominator multiplies the
 non-fund classes too, so `pays_non_fund_impact` must NOT buy an escape from it the way it does from
 the value-at-rest ceiling.
+
+A low ceiling is a BUDGET question, not a veto. A 2,000 USD report that lands beats a 62,500 USD one
+closed as duplicate, and on this skill's own record the "better" targets paid zero - so the field
+reports the reachable figure and the time it justifies, and the only hard stop is a ladder that pays
+literally nothing at the measured share.
 """
 import importlib.util
 import json
@@ -71,47 +76,81 @@ class SeverityDenominatorTests(unittest.TestCase):
     # --- the case that cost three runs ---
 
     def test_a_share_ceiling_is_not_escapable_by_non_fund_impact(self):
-        """pays_non_fund_impact escapes the VALUE ceiling; it must not escape a SHARE ceiling."""
+        """pays_non_fund_impact escapes the VALUE ceiling; it must not escape a SHARE ceiling.
+
+        The real EF numbers: a 1.41% client share capping the ladder at about 2,000 USD on a
+        program that does pay non-fund impact. The ceiling has to be reported - but the target is
+        not thrown away over it, because 2,000 USD that lands is still money.
+        """
         result = self.score(severity_denominator={
             "kind": "client-share", "measured_fraction": 0.0141,
             "source": "clientdiversity.org, read 2026-10-20", "ceiling_payout_usd": 2_000})
-        self.assertTrue(result["pays_non_fund_impact"] if "pays_non_fund_impact" in result else True)
         self.assertEqual(len(result["severity_denominator_ceiling"]), 1)
         ceiling = result["severity_denominator_ceiling"][0]
         self.assertIn("client-share", ceiling)
         self.assertIn("1.41%", ceiling)
         self.assertIn("2,000 USD", ceiling)
-        self.assertEqual(result["band"], "deprioritise")
-        self.assertTrue(any("severity denominator" in r for r in result["reasons"]),
-                        result["reasons"])
+        self.assertIn("not to skip it", ceiling)
+        # Reported, and the band drops one step at most. NOT deprioritised: the ladder still pays.
+        self.assertNotEqual(result["band"], "deprioritise")
+        self.assertFalse(result["severity_denominator_pays_nothing"])
+        # What it buys instead is a budget.
+        self.assertIsNotNone(result["recommended_budget"])
+        self.assertIn("a day, not a week", result["recommended_budget"])
         # The value ceiling is a separate list and stays empty: 50M at rest is not the problem.
         self.assertEqual(result["severity_ceiling"], [])
+
+    def test_a_ladder_that_pays_nothing_is_the_only_hard_stop(self):
+        result = self.score(severity_denominator={
+            "kind": "client-share", "measured_fraction": 0.0141, "source": "x 2026-10-20",
+            "ceiling_payout_usd": 0})
+        self.assertTrue(result["severity_denominator_pays_nothing"])
+        self.assertEqual(result["band"], "deprioritise")
+        self.assertIn("pays nothing", result["severity_denominator_ceiling"][0])
+        self.assertTrue(any("no severity left to claim" in r for r in result["reasons"]),
+                        result["reasons"])
+
+    def test_the_budget_scales_with_the_reachable_payout(self):
+        for cap, expected in ((2_000, "a day, not a week"),
+                              (12_000, "two or three days"),
+                              (40_000, None)):
+            with self.subTest(cap=cap):
+                result = self.score(severity_denominator={
+                    "kind": "client-share", "measured_fraction": 0.5, "source": "x",
+                    "ceiling_payout_usd": cap})
+                if expected is None:
+                    self.assertIsNone(result["recommended_budget"])
+                else:
+                    self.assertIn(expected, result["recommended_budget"])
+                self.assertNotEqual(result["band"], "deprioritise")
 
     def test_the_reachable_payout_is_derived_when_only_the_share_is_recorded(self):
         result = self.score(severity_denominator={
             "kind": "usage-share", "measured_fraction": 0.01, "source": "dashboard 2026-10-20"})
-        # 1% of a 50,000 USD cap is 500: under the floor, so the band is forced.
+        # 1% of a 50,000 USD cap is 500: reported, budgeted, and still not thrown away.
         self.assertEqual(len(result["severity_denominator_ceiling"]), 1)
         self.assertIn("500 USD", result["severity_denominator_ceiling"][0])
-        self.assertEqual(result["band"], "deprioritise")
+        self.assertIn("a day, not a week", result["recommended_budget"])
+        self.assertNotEqual(result["band"], "deprioritise")
 
     def test_a_share_large_enough_to_pay_is_only_a_reason(self):
         result = self.score(severity_denominator={
             "kind": "market-share", "measured_fraction": 0.8, "source": "dune 2026-10-20"})
         self.assertEqual(result["severity_denominator_ceiling"], [])
         self.assertNotEqual(result["band"], "deprioritise")
-        self.assertTrue(any("is still reachable" in r for r in result["reasons"]),
+        self.assertTrue(any("is reachable" in r for r in result["reasons"]),
                         result["reasons"])
 
     def test_a_middling_share_reports_the_gap_without_claiming_it_is_hopeless(self):
-        # 10% of 50,000 is 5,000: under the 10,000 floor, so it is forced. Raise the cap so the
-        # reachable figure clears the floor but stays under a fifth of what is advertised.
         result = self.score(payout_max_usd=1_000_000, severity_denominator={
             "kind": "client-share", "measured_fraction": 0.1, "source": "x 2026-10-20"})
         self.assertEqual(len(result["severity_denominator_ceiling"]), 1)
         ceiling = result["severity_denominator_ceiling"][0]
         self.assertIn("100,000 USD", ceiling)
         self.assertIn("1,000,000 USD", ceiling)
+        # 100,000 USD reachable needs no budget warning and must not move the band.
+        self.assertIsNone(result["recommended_budget"])
+        self.assertNotEqual(result["band"], "deprioritise")
 
     # --- the denominators that are not a problem ---
 
@@ -162,21 +201,21 @@ class SeverityDenominatorTests(unittest.TestCase):
 
     def test_the_references_document_the_field(self):
         targets = (ROOT / "skills/bounty-pilot/references/targets.md").read_text(encoding="utf-8")
-        self.assertIn("severity_denominator", targets)
-        self.assertIn("ceiling_payout_usd", targets)
-        self.assertIn("no escape", targets)
+        for needle in ("severity_denominator", "ceiling_payout_usd", "no escape",
+                       "worth a day", "not a veto"):
+            self.assertIn(needle, targets, f"targets.md does not document {needle!r}")
         skill = (ROOT / "skills/bounty-pilot/SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("severity_denominator", skill)
+        self.assertIn("severity_denominator", skill, "SKILL.md does not mention the field")
+        self.assertIn("not a veto", skill, "SKILL.md still reads as a veto")
         misses = (ROOT / "skills/bounty-pilot/references/misses.md").read_text(encoding="utf-8")
-        self.assertIn("severity_denominator", misses)
+        self.assertIn("severity_denominator", misses, "misses.md does not mention the field")
 
     def test_the_stage_one_published_report_step_is_documented(self):
         intake = (ROOT / "skills/bounty-pilot/references/intake.md").read_text(encoding="utf-8")
-        self.assertIn("pdftotext", intake)
-        self.assertIn("reportPdfLink", intake)
-        self.assertIn("is not a paywall", intake)
+        for needle in ("pdftotext", "reportPdfLink", "is not a paywall"):
+            self.assertIn(needle, intake, f"intake.md does not document {needle!r}")
         skill = (ROOT / "skills/bounty-pilot/SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("published elsewhere", skill)
+        self.assertIn("published elsewhere", skill, "SKILL.md omits the Stage 1 report step")
 
     def test_the_misses_count_in_passes_matches_the_file(self):
         misses = (ROOT / "skills/bounty-pilot/references/misses.md").read_text(encoding="utf-8")

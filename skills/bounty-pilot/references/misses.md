@@ -343,9 +343,15 @@ payable, because the rubric graded every severity by the client's share of the n
 
 The fix is one field and one minute: `severity_denominator` in `program.json`
 (`references/targets.md`), with the share measured and dated and the reachable payout taken from the
-program's own ladder. `score-target` then forces `deprioritise` below 10,000 USD reachable. On a
-share-denominated ladder, prefer the spec or a dependency every implementation shares over any
-single implementation — that is the only way to move the ceiling.
+program's own ladder. `score-target` then sizes the run from it — under 5,000 USD reachable is a day,
+not a week.
+
+Note what this is **not**: a reason to skip a cheap target. 2,000 USD for a report that lands beats
+62,500 USD for one closed as duplicate, and the "better" targets on this skill's own record paid
+zero. The field answers "how long is this worth?", and only a ladder paying nothing at all at the
+measured share stops a run. On a share-denominated ladder, prefer the spec or a dependency every
+implementation shares over any single implementation — that is the only way to move the ceiling
+itself.
 
 ## 33. Did you fetch the published reports, or only the ones the repository ships?
 

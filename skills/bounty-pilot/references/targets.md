@@ -179,17 +179,27 @@ fraction you cannot change. Record it as an object:
 - `ceiling_payout_usd`: the highest payout actually reachable at that share, from the program's own
   ladder. This is the number that does the work; the fraction is its evidence.
 
-`score-target` forces `deprioritise` when a shared denominator leaves under 10,000 USD reachable,
-and **`pays_non_fund_impact: true` is no escape from it** — a share denominator multiplies the
-non-fund classes too. That is the difference from the value ceiling, and it is the whole point: a
+`score-target` reports the reachable figure and **sizes the effort from it**: under 5,000 USD it
+says the target is worth a day rather than a week, under 25,000 USD two or three days. The band
+drops one step at most, and **`pays_non_fund_impact: true` is no escape from the ceiling** — a share
+denominator multiplies the non-fund classes too, which is the difference from the value ceiling: a
 rubric graded on a client's share of the network caps a chain-split finding exactly as hard as a
 griefing one.
 
-This came out of three consecutive zero-yield runs on one client family. The mechanisms were real,
-two were reproduced on a live binary, and the ladder capped all of them at Low because the client
-held 1.41% of the network — about 2,000 USD, decided before a line of code was read. **On a
-share-denominated ladder the band is chosen by target selection, so measure the share first and
-prefer the spec, or a dependency every implementation shares, over any single implementation.**
+**A low ceiling is a budget question, not a veto.** 2,000 USD for a report that lands beats 62,500
+USD for one closed as duplicate, and on this skill's own record the "better" targets paid zero: two
+verified reports closed duplicate on one program, a mainnet-fork PoC ruled excluded-impact on
+another, four drafts withdrawn on a third. So the field never throws a target away for being cheap.
+The **only** hard stop is `ceiling_payout_usd: 0` — a ladder that pays nothing at all at the measured
+share, like a rubric whose lowest rung is unpaid. There is no severity left to claim there, and that
+is the one case where reading the code cannot pay.
+
+What the field is really for is the question "how long is this target worth?". Three consecutive runs
+on one client family ended with real mechanisms and nothing payable; the share was 1.41% and the
+ladder capped everything at about 2,000 USD, which is a day of work, not a week. Measure it first,
+then decide how much week to spend — and where the ceiling is low, prefer the spec, or a dependency
+every implementation shares, over any single implementation, because that is the only way to move
+the ceiling itself.
 
 ## Duplicate risk is decided here, not at submission
 
