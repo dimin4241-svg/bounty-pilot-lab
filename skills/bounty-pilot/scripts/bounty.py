@@ -8110,6 +8110,44 @@ def score_target(repo, program_path, ledger=None):
 # on-chain identity
 # --------------------------------------------------------------------------- #
 
+class RpcError(ValueError):
+    """A JSON-RPC error answer, with the node's error object kept so a caller can tell a revert
+    from a rate limit. Still a ValueError, so every existing handler keeps catching it."""
+
+    def __init__(self, method, error):
+        super().__init__(f'rpc {method} failed: {error}')
+        self.method, self.error = method, error
+
+
+# What a node says when an eth_call simply reverts or runs out of code - the normal answer from a
+# contract without the getter. Anything else (a rate limit, a timeout, a pruned block) is a
+# failure to look, never evidence that there is nothing to see.
+REVERT_MESSAGE = re.compile(r'(?i)revert|vm execution error|invalid opcode|out of gas|'
+                            r'stack underflow|bad instruction|invalid jump')
+
+
+def is_revert(exc):
+    if not isinstance(exc, RpcError):
+        return False
+    error = exc.error if isinstance(exc.error, dict) else {}
+    if error.get('code') == 3:
+        return True
+    return bool(REVERT_MESSAGE.search(str(error.get('message', ''))))
+
+
+def rpc_hex(url, method, params, opener=None):
+    """An RPC result that must be hex: a `null` or a non-string is refused, never read as 0x.
+
+    `or '0x'` turned a provider's null into an empty storage slot and a zero balance - an
+    EIP-1967 proxy read as not-a-proxy and compared exact, and a value-at-rest of zero.
+    """
+    value = rpc_call(url, method, params, opener)
+    if not isinstance(value, str) or not re.fullmatch(r'0x[0-9a-fA-F]*', value):
+        raise ValueError(f'rpc {method} returned {value!r} instead of hex data; refusing to '
+                         'read it as empty - retry, or use another endpoint')
+    return value
+
+
 def rpc_call(url, method, params, opener=None, timeout=30):
     payload = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method,
                           'params': params}).encode('utf-8')
@@ -8123,7 +8161,7 @@ def rpc_call(url, method, params, opener=None, timeout=30):
     with open_fn(request, timeout=timeout) as response:
         body = json.loads(response.read().decode('utf-8'))
     if 'error' in body:
-        raise ValueError(f"rpc {method} failed: {body['error']}")
+        raise RpcError(method, body['error'])
     return body.get('result')
 
 
@@ -8471,6 +8509,9 @@ def compare_bytecode(onchain_hex, artifact_hex, immutable_references=None, link_
         extra['masking_skipped'] = problems
     if not live:
         return {'status': 'mismatch', 'reason': 'no runtime code at the address'}
+    if not local:
+        return {'status': 'mismatch', 'reason': 'the artifact carries no runtime code - an '
+                'interface or abstract contract build; pass the deployable contract\'s artifact'}
     tail = len(live) - len(local)
     # Vyper's runtime carries no solc metadata; with a solc tail stripped this is not Vyper.
     vyper_shaped = tail > 0 and not live_meta and not local_meta and live[:len(local)] == local
@@ -8893,7 +8934,7 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
     run = _deployment_run(run)
     details = read_artifact_details(artifact) if artifact else None
     chain_id, pinned = pin_block(rpc, block, opener)
-    code = rpc_call(rpc, 'eth_getCode', [address, pinned], opener) or '0x'
+    code = rpc_hex(rpc, 'eth_getCode', [address, pinned], opener)
     result = {'address': address, 'chain_id': int(chain_id, 16),
               'block': int(pinned, 16) if isinstance(pinned, str) and pinned.startswith('0x')
                        else pinned,
@@ -8932,18 +8973,25 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
         return finish()
 
     def code_at(target):
-        return rpc_call(rpc, 'eth_getCode', [target, pinned], opener) or '0x'
+        return rpc_hex(rpc, 'eth_getCode', [target, pinned], opener)
+
+    probe_failures = []
 
     def probe(signature):
         try:
             return rpc_call(rpc, 'eth_call', [{'to': address, 'data': keccak.selector(signature)},
                                               pinned], opener)
-        except (OSError, ValueError, urllib.error.URLError):
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            if not is_revert(exc):
+                # A rate limit or a dropped connection says nothing about the getter. Read as a
+                # revert, it made a diamond or a Safe read as not-a-proxy and compare exact.
+                probe_failures.append(f'{signature} could not be probed: '
+                                      + _scrub_endpoint(str(exc), rpc)[:200])
             return None   # a revert is the normal answer from a contract without the getter
 
     slots = proxy_slots()
     for label, slot in slots.items():
-        word = rpc_call(rpc, 'eth_getStorageAt', [address, slot, pinned], opener) or '0x'
+        word = rpc_hex(rpc, 'eth_getStorageAt', [address, slot, pinned], opener)
         packed = word[-40:] if len(word) >= 42 else ''
         if packed and int(packed, 16) != 0:
             result['proxy'][label] = '0x' + packed
@@ -8994,7 +9042,7 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
                                      'the getter returned no address holding code')
     if not result['proxy'] and delegates and len(body) < SMALL_RUNTIME_BYTES:
         # Older Safe proxies keep the singleton in slot 0 and expose no getter.
-        word = rpc_call(rpc, 'eth_getStorageAt', [address, '0x0', pinned], opener) or '0x'
+        word = rpc_hex(rpc, 'eth_getStorageAt', [address, '0x0', pinned], opener)
         target = _word_address(word if len(word) == 66 else None)
         if target and len(code_at(target)) > 2:
             result['proxy']['slot0-singleton'] = target
@@ -9031,8 +9079,10 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
             result['proxy']['beacon-implementation'] = beacon_implementation
         except (OSError, ValueError, urllib.error.URLError) as exc:
             resolution_errors.append(f'could not resolve EIP-1967 beacon implementation: {exc}')
+    resolution_errors.extend(probe_failures)
     result['proxy_resolution'] = ('resolved' if implementation and not resolution_errors
-                                  else ('unresolved' if result['proxy'] else 'not-a-proxy'))
+                                  else ('unresolved' if result['proxy'] or probe_failures
+                                        else 'not-a-proxy'))
     if resolution_errors:
         result['proxy_resolution_errors'] = resolution_errors
     if implementation:
@@ -9089,6 +9139,12 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
                 result['comparison'] = dict(comparison, status='partial', reason=(
                     'the runtime matches, but it is a small runtime with DELEGATECALL; possibly an '
                     'unrecognized proxy, so the code that executes may not be this artifact'))
+            elif probe_failures and comparison['status'] == 'exact':
+                result['deployment_status'] = 'partial'
+                result['comparison'] = dict(comparison, status='partial', reason=(
+                    'the runtime matches, but a proxy probe failed for a reason other than a '
+                    'revert, so whether this address forwards elsewhere is unknown: '
+                    + '; '.join(probe_failures) + '. Rerun when the endpoint answers'))
         _check_linked_libraries(result, code_at)
         if result['proxy'] and result['deployment_status'] == 'exact':
             result['note'] = ('implementation bytecode matches at this block. A proxy can be '
@@ -9548,7 +9604,7 @@ def selectors_report(rpc=None, address=None, code=None, abi=None, signatures=Non
         if not re.fullmatch(r'0x[0-9a-fA-F]{40}', address):
             raise ValueError('--address must be 0x followed by 40 hex characters')
         chain_id, pinned = pin_block(rpc, block, opener)
-        runtime = rpc_call(rpc, 'eth_getCode', [address, pinned], opener) or '0x'
+        runtime = rpc_hex(rpc, 'eth_getCode', [address, pinned], opener)
         source = {'read_from': 'eth_getCode', 'address': address, 'chain_id': int(chain_id, 16),
                   'block': int(pinned, 16) if isinstance(pinned, str)
                            and pinned.startswith('0x') else pinned}
@@ -9600,7 +9656,7 @@ def value_at_risk(rpc, addresses, tokens=None, block='latest', opener=None):
     token_meta, token_errors = {}, {}
     for token in tokens or []:
         try:
-            code = rpc_call(rpc, 'eth_getCode', [token, pinned], opener) or '0x'
+            code = rpc_hex(rpc, 'eth_getCode', [token, pinned], opener)
         except rpc_errors as exc:
             token_errors[token] = f'could not read code: {exc}'
             continue
@@ -9619,7 +9675,7 @@ def value_at_risk(rpc, addresses, tokens=None, block='latest', opener=None):
             token_errors[token] = f'decimals() failed: {exc}; raw balances only'
     rows = []
     for address in addresses:
-        native = rpc_call(rpc, 'eth_getBalance', [address, pinned], opener) or '0x0'
+        native = rpc_hex(rpc, 'eth_getBalance', [address, pinned], opener)
         holdings = []
         for token in tokens or []:
             if token not in token_meta:

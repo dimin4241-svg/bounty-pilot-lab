@@ -248,5 +248,114 @@ class NestedSecretScanTests(unittest.TestCase):
         self.assertEqual(self.errors_for({'commands': ['cast call --rpc-url $ETH_RPC_URL']}), [])
 
 
+# ---------------------------------------------------------------------------------------------
+# Group 2: false `exact` in verify-deployment
+# ---------------------------------------------------------------------------------------------
+
+class Response:
+    def __init__(self, payload):
+        self.payload = json.dumps(payload).encode('utf-8')
+
+    def read(self):
+        return self.payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class Node:
+    """Answers JSON-RPC from a dict. An answer that is an `Error` comes back as an error object;
+    an eth_call nobody configured reverts the way a node says it does (code 3)."""
+
+    class Error:
+        def __init__(self, code, message):
+            self.error = {'code': code, 'message': message}
+
+    def __init__(self, answers):
+        self.answers = answers
+
+    def __call__(self, request, timeout=None):
+        body = json.loads(request.data.decode('utf-8'))
+        method, params = body['method'], body['params']
+        value = self.answers.get(method, Node.Error(3, 'execution reverted'))
+        if callable(value) and not isinstance(value, Node.Error):
+            value = value(params)
+        if isinstance(value, Node.Error):
+            return Response({'jsonrpc': '2.0', 'id': body['id'], 'error': value.error})
+        return Response({'jsonrpc': '2.0', 'id': body['id'], 'result': value})
+
+
+SOLC_TAIL_A = ('a2' + '64' + b'ipfs'.hex() + '5822' + '12' * 34
+               + '64' + b'solc'.hex() + '43' + '000818' + '0033')
+SOLC_TAIL_B = SOLC_TAIL_A.replace('12' * 34, '34' * 34)
+
+
+class VerifyDeploymentFalseExactTests(unittest.TestCase):
+    address = '0x' + '22' * 20
+    # Over SMALL_RUNTIME_BYTES, and it delegates: the shape of a diamond or a large proxy.
+    big_delegating = '0x' + '6000' + '5af4' + '5b' * 1100
+
+    def verify(self, code, artifact_code, calls=None, storage=None):
+        calls, storage = calls or {}, storage or {}
+
+        def call(params):
+            selector = params[0]['data'][:10]
+            return calls.get(selector, Node.Error(3, 'execution reverted'))
+
+        def get_storage(params):
+            return storage.get(params[1], '0x' + '00' * 32)
+        node = Node({'eth_chainId': '0x1', 'eth_blockNumber': '0x100',
+                     'eth_getCode': code, 'eth_getStorageAt': get_storage, 'eth_call': call})
+        with tempfile.TemporaryDirectory() as temp:
+            artifact = Path(temp) / 'a.json'
+            artifact.write_text(json.dumps({'deployedBytecode': {'object': artifact_code}}))
+            return bounty.verify_deployment('http://node.invalid', self.address, str(artifact),
+                                            'latest', opener=node)
+
+    def test_a_rate_limited_facets_probe_is_never_exact(self):
+        facets = bounty.load_keccak().selector('facets()')
+        rate_limited = Node.Error(-32005, 'rate limit exceeded')
+        result = self.verify(self.big_delegating, self.big_delegating, calls={facets: rate_limited})
+        self.assertNotEqual(result['deployment_status'], 'exact')   # failed on 2924bc2: exact
+        self.assertEqual(result['proxy_resolution'], 'unresolved')
+        self.assertTrue(any('rate limit' in e for e in result['proxy_resolution_errors']))
+
+    def test_control_a_reverting_facets_probe_still_compares_exact(self):
+        result = self.verify(self.big_delegating, self.big_delegating)
+        self.assertEqual(result['deployment_status'], 'exact')
+        self.assertEqual(result['proxy_resolution'], 'not-a-proxy')
+
+    def test_a_null_storage_read_is_refused_not_read_as_empty(self):
+        with self.assertRaises(ValueError):                         # 2924bc2 compared exact
+            self.verify(self.big_delegating, self.big_delegating,
+                        storage={slot: None for slot in bounty.proxy_slots().values()})
+
+    def test_a_null_balance_is_refused_not_read_as_zero(self):
+        node = Node({'eth_chainId': '0x1', 'eth_blockNumber': '0x100', 'eth_getCode': '0x',
+                     'eth_getBalance': None})
+        with self.assertRaises(ValueError):                         # 2924bc2 reported 0 wei
+            bounty.value_at_risk('http://node.invalid', [self.address], opener=node)
+
+    def test_executable_bytes_after_a_fake_map_header_are_not_stripped(self):
+        def runtime(byte):
+            tail = 'a1' + ('60' + byte) * 60 + '00' + b'solc'.hex()
+            return '0x600060006000' + tail + format(len(tail) // 2, '04x')
+        result = bounty.compare_bytecode(runtime('00'), runtime('ff'))
+        self.assertNotEqual(result['status'], 'exact')              # failed on 2924bc2: exact
+
+    def test_control_real_solc_metadata_still_strips(self):
+        body = '0x6080604052' + '5b' * 40
+        result = bounty.compare_bytecode(body + SOLC_TAIL_A, body + SOLC_TAIL_B)
+        self.assertEqual(result['status'], 'exact')
+        self.assertEqual(result['metadata_stripped'], [53, 53])
+
+    def test_an_empty_artifact_is_a_mismatch(self):
+        result = bounty.compare_bytecode('0x' + '60' * 64, '0x')
+        self.assertEqual(result['status'], 'mismatch')              # 2924bc2: partial
+
+
 if __name__ == '__main__':
     unittest.main()
