@@ -114,19 +114,30 @@ Read `references/intake.md`. Before any pass reads code for bugs, produce:
    report as unreadable. One such file, one `curl` away, held the load-bearing primitive of a
    finding that had already passed the submission gate.
 6. **`history-matches.json`** — after importing what you already submitted to this program.
+7. **`audit-gap.json`** — every in-scope file ranked by whether anybody reviewed **this version**
+   of it: `never-audited`, `changed-after-audit`, `audited-stale`, `audited-recent`. On the
+   published data most of the loss in audited protocols came through paths no audit covered, and
+   the in-scope cases hit audits a year and a half old, so this is the reading order the passes
+   follow. `sequence_surfaces` lists the deployment, migration and upgrade files whatever their
+   band: an initialiser skipped by an upgrade script and a timelocked batch anyone may execute
+   are both in that set. With no `audited_revision` every file lands in `no-baseline`, which is
+   an unknown, not a pass.
 
 ```sh
 python3 $S history import --from-file <your export of this program's submissions>
 python3 $S history check --run <run>          # --create-ledger the first time
 python3 $S dup-harvest --run <run>
+python3 $S audit-gap --repo <checkout> --run <run> --scope <root> [--audited <commit>]
 python3 $S audit-inventory --repo <checkout> --run <run> --gate
 python3 $S verify-deployment --rpc <url> --address <addr> --artifact <build-artifact.json> --run <run>
 python3 $S solc-bugs --repo <checkout>
 python3 $S selectors --rpc <url> --address <addr> --abi <build-artifact.json> --run <run>
 ```
 
-Duplicate work comes first because `dup-map.json` travels in every bundle: ground burned before the
-first pass is ground the lenses skip. With no public tracker, `dup-harvest --empty-reason "<why>"`
+Duplicate work comes first because `dup-map.json` travels in every bundle: a lens that meets a
+burned surface says so in its reading instead of re-deriving it. It does **not** skip the ground —
+a known issue and a new mechanism live in the same function more often than not, and a lens told to
+look away from a burned surface stops looking for the variant beside it (`hunt-agents/_shared.md`). With no public tracker, `dup-harvest --empty-reason "<why>"`
 records that without a network call. Fill `in_scope_addresses` and `chain_ids` in `program.json`
 (`targets.md`): deployment evidence for anything else is refused at submission.
 
@@ -288,7 +299,17 @@ highest-priority open records — a real native candidate/negative-control pair,
 with an alternative actually attempted. Do not postpone a strong, reachable hypothesis because
 today's balance looks small: check whether the precondition is realisable, then test and bound it.
 
+**Price the duplicate risk before the budget, not after it.** `novelty-risk` searches what is
+searchable for each live record — review comments on pull requests, issues, advisories — and
+records the five judgement calls no search makes: have I reported this before, would their own
+telemetry already show it, is a flag named after the missing control, is this a class every model
+recalls, is a fix already in flight. Answer each one, give every hit a verdict, then spend the
+budget. On this skill's own record eleven of the first twelve decided reports came back duplicate
+or known, and in six of them the signal was visible beforehand. No public match is never evidence
+of novelty: private duplicates are invisible.
+
 ```sh
+python3 $S novelty-risk --run <run> [--finding BP-001] [--repo <owner/repo>] --gate
 python3 $S experiment-gate --run <run> --limit 3 --gate
 python3 $S scope-audit --repo <checkout> --run <run> --gate
 ```
@@ -355,9 +376,18 @@ the sources and the mechanism comparison. Then:
 ```sh
 python3 $S dup-harvest --run <run>
 python3 $S dup-check --run <run>
+python3 $S novelty-risk --run <run> --gate
 python3 $S history check --run <run>
+python3 $S verify-anchors --run <run> --gate
 python3 $S check --run <run> --submission
 ```
+
+`verify-anchors` opens the file every anchor cites and reports the quotes that are not in it —
+objections and their answers, escalation amplifiers, `intended` odd-one-out reviews, closed
+`known-hypotheses.md` rows, and the functions `examined.json` credits. A quote that is not there
+and a path the checkout does not track both block submission; a line number that has drifted is
+reported and does not. It is mechanical: it confirms the text is in that file, never that the
+quote supports the claim.
 
 A program with no published issues still needs `dup-check --empty-map-reason "<what was searched>"`:
 an empty map is only accepted with the reason it is empty. A collision demands a written

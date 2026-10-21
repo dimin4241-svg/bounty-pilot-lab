@@ -553,8 +553,10 @@ def initialize(repo, out):
         '# Known hypotheses\n\nAppend one line per investigated mechanism after every pass:\n'
         '`surface | bug-class | status | why it is closed or still open`.\n'
         'A status starting with `open` is a lead: the row names its findings.json record\n'
-        '(`BP-...`), and `check` fails on an open row without one. Closed rows are closed\n'
-        'ground for later passes; open rows are leads to finish, not ground to skip.\n',
+        '(`BP-...`), and `check` fails on an open row without one. A closed row closes that\n'
+        'ground for every later pass, so its `why` carries an anchor - code in backticks, or a\n'
+        'file:line reference - exactly as an objection does; `check` fails on a closed row\n'
+        'without one. Open rows are leads to finish, not ground to skip.\n',
         encoding='utf-8')
     return {'run': str(out), 'run_id': read_json(out / 'run.json')['run_id'],
             'project_key': project_for_repo(root), 'commit': commit, 'dirty': dirty,
@@ -1249,6 +1251,10 @@ def lead_queue(run):
             'audit_inventory': read_audit_inventory(run),
             'unrecorded_singletons': _unrecorded_singletons(run, records),
             'imported_untriaged': _imported_untriaged(records),
+            'unanchored_closures': _unanchored_closures(run),
+            'novelty_risk': read_novelty_risk(run),
+            'audit_gap': read_audit_gap(run),
+            'anchors': _queue_anchor_state(run),
             'notice': 'Every open lead needs a decisive next experiment. A listed experiment is '
                       'not evidence that it was run. untracked_leads are open rows in '
                       'known-hypotheses.md with no live record, and unrecorded_documents are '
@@ -1266,6 +1272,19 @@ def lead_queue(run):
                       'the obstacle is real, and every later pass reads it as closed ground, so '
                       'a wrong one silently deletes that surface. Reproduce each one - record '
                       'blocker as an object with claim, command and output_excerpt - or drop it. '
+                      'audit_gap is the reading order audit-gap computed: how many in-scope '
+                      'files no audit ever saw, how many changed after one, and how many '
+                      'deployment or migration files are in scope. It is null until that '
+                      'command runs. '
+                      'novelty_risk is what novelty-risk priced: a band per record, the search '
+                      'hits nobody has read, and the judgement calls nobody has answered. It is '
+                      'null until that command runs, and it is priced BEFORE the experiment '
+                      'budget, not after - eleven of the first twelve decided reports came back '
+                      'duplicate, six of them with the signal already visible. '
+                      'unanchored_closures are closed known-hypotheses rows that name no code: '
+                      'each one closes a surface for every later pass on an opinion, which is '
+                      'the one refutation nobody reviews. anchors is verify-anchors: it reads '
+                      'the file each anchor cites and reports the quotes that are not in it. '
                       'contradicted_blockers are blockers whose wording claims the opposite of '
                       'something capability-probe measured as available; the probe is right '
                       'about what it ran, so read the claim again. coverage_floor is the last '
@@ -1880,10 +1899,17 @@ def _coverage_md_cells(run):
     path = Path(run) / 'coverage.md'
     if not path.is_file():
         return cells
-    for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
+    previous = None
+    for number, line in enumerate(path.read_text(encoding='utf-8', errors='replace')
+                                  .splitlines(), 1):
         # The header names the columns and the rule is dashes; neither is a surface examined.
-        if line.count('|') < 3 or re.match(r'\s*\|?\s*:?-{3}', line):
+        if re.match(r'\s*\|?\s*:?-{3}', line):
+            if cells and previous == number - 1:
+                cells.pop()     # the line above a dash rule is the header
             continue
+        if line.count('|') < 3:
+            continue
+        previous = number
         cells.append(line.strip().strip('|').split('|')[0])
     return cells
 
@@ -2933,7 +2959,10 @@ PLACEHOLDER_MARKERS = ('<', '>', 'kebab-case', 'lens-name', 'contract.function',
 # Field lines that may follow a blank line and still belong to the block above.
 BLOCK_BODY_FIELDS = {'capability', 'path', 'proof', 'breaks', 'smell', 'next_experiment',
                      'question', 'method', 'expected_evidence', 'blocker', 'description', 'fix',
-                     'code_smells', 'impact', 'title', 'preconditions', 'root_cause'}
+                     'code_smells', 'impact', 'title', 'preconditions', 'root_cause',
+                     # What specifically is wrong, in the reader's own words. It splits the
+                     # grouping key, so two bugs of one class in one function stay apart.
+                     'mechanism'}
 BLOCK_FIELD_LINE = re.compile(r'^\s*(?:[-*]\s+)?([A-Za-z_][A-Za-z0-9_ -]{0,40}?)\s*:\s?(.*)$')
 BLOCK_BODY_MAX_LINES = 200
 LINE_REFERENCE = re.compile(r'^L?\d+(?:-L?\d+)?$', re.I)
@@ -3201,6 +3230,26 @@ def _located_block(word, tool, source, fields, surface, contract, function, bug_
             else '', 'path_resolution': resolution, 'candidates': candidates}
 
 
+def _apply_mechanism(block):
+    """Split the grouping key by the reading's own `mechanism:`, when it named one.
+
+    Bug-class labels are deliberately reused, so one function can hold two different bugs
+    under one label; keyed on the label alone they merge into a single saturated group and the
+    second one disappears into the first. A reading that says what is actually wrong keeps its
+    own group. Without the field nothing changes.
+    """
+    if not isinstance(block, dict) or not isinstance(block.get('fields'), dict):
+        return block
+    mechanism = block['fields'].get('mechanism')
+    if not has_text(mechanism) or _is_placeholder_value(mechanism):
+        return block
+    parts = block['key'].split('|')
+    parts[-1] = parts[-1] + '~' + _converge_key(mechanism)[:60]
+    block['key'] = '|'.join(parts)
+    block['mechanism'] = _finding_text(mechanism, 200)
+    return block
+
+
 def _block_body(lines, start):
     """The `key: value` lines under a header, up to the next header, fence, heading or rule.
 
@@ -3363,6 +3412,7 @@ def _header_block(word, header, body, source, line, index, skipped):
         block['upstream_key'] = _auditor_key(block, block['contract'], block['function'],
                                              bug_class)
     block['fields'] = body
+    _apply_mechanism(block)
     return block
 
 
@@ -5710,17 +5760,44 @@ def _known_hypothesis_rows(run):
     if not path.is_file():
         return []
     rows = []
+    previous = None
     for number, line in enumerate(path.read_text(encoding='utf-8', errors='replace')
                                   .splitlines(), 1):
         # The format line is quoted in backticks; table rules are dashes.
-        if line.count('|') < 3 or line.lstrip().startswith('`') or \
-                re.match(r'\s*\|?\s*:?-{3}', line):
+        if re.match(r'\s*\|?\s*:?-{3}', line):
+            # A dash rule means the line above it named the columns, not a hypothesis.
+            if rows and previous == number - 1:
+                rows.pop()
             continue
+        if line.count('|') < 3 or line.lstrip().startswith('`'):
+            continue
+        previous = number
         cells = [cell.strip() for cell in line.strip().strip('|').split('|')]
         if len(cells) >= 3:
             rows.append({'line': number, 'surface': cells[0], 'bug_class': cells[1],
-                         'status': cells[2], 'text': line.strip()})
+                         'status': cells[2], 'why': cells[3] if len(cells) > 3 else '',
+                         'text': line.strip()})
     return rows
+
+
+def _unanchored_closures(run):
+    """Closed rows of known-hypotheses.md whose reason carries no anchor.
+
+    A closed row is a refutation: it tells every later pass the ground is covered, and it earns
+    coverage toward the floor. The method already holds that an objection may reject only on a
+    quoted anchor, and this is the same act with no reviewer - so it carries the same burden.
+    Written without one, it closes a surface on an opinion nobody can check.
+    """
+    found = []
+    for row in _known_hypothesis_rows(run):
+        if row['status'].lower().startswith('open'):
+            continue
+        if REVIEW_ANCHOR.search(row['why']) or REVIEW_ANCHOR.search(row['surface']):
+            continue
+        found.append({'line': row['line'], 'surface': row['surface'],
+                      'bug_class': row['bug_class'], 'status': row['status'],
+                      'why': row['why'][:120]})
+    return found
 
 
 def _untracked_leads(run, records):
@@ -5773,7 +5850,183 @@ def _unrecorded_documents(run, records):
     return missing
 
 
+# --------------------------------------------------------------------------- #
+# anchors are checked against the code they cite
+# --------------------------------------------------------------------------- #
+
+# A path inside an anchor: `src/Vault.sol`, `./crates/x/src/lib.rs`, with an optional
+# `:120`, `#L120` or ` L120` after it. The suffix list keeps prose like "see the note in
+# section 3.2" from being read as a file.
+ANCHOR_PATH = re.compile(
+    r'(?<![\w/.-])((?:[\w.-]+/)*[\w.-]+\.(?:sol|vy|rs|go|move|cairo|ts|tsx|js|jsx|py|c|h|'
+    r'cc|cpp|hpp|java|kt|swift|yaml|yml|toml|json|md))(?:[:#]L?(\d+)|\s+L(\d+))?')
+ANCHOR_QUOTE = re.compile(r'`([^`\n]{3,200})`')
+# A quote that is only punctuation, a bare number, or a placeholder says nothing to check.
+ANCHOR_QUOTE_SKIP = re.compile(r'^(?:[\W\d_]+|L?\d+(?:-L?\d+)?|\.{3}|…)$')
+ANCHOR_FILE_MAX_BYTES = 4_000_000
+
+
+def _flat(text):
+    """Whitespace runs collapsed, so a quote reformatted by the reader still matches."""
+    return re.sub(r'\s+', ' ', text or '').strip()
+
+
+def _anchor_claims(run, records):
+    """Every (where, anchor text) pair in the run that claims to cite the target's code.
+
+    These are the places the method lets a reader close something: an objection and its
+    answer, an escalation amplifier, an `intended` odd-one-out review, and a closed
+    known-hypotheses row.
+    """
+    claims = []
+    for row in records if isinstance(records, list) else []:
+        if not isinstance(row, dict):
+            continue
+        ident = row.get('id') if isinstance(row.get('id'), str) else '?'
+        for i, item in enumerate(row.get('objections') or []):
+            if not isinstance(item, dict):
+                continue
+            for key in ('anchor', 'answer_anchor'):
+                if has_text(item.get(key)):
+                    claims.append((f'{ident}: objections[{i}].{key}', item[key]))
+        escalation = row.get('escalation')
+        attempted = escalation.get('attempted') if isinstance(escalation, dict) else None
+        for i, item in enumerate(attempted or []):
+            if isinstance(item, dict) and has_text(item.get('anchor')):
+                claims.append((f'{ident}: escalation.attempted[{i}].anchor', item['anchor']))
+    review, _ = _odd_one_out_review(run)
+    for lead_id, entry in sorted(review.items()) if isinstance(review, dict) else []:
+        if isinstance(entry, dict) and entry.get('status') == 'intended' \
+                and has_text(entry.get('note')):
+            claims.append((f'odd-one-out-review.json: {lead_id}', entry['note']))
+    for row in _known_hypothesis_rows(run):
+        if not row['status'].lower().startswith('open') and has_text(row['why']):
+            claims.append((f"known-hypotheses.md:{row['line']}", row['why']))
+    return claims
+
+
+def _check_one_anchor(root, text, tracked):
+    """(state, detail) for one anchor: does the code it quotes exist where it says?
+
+    States: `verified`, `path-missing`, `quote-not-found`, `line-missing`, `no-path`
+    (nothing to check against) and `unreadable`.
+    """
+    paths = ANCHOR_PATH.findall(text or '')
+    if not paths:
+        return 'no-path', 'names no file, so nothing was checked'
+    quotes = [q for q in ANCHOR_QUOTE.findall(text or '')
+              if not ANCHOR_QUOTE_SKIP.match(q.strip())
+              and not ANCHOR_PATH.fullmatch(q.strip())]
+    for name, line_a, line_b in paths:
+        match = [p for p in tracked if p == name or p.endswith('/' + name)]
+        if not match:
+            return 'path-missing', f'cites {name}, which the target checkout does not track'
+        body = read_target_file(root, match[0], errors='replace',
+                                max_bytes=ANCHOR_FILE_MAX_BYTES)
+        if body is None:
+            return 'unreadable', f'{match[0]} could not be read as text'
+        number = int(line_a or line_b) if (line_a or line_b) else None
+        if number is not None and number > len(body.splitlines()):
+            return 'line-missing', (f'cites {match[0]}:{number}, but that file has '
+                                    f'{len(body.splitlines())} lines')
+        flat = _flat(body)
+        missing = [q for q in quotes if _flat(q) not in flat]
+        if quotes and missing:
+            return 'quote-not-found', (f'quotes {missing[0][:60]!r}, which is not in '
+                                       f'{match[0]}')
+    return 'verified', ''
+
+
+def verify_anchors(run, repo=None):
+    """Check that every anchor and every examined function cites code that is really there.
+
+    An anchor is how this method closes a lead, answers an objection and earns coverage, and
+    until now nothing confirmed the quoted line existed. A reader under budget pressure
+    paraphrases from memory; the paraphrase reads exactly like evidence.
+    """
+    run = _deployment_run(Path(run))
+    meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
+    root = Path(repo).resolve() if repo else (
+        Path(meta['target_root']) if has_text(meta.get('target_root')) else None)
+    if root is None or not root.is_dir():
+        return {'state': 'unverifiable', 'checked': 0, 'problems': [],
+                'reason': 'the target checkout named in run.json is not on this machine, so no '
+                          'anchor could be checked against its code',
+                'notice': 'Unchecked, not clean.'}
+    tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
+    records = read_json(run / 'findings.json') if (run / 'findings.json').is_file() else []
+    problems, counts = [], {}
+    for where, text in _anchor_claims(run, records):
+        state, detail = _check_one_anchor(root, text, tracked)
+        counts[state] = counts.get(state, 0) + 1
+        if state in ('path-missing', 'quote-not-found', 'line-missing', 'unreadable'):
+            problems.append({'where': where, 'state': state, 'detail': detail,
+                             'anchor': str(text)[:160]})
+    # The same question asked of the coverage claim: a function credited as examined has to
+    # exist at the path that credited it.
+    examined, seen = _examined_record(run), set()
+    for surface in examined['surfaces']:
+        path, _, _, function = _split_surface(surface)
+        if not path or not function or (path, function) in seen:
+            continue
+        seen.add((path, function))
+        match = [p for p in tracked if p == path or p.endswith('/' + path)]
+        if not match:
+            problems.append({'where': EXAMINED_FILE, 'state': 'path-missing',
+                             'detail': f'credits {surface}, but the checkout does not track '
+                                       f'{path}', 'anchor': surface})
+            continue
+        body = read_target_file(root, match[0], errors='replace',
+                                max_bytes=ANCHOR_FILE_MAX_BYTES)
+        if body is None:
+            continue
+        if not re.search(r'(?<![\w$])' + re.escape(function) + r'(?![\w$])', body):
+            problems.append({'where': EXAMINED_FILE, 'state': 'symbol-not-found',
+                             'detail': f'credits {surface} as examined, but {match[0]} never '
+                                       f'names {function}', 'anchor': surface})
+    counts['examined_surfaces_checked'] = len(seen)
+    return {'state': 'checked', 'commit': meta.get('commit'), 'target_root': str(root),
+            'checked': sum(v for k, v in counts.items() if k != 'examined_surfaces_checked'),
+            'by_state': counts, 'problems': problems,
+            'notice': 'Mechanical only: it confirms the quoted text is in the file the anchor '
+                      'names, never that the quote supports the claim. An anchor naming no '
+                      'file is reported as no-path and checked against nothing.'}
+
+
+def _queue_anchor_state(run):
+    """verify-anchors as the queue reports it: counts, and the citations that do not hold."""
+    try:
+        report = verify_anchors(run)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {'state': 'unavailable',
+                'reason': 'the target checkout could not be read for this check'}
+    return {key: report[key] for key in ('state', 'checked', 'problems') if key in report} | \
+           ({'reason': report['reason']} if 'reason' in report else {})
+
+
+# What blocks a submission: the file is not there, or the quoted text is not in it. A line
+# number drifts with every edit above it, and a stale one is untidy rather than false, so
+# `line-missing` is reported and does not block.
+ANCHOR_BLOCKING = ('path-missing', 'quote-not-found', 'symbol-not-found')
+
+
+def _check_anchors(run, errors):
+    report = verify_anchors(run)
+    for problem in report['problems']:
+        if problem['state'] not in ANCHOR_BLOCKING:
+            continue
+        errors.append(f"{problem['where']}: {problem['detail']}. An anchor that does not quote "
+                      'the code it cites is not evidence; quote the real line or withdraw the '
+                      'claim')
+
+
 def _check_lead_ledger(run, records, errors):
+    for row in _unanchored_closures(run):
+        errors.append(f"known-hypotheses.md:{row['line']}: closed row "
+                      f"'{row['surface'][:60]} | {row['bug_class'][:40]}' closes that ground with "
+                      'no anchor. Quote the code that closes it (backticks, or a file:line '
+                      'reference), or reopen the row: a closed row is a refutation, and a '
+                      'refutation needs the same anchor an objection does')
     for lead in _untracked_leads(run, records):
         errors.append(f"known-hypotheses.md:{lead['line']}: open lead "
                       f"'{lead['surface'][:60]} | {lead['bug_class'][:40]}' {lead['problem']}. "
@@ -5944,6 +6197,7 @@ def validate(run, submission=False, ledger=True):
         _check_submission_experiments(run, meta, records, errors)
         _check_ledger_blockers(run, meta, records, errors)
         _check_distinct_evidence(run, [row for row in records if isinstance(row, dict)], errors)
+        _check_anchors(run, errors)
     seen, targets = set(), 0
     for i, row in enumerate(records):
         prefix = f'finding[{i}]'
@@ -6510,6 +6764,400 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
                           'searched. Pass --label, rerun with --include-not-planned, or record '
                           'why with --empty-reason; the submission gate blocks until then.')
     return out
+
+
+# --------------------------------------------------------------------------- #
+# the audit gap decides the reading order
+# --------------------------------------------------------------------------- #
+
+# Of 68 exploited protocols that had an audit (ack3, H1 2026), 67.6% by count and 94.4% of the
+# loss came through a path outside every audit scope, and the in-scope cases hit audits with a
+# median age of 18 months. So the first question about a file is not what it does: it is
+# whether anybody reviewed this version of it.
+AUDIT_GAP_BANDS = ('never-audited', 'changed-after-audit', 'audited-stale', 'audited-recent',
+                   'no-baseline')
+AUDIT_STALE_DAYS = 365
+# Paths whose bugs the loss data keeps naming and a code review keeps skipping: the script that
+# deploys, the migration that initialises, the parameters the deployment carries.
+SEQUENCE_PATH_PARTS = {'deploy', 'deploys', 'deployment', 'deployments', 'migration',
+                       'migrations', 'script', 'scripts', 'upgrade', 'upgrades', 'ops',
+                       'tasks', 'genesis'}
+SEQUENCE_NAME_HINTS = ('deploy', 'migrat', 'upgrade', 'initial', 'bootstrap', 'setup',
+                       'genesis', 'seed')
+
+
+def _is_sequence_surface(path):
+    """Whether this file is part of how the system is deployed, initialised or upgraded."""
+    p = Path(path)
+    name = p.name.lower()
+    return (any(part.lower() in SEQUENCE_PATH_PARTS for part in p.parts[:-1])
+            or any(hint in name for hint in SEQUENCE_NAME_HINTS))
+
+
+def _file_last_change(root, path):
+    """ISO date of the last commit that touched this file, or '' when git cannot say."""
+    out = git(root, 'log', '-1', '--format=%cI', '--', path, check=False).strip()
+    return out[:10]
+
+
+def _changed_since(root, base, paths):
+    """The subset of `paths` that changed between `base` and HEAD, and those that did not exist."""
+    changed = {p for p in git(root, 'diff', '--name-only', '-z', '--no-renames',
+                              '--ignore-submodules=none', f'{base}..HEAD').split('\0') if p}
+    existed = {p for p in git(root, 'ls-tree', '-r', '--name-only', '-z', base).split('\0') if p}
+    return changed, existed
+
+
+def audit_gap(repo, run, audited=None, scope_prefixes=None, stale_days=AUDIT_STALE_DAYS,
+              limit=200):
+    """Rank every in-scope file by whether anybody reviewed this version of it.
+
+    Band 1 is code no audit ever saw, band 2 is code that changed after the audit, band 3 is
+    code an old audit covered and nothing has touched, band 4 is freshly audited. Deployment,
+    migration and upgrade files are called out whatever their band: they are the paths the loss
+    data keeps naming and a contract review keeps skipping.
+    """
+    repo = Path(repo).resolve()
+    root = Path(git(repo, 'rev-parse', '--show-toplevel').strip()).resolve()
+    run = _deployment_run(Path(run))
+    require_private_output(run, root, what='audit-gap --run')
+    program = {}
+    if (run / 'program.json').is_file():
+        try:
+            loaded = read_json(run / 'program.json')
+            program = loaded if isinstance(loaded, dict) else {}
+        except (OSError, ValueError):
+            program = {}
+    baselines = [b for b in (audited or []) if has_text(b)]
+    if not baselines and has_text(program.get('audited_revision')):
+        baselines = [program['audited_revision']]
+    resolved, unresolved = [], []
+    for base in baselines:
+        try:
+            full = git(root, 'rev-parse', '--verify', '--quiet', base + '^{commit}').strip()
+        except subprocess.SubprocessError:
+            full = ''
+        if full:
+            resolved.append({'given': base, 'commit': full,
+                             'date': git(root, 'log', '-1', '--format=%cI', full).strip()[:10]})
+        else:
+            unresolved.append(base)
+
+    tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
+    in_scope = [p for p in tracked
+                if Path(p).suffix in SOURCE_SUFFIXES and not _is_test_path(p)
+                and path_in_scope(p, scope_prefixes)]
+    today = datetime.now(timezone.utc).date()
+    changed_by_base, existed_by_base = {}, {}
+    for base in resolved:
+        changed, existed = _changed_since(root, base['commit'], in_scope)
+        changed_by_base[base['commit']] = changed
+        existed_by_base[base['commit']] = existed
+
+    rows = []
+    for path in in_scope:
+        if not resolved:
+            band, why = 'no-baseline', 'no audited revision was given or recorded'
+        elif all(path not in existed_by_base[b['commit']] for b in resolved):
+            band, why = 'never-audited', 'the file did not exist at any audited revision'
+        else:
+            covering = [b for b in resolved if path in existed_by_base[b['commit']]]
+            if all(path in changed_by_base[b['commit']] for b in covering):
+                band = 'changed-after-audit'
+                why = 'changed since ' + ', '.join(b['given'][:12] for b in covering)
+            else:
+                newest = max((b for b in covering if path not in changed_by_base[b['commit']]),
+                             key=lambda b: b['date'] or '')
+                age = None
+                if newest['date']:
+                    try:
+                        age = (today - datetime.strptime(newest['date'],
+                                                         '%Y-%m-%d').date()).days
+                    except ValueError:
+                        age = None
+                if age is not None and age >= stale_days:
+                    band = 'audited-stale'
+                    why = f"unchanged since {newest['given'][:12]}, {age} days ago"
+                else:
+                    band = 'audited-recent'
+                    why = f"unchanged since {newest['given'][:12]}"
+        rows.append({'path': path, 'band': band, 'why': why,
+                     'sequence_surface': _is_sequence_surface(path),
+                     'last_change': _file_last_change(root, path)})
+
+    order = {band: i for i, band in enumerate(AUDIT_GAP_BANDS)}
+    rows.sort(key=lambda r: (order.get(r['band'], 9), not r['sequence_surface'],
+                             r['last_change'] and -int(r['last_change'].replace('-', '')),
+                             r['path']))
+    counts = {}
+    for row in rows:
+        counts[row['band']] = counts.get(row['band'], 0) + 1
+    sequence = [r['path'] for r in rows if r['sequence_surface']]
+    result = {
+        'schema_version': SCHEMA_VERSION, 'run_id': read_json(run / 'run.json').get('run_id')
+        if (run / 'run.json').is_file() else None,
+        'computed_at': datetime.now(timezone.utc).isoformat(),
+        'commit': git(root, 'rev-parse', 'HEAD').strip(),
+        'baselines': resolved, 'unresolved_baselines': unresolved,
+        'scope_prefixes': scope_prefixes or [], 'stale_days': stale_days,
+        'in_scope_files': len(in_scope), 'by_band': counts,
+        'sequence_surfaces': sequence[:limit],
+        'sequence_surface_count': len(sequence),
+        'truncated': len(rows) > limit, 'omitted': len(rows) - min(len(rows), limit),
+        'ranked': rows[:limit],
+        'notice': 'A reading order, never a verdict: a freshly audited file can still hold the '
+                  'bug, and an unaudited one can be trivial. It answers one question - did '
+                  'anybody review THIS version of this file - because on the published data '
+                  'most loss in audited protocols came through paths no audit covered. With no '
+                  'audited revision every file lands in no-baseline, which is an unknown, not a '
+                  'pass: record audited_revision in program.json. sequence_surfaces are the '
+                  'deployment, migration and upgrade files, listed whatever their band.'}
+    dump(run / 'audit-gap.json', result)
+    return result
+
+
+def read_audit_gap(run):
+    """audit-gap as the queue reports it, or None when the command has not run."""
+    path = Path(run) / 'audit-gap.json'
+    if not path.is_file():
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return {'invalid': True}
+    if not isinstance(data, dict):
+        return {'invalid': True}
+    return {'computed_at': data.get('computed_at'), 'by_band': data.get('by_band'),
+            'baselines': [b.get('given') for b in data.get('baselines', [])
+                          if isinstance(b, dict)],
+            'sequence_surface_count': data.get('sequence_surface_count'),
+            'in_scope_files': data.get('in_scope_files')}
+
+
+# --------------------------------------------------------------------------- #
+# novelty risk, priced before the experiment budget
+# --------------------------------------------------------------------------- #
+
+# The judgement calls no search can make. Each one has cost a decided report: the answer is
+# recorded in the run, so a later pass reads a judgement rather than a silence.
+NOVELTY_JUDGEMENTS = (
+    ('own_prior_report',
+     'Have I reported this mechanism, or anything on this surface, to this program before? '
+     '(check the ledger AND the platform account; one hunt duplicated its own earlier report)'),
+    ('visible_in_their_telemetry',
+     'Would this failure already be visible to the team in their own indexer, dashboard, logs '
+     'or alerts? A defect their own telemetry shows is a defect they have seen'),
+    ('flag_named_after_the_control',
+     'Is there a feature flag, config key or dead code named after the missing control? That '
+     'name means somebody already wrote the guard'),
+    ('class_every_model_recalls',
+     'Is this one of the classes every LLM scores near-perfectly on - reentrancy, unchecked '
+     'math, classic oracle staleness, missing access modifier? On a crowded program those '
+     'arrive from several hunters in the same week'),
+    ('fix_already_in_flight',
+     'Is there an open PR, a draft release note, or a commit on another branch that touches '
+     'exactly this line?'),
+)
+NOVELTY_ANSWERS = {'yes', 'no', 'unknown'}
+NOVELTY_RISK_FILE = 'novelty-risk.json'
+# Searching every token drowns the signal; a function name is what a reviewer actually typed.
+NOVELTY_TERM_MIN = 4
+NOVELTY_MAX_TERMS = 6
+
+
+def _novelty_terms(row):
+    """The distinctive strings to search for this record: its functions, then its class."""
+    terms = []
+    paths = row.get('affected_paths')
+    for entry in paths if isinstance(paths, list) else []:
+        if not isinstance(entry, str):
+            continue
+        _, _, qualifier, function = _split_surface(entry)
+        for token in (function, qualifier):
+            if token and len(token) >= NOVELTY_TERM_MIN and token not in terms:
+                terms.append(token)
+    bug_class = row.get('bug_class')
+    if isinstance(bug_class, str):
+        phrase = bug_class.replace('-', ' ').strip()
+        if len(phrase) >= NOVELTY_TERM_MIN and phrase not in terms:
+            terms.append(phrase)
+    return terms[:NOVELTY_MAX_TERMS]
+
+
+def _novelty_search(slug, term, token, opener):
+    """Issue, PR and comment hits for one term, as a list of {ref, title, where}."""
+    found = []
+    for scope, label in (('in:comments', 'comment'), ('in:title,body', 'title-or-body')):
+        query = f'repo:{slug} {scope} "{term}"'
+        items, _ = _github_search(query, token, opener, limit=20)
+        for item in items:
+            if not isinstance(item, dict) or item.get('number') is None:
+                continue
+            found.append({'ref': _harvest_ref(item, slug.lower()),
+                          'url': item.get('html_url', ''),
+                          'title': ' '.join(str(item.get('title', '')).split())[:140],
+                          'state': item.get('state', ''),
+                          'is_pull': bool(item.get('pull_request')),
+                          'where': label, 'term': term})
+    seen, unique = set(), []
+    for hit in found:
+        if hit['ref'] in seen:
+            continue
+        seen.add(hit['ref'])
+        unique.append(hit)
+    return unique
+
+
+def _novelty_advisories(slug, token, opener):
+    """Published security advisories on the repository: invisible to issue search."""
+    try:
+        data = _github_get(f'{GITHUB_API}/repos/{slug}/security-advisories?per_page=100',
+                           token, opener)
+    except ValueError as exc:
+        return None, str(exc)
+    if not isinstance(data, list):
+        return [], ''
+    return [{'ghsa_id': row.get('ghsa_id'), 'severity': row.get('severity'),
+             'published_at': (row.get('published_at') or '')[:10],
+             'summary': ' '.join(str(row.get('summary', '')).split())[:200]}
+            for row in data if isinstance(row, dict)], ''
+
+
+def novelty_risk(run, finding=None, repo=None, token_env='GITHUB_TOKEN', offline=False,
+                 opener=None):
+    """Price the chance this mechanism is already known, before any experiment budget is spent.
+
+    Eleven of the first twelve decided reports came back duplicate or known, and in six of them
+    the signal was there beforehand. This searches what is searchable - review comments,
+    issues, advisories, the private ledger - and records the judgement calls that no search
+    makes, so the risk is written down before the week is spent rather than after.
+
+    It never says a mechanism is novel. No public match is not no private duplicate.
+    """
+    run = _deployment_run(Path(run))
+    meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
+    records = read_json(run / 'findings.json') if (run / 'findings.json').is_file() else []
+    records = [row for row in records if isinstance(row, dict)] if isinstance(records, list) \
+        else []
+    if finding:
+        records = [row for row in records if row.get('id') == finding]
+        if not records:
+            raise ValueError(f'findings.json holds no record {finding}')
+    else:
+        records = [row for row in records if row.get('status') not in NON_CLAIM_STATUSES]
+    if not records:
+        raise ValueError('no live records to price; record the mechanism first')
+
+    slug, slug_problem = None, ''
+    if not offline:
+        try:
+            slug = _harvest_slug(repo, meta)
+        except ValueError as exc:
+            slug, slug_problem = None, str(exc)
+    token = os.environ.get(token_env) if token_env and not offline else None
+
+    previous = {}
+    path = run / NOVELTY_RISK_FILE
+    if path.is_file():
+        try:
+            held = read_json(path)
+            previous = {row['id']: row for row in held.get('records', [])
+                        if isinstance(row, dict) and has_text(row.get('id'))} \
+                if isinstance(held, dict) else {}
+        except (OSError, ValueError):
+            previous = {}
+
+    advisories, advisory_problem = ([], 'offline') if (offline or not slug) else \
+        _novelty_advisories(slug, token, opener)
+    assessed, searched_terms = [], 0
+    for row in records:
+        ident = row.get('id') if isinstance(row.get('id'), str) else '?'
+        terms = _novelty_terms(row)
+        hits, errors = [], []
+        if slug:
+            for term in terms:
+                try:
+                    hits.extend(_novelty_search(slug, term, token, opener))
+                    searched_terms += 1
+                except (ValueError, OSError, urllib.error.URLError) as exc:
+                    errors.append(f'{term}: {exc}')
+        held = previous.get(ident, {})
+        kept = held.get('judgements') if isinstance(held.get('judgements'), dict) else {}
+        judgements = {}
+        for key, question in NOVELTY_JUDGEMENTS:
+            answer = kept.get(key)
+            answer = answer if isinstance(answer, str) and answer.lower() in NOVELTY_ANSWERS \
+                else 'unanswered'
+            judgements[key] = answer.lower()
+        triage = held.get('hit_triage') if isinstance(held.get('hit_triage'), dict) else {}
+        refs = {hit['ref'] for hit in hits}
+        untriaged = sorted(ref for ref in refs
+                           if not has_text(triage.get(ref, {}).get('verdict')
+                                           if isinstance(triage.get(ref), dict) else None))
+        unanswered = sorted(k for k, v in judgements.items() if v == 'unanswered')
+        yes = sorted(k for k, v in judgements.items() if v == 'yes')
+        assessed.append({
+            'id': ident, 'bug_class': row.get('bug_class'), 'terms': terms,
+            'searched': bool(slug), 'search_errors': errors,
+            'hits': sorted(hits, key=lambda h: h['ref']), 'hit_count': len(refs),
+            'hit_triage': {ref: triage[ref] for ref in sorted(refs) if ref in triage},
+            'untriaged_hits': untriaged,
+            'judgements': judgements, 'unanswered_judgements': unanswered,
+            'known_signals': yes,
+            'band': _novelty_band(bool(slug), untriaged, unanswered, yes)})
+
+    result = {
+        'schema_version': SCHEMA_VERSION, 'run_id': meta.get('run_id'),
+        'assessed_at': datetime.now(timezone.utc).isoformat(),
+        'repo': slug, 'repo_problem': slug_problem, 'offline': bool(offline),
+        'terms_searched': searched_terms,
+        'advisories': advisories if advisories is not None else [],
+        'advisory_problem': advisory_problem if advisories is None else '',
+        'questions': {key: question for key, question in NOVELTY_JUDGEMENTS},
+        'records': assessed,
+        'notice': 'Priced before the experiment, never a verdict. Searching found no match is '
+                  'not evidence of novelty: private duplicates are invisible, and on this '
+                  'skill\'s own record eleven of the first twelve decided reports came back '
+                  'duplicate or known. Answer every judgement with yes, no or unknown in '
+                  + NOVELTY_RISK_FILE + ', and give each hit a verdict (same-mechanism, '
+                  'related, unrelated) with one line of reasoning. A hit is a reason to read '
+                  'it, not a reason to drop the record.'}
+    dump(path, result)
+    return result
+
+
+def _novelty_band(searched, untriaged, unanswered, known_signals):
+    """How much duplicate risk this record is carrying, from what is known so far."""
+    if known_signals:
+        return 'high: ' + ', '.join(known_signals) + ' answered yes'
+    if not searched:
+        return 'unknown: nothing was searched (no repository, or --offline)'
+    if untriaged:
+        return f'unknown: {len(untriaged)} search hit(s) not yet read'
+    if unanswered:
+        return f'unknown: {len(unanswered)} judgement(s) unanswered'
+    return 'searched: public sources found nothing; private duplicates remain invisible'
+
+
+def read_novelty_risk(run):
+    """novelty-risk as the queue reports it, or None when the command has not run."""
+    path = Path(run) / NOVELTY_RISK_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return {'invalid': True}
+    rows = data.get('records') if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return {'invalid': True}
+    return {'assessed_at': data.get('assessed_at'), 'repo': data.get('repo'),
+            'records': [{'id': row.get('id'), 'band': row.get('band'),
+                         'hit_count': row.get('hit_count'),
+                         'untriaged_hits': row.get('untriaged_hits', []),
+                         'unanswered_judgements': row.get('unanswered_judgements', [])}
+                        for row in rows if isinstance(row, dict)],
+            'unpriced': []}
 
 
 # --------------------------------------------------------------------------- #
@@ -7425,6 +8073,11 @@ ANALYSIS_FILES = (
      'Mechanically flagged guard asymmetries, paired-write omissions and sibling asymmetries. A '
      'flagged difference may be intended. For each flag, read both siblings and decide whether '
      'the difference is reachable by an unprivileged actor and what it lets that actor do.'),
+    ('audit-gap.json', ('delta', 'coverage-gap', 'upstream-diff', 'spec-divergence'),
+     'Every in-scope file ranked by whether anybody reviewed THIS version of it: never-audited '
+     'first, then changed-after-audit, then audited-stale. sequence_surfaces are the deployment, '
+     'migration and upgrade files. A band is a reading order, not a likelihood: read the top of '
+     'band 1 and 2 before anything a recent audit covered.'),
     ('function-coverage.json', ('coverage-gap', 'classic', 'seam'),
      'Entry points and the ones no reading has examined (`unexamined`). Examined means a reading '
      'said it looked, not that the function is safe. Start from the unexamined entry points.'),
@@ -10587,6 +11240,39 @@ def build_parser():
                      help='private run directory: also save the lead as '
                           'selectors/<address>.json')
 
+    gap = sub.add_parser('audit-gap',
+                         help='rank in-scope files by whether anybody reviewed THIS version')
+    gap.add_argument('--repo', required=True)
+    gap.add_argument('--run', required=True)
+    gap.add_argument('--audited', action='append',
+                     help='an audited revision; repeat for several. Defaults to '
+                          'program.json audited_revision')
+    gap.add_argument('--scope', action='append', help='in-scope path prefix; repeat for several')
+    gap.add_argument('--stale-days', type=int, default=AUDIT_STALE_DAYS,
+                     help='an untouched file whose audit is at least this many days old is '
+                          f'stale (default {AUDIT_STALE_DAYS}; 0 makes every audit stale)')
+    gap.add_argument('--limit', type=int, default=200)
+    novelty = sub.add_parser('novelty-risk',
+                             help='price duplicate risk for a record BEFORE spending the '
+                                  'experiment budget')
+    novelty.add_argument('--run', required=True)
+    novelty.add_argument('--finding', help='one record id; the default prices every live one')
+    novelty.add_argument('--repo', help='GitHub owner/repo, URL or checkout; the default comes '
+                                        'from the run')
+    novelty.add_argument('--token-env', default='GITHUB_TOKEN',
+                         help='environment variable holding a read-only token')
+    novelty.add_argument('--offline', action='store_true',
+                         help='record the judgements without searching')
+    novelty.add_argument('--gate', action='store_true',
+                         help='exit non-zero while a hit is unread or a judgement unanswered')
+    anchors = sub.add_parser('verify-anchors',
+                             help='check that every anchor and examined function cites code '
+                                  'that is really in the checkout')
+    anchors.add_argument('--run', required=True)
+    anchors.add_argument('--repo', help='the target checkout, when run.json names one that has '
+                                        'moved')
+    anchors.add_argument('--gate', action='store_true',
+                         help='exit non-zero when an anchor cites code that is not there')
     bugs = sub.add_parser('solc-bugs',
                           help="check compiler versions against Solidity's published bug list")
     bugs.add_argument('--repo', default=None)
@@ -10748,6 +11434,21 @@ def main(argv=None):
             print(json.dumps(selectors_report(args.rpc, args.address, args.code, args.abi,
                                               args.signatures, args.block, args.run), indent=2))
             return 0
+        if args.action == 'audit-gap':
+            print(json.dumps(audit_gap(args.repo, args.run, args.audited, args.scope,
+                                       args.stale_days, args.limit), indent=2))
+            return 0
+        if args.action == 'novelty-risk':
+            result = novelty_risk(args.run, args.finding, args.repo, args.token_env,
+                                  args.offline)
+            print(json.dumps(result, indent=2))
+            open_items = [row for row in result['records']
+                          if row['untriaged_hits'] or row['unanswered_judgements']]
+            return 1 if args.gate and open_items else 0
+        if args.action == 'verify-anchors':
+            result = verify_anchors(args.run, args.repo)
+            print(json.dumps(result, indent=2))
+            return 1 if args.gate and result['problems'] else 0
         if args.action == 'solc-bugs':
             print(json.dumps(solc_bugs(args.repo, args.version), indent=2))
             return 0

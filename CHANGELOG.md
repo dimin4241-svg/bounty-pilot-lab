@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.24.0
+
+### Tier 1 of the 2026-10-21 design: hunt the audit gap, price duplicates first, check your own citations
+
+Three readings — 49 of my own runs, a blind-spot review of the skill, and the published data on
+post-audit exploits and AI-auditor benchmarks — agreed on one diagnosis. **The bottleneck is
+novelty, not detection.** Output per reading had gone up (~2.9 to ~4.3 blocks) while eleven of the
+first twelve decided reports came back duplicate or known and none paid. The design is in the
+private run notes; this release is its first tier.
+
+- **`audit-gap` (new).** Every in-scope file ranked by whether anybody reviewed *this version* of
+  it: `never-audited`, `changed-after-audit`, `audited-stale` (an untouched file whose audit is at
+  least `--stale-days` old, 365 by default), `audited-recent`. `sequence_surfaces` lists the
+  deployment, migration and upgrade files whatever their band. Reads `audited_revision` from
+  `program.json`, or `--audited` repeated; with no baseline every file is `no-baseline`, which is
+  an unknown and not a pass. It is handed to the `delta`, `coverage-gap`, `upstream-diff` and
+  `spec-divergence` bundles, and `queue` reports the bands. **Why:** of 68 exploited protocols that
+  had an audit, 67.6% by count and 94.4% of the loss came through paths outside every audit scope,
+  and the in-scope cases hit audits with a median age of 18 months.
+
+- **`novelty-risk` (new).** Per live record, before the experiment budget: searches issues, pull
+  requests and their review comments for the record's own function names and class, lists the
+  repository's security advisories, and holds five judgement calls no search makes — have I
+  reported this before, would their own telemetry show it, is a flag named after the missing
+  control, is this a class every model recalls, is a fix already in flight. Each hit takes a
+  verdict and each judgement an answer; `--gate` exits non-zero while any is open, and `queue`
+  shows the band. It never reports a mechanism as novel: no public match is not no private
+  duplicate. **Why:** in six of the eleven duplicates the signal was visible before the work.
+
+- **`verify-anchors` (new), wired into the submission gate.** Opens the file each anchor cites and
+  checks the quoted text is in it — objections and answers, escalation amplifiers, `intended`
+  odd-one-out reviews, closed `known-hypotheses.md` rows, and the functions `examined.json`
+  credits as read. A missing path, a quote that is not there, and a credited function the file
+  never names block submission; a drifted line number is reported and does not. Mechanical only:
+  it confirms the text is in that file, never that the quote supports the claim.
+
+- **The three paths that dropped a finding with nobody reviewing it are closed.** A closed
+  `known-hypotheses.md` row now carries the anchor that closes it, exactly as an objection does,
+  and `check` fails without one. SKILL.md no longer tells lenses that burned ground is ground to
+  skip, which contradicted `_shared.md` — a known issue and a new mechanism share a function more
+  often than not. The `_shared.md` "never report" list became "emit as a `LEAD` tagged
+  `likely-excluded`, naming the clause": deciding eligibility is Stage 4's job with the program's
+  text in hand, and done at hunt time it is an unanchored refutation nobody can see.
+
+- **`mechanism:` keeps two bugs of one class apart.** Labels are deliberately reused, so two
+  different defects in one function merged into a single saturated group and the second
+  disappeared. A reading that names `mechanism:` gets its own group; without the field nothing
+  changes.
+
+- **Both markdown table parsers skip the header row.** The shipped `known-hypotheses.md` template's
+  own header read as a closed row with the status "status", and a kept `coverage.md` header
+  counted as a parsed row, which suppressed the "prose over the template" warning.
+
+29 regression tests in `tests/test_tier1.py`; 28 fail on `fd2f48b` and the 29th is the control.
+861 tests green on Python 3.9 and 3.15.
+
+**This can newly fail an old run**, on purpose: a closed `known-hypotheses.md` row with no anchor,
+and any anchor or `examined.json` entry that cites code the checkout does not have.
+
 ## 0.23.0
 
 ### Review of 0.22.0: what ran target code, leaked, read exact, or passed when it should not
