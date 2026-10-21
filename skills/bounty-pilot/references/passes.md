@@ -234,6 +234,10 @@ surface | bug-class | status | one line: why it is closed, or what is still open
 Status is `closed-refuted`, `closed-verified`, `closed-parked`, `open-needs-experiment` or
 `open-blocked`. An `open-…` row names its record's `BP-` id, and that record must be live
 (`hypothesis`, `needs-evidence`, `verified` or `parked`); `check` fails on an open row without one.
+A `closed-…` row is a refutation with no reviewer present, so its last cell carries the **anchor**
+that closes it — the code in backticks, or a `file.ext:line` reference — and `check` fails without
+one. "No external call here" closes a surface on an opinion; ``no call: `_withdraw` at
+src/Vault.sol:88 only writes`` closes it on something the next pass can check.
 In the first runs 25 of 30 open rows had no record, so no queue showed them and every later pass
 was told the file is closed ground. Include
 the mechanisms you looked for and did **not** find — an absence recorded is coverage; an absence

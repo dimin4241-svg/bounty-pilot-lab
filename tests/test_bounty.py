@@ -1874,9 +1874,16 @@ class RunTests(unittest.TestCase):
         self.assertTrue(any('is open, but its record BP-001 is refuted' in e
                             for e in bounty.validate(self.run)))
 
-    def test_closed_rows_need_no_record(self):
+    def test_closed_rows_need_no_record_but_do_need_an_anchor(self):
+        # A closed row is a refutation with nobody reviewing it, so it carries an objection's
+        # burden: the code that closes the ground, not the reader's conclusion about it.
         self.known('| surface | bug-class | status | why |', '| --- | --- | --- | --- |',
                    '| src/Vault.sol | reentrancy | closed-refuted | nonReentrant on every path |')
+        errors = bounty.validate(self.run)
+        self.assertTrue(any('closes that ground with no anchor' in e for e in errors), errors)
+        anchored = (self.run / 'known-hypotheses.md').read_text().replace(
+            'nonReentrant on every path', '`nonReentrant` at src/Vault.sol:42 on every path')
+        (self.run / 'known-hypotheses.md').write_text(anchored)
         self.assertEqual(bounty.validate(self.run), [])
 
     def test_a_finding_written_up_without_a_record_fails(self):

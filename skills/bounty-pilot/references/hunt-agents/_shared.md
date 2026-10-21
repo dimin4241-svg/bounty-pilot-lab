@@ -161,14 +161,21 @@ having read it closes ground nobody covered.
 ## Never
 
 - Never claim a test ran, a fork was simulated, or a value was read on chain unless you did it.
-- Never report admin-does-admin-things, centralisation with no mechanism, gas micro-optimisations,
-  missing events, linter output, or naming. Admin behaviour counts only when an unprivileged actor
-  can race it, amplify it, or reach it through a gap in the access mechanism itself. A role that any
-  user can create or take — the admin of a pool, market, vault or subnet they created themselves, a
-  self-assigned delegate, a role granted by a deposit — is **not** a trusted role: whoever holds it
-  is an unprivileged actor, and what they can do to other users' funds is in scope.
-- Never report dust-level rounding that does not compound, MEV that the design accepts, or a
-  self-harm-only path.
-- Never treat a revert as a vulnerability on its own. A revert is a finding when it is reachable by
-  an unprivileged actor, persistent, and blocks a function other users need.
+- Admin-does-admin-things, centralisation with no mechanism, gas micro-optimisations, missing
+  events, linter output and naming are **not** findings. Admin behaviour counts only when an
+  unprivileged actor can race it, amplify it, or reach it through a gap in the access mechanism
+  itself. A role that any user can create or take — the admin of a pool, market, vault or subnet
+  they created themselves, a self-assigned delegate, a role granted by a deposit — is **not** a
+  trusted role: whoever holds it is an unprivileged actor, and what they can do to other users'
+  funds is in scope.
+- Dust-level rounding that does not compound, MEV the design accepts, a self-harm-only path, and a
+  revert on its own are not findings either. A revert is a finding when it is reachable by an
+  unprivileged actor, persistent, and blocks a function other users need.
+- **These are the shapes you emit as `LEAD`, tagged `likely-excluded`, not the shapes you delete.**
+  Write the mechanism, name the clause that excludes it, and move on. Deciding eligibility is
+  Stage 4's job with the program's own text in hand; done here, it is an unanchored refutation
+  nobody can see, and the record shows it discarding real ground: a missing event that strands an
+  off-chain consumer, a dust rounding that compounds over a loop you had not read yet, a
+  self-harm path an attacker can make someone else walk. Emitting one costs a line. Dropping one
+  silently costs the finding.
 - Never invent a program rule, a deployed address, or an audit you did not read.
