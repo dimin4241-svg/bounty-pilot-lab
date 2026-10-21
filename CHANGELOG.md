@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.26.0
+
+### Hand over a PoC the team can rerun, and write the report like a person
+
+- **`poc-bundle` (new), and the submission gate requires it.** For one finding it packs the test,
+  the log that test printed, the paired-runner result and any deployment evidence, writes a README
+  carrying the original layout (a gist has no directories, so paths are flattened), and with
+  `--publish` creates an **unlisted** gist, then compares the gist's file list with the manifest in
+  both directions. `check --submission` now blocks a verified record that has no published bundle,
+  one bundled in a different run, or one whose gist does not match file for file. `queue` reports
+  the bundles with the command to delete each one.
+  - **A credential anywhere in the bundle is a refusal, not a redaction**, because a redacted PoC
+    does not run. The scan is the one the record gates already use.
+  - **Preparing is the default; publishing is one explicit flag.** `gh gist create` is secret by
+    default and has no `--secret` flag, so `--public` is never passed.
+  - The README pins the commit the **PoC ran at**, not the one the run was opened at.
+  - An unlisted gist is **not** access-controlled. The link belongs in the private report and
+    nowhere else, and `poc-gists.json` carries the exact `gh gist delete` command for when the
+    finding is triaged. An unfixed bug with a live PoC URL is a disclosure with extra steps.
+
+- **`references/report.md` rewritten around voice.** Programs are explicitly delaying triage over
+  LLM-generated submissions, and practitioners report AI pushing duplicate rates up, so a report
+  that reads as generated gets skimmed and batch-closed whatever is in it. The file now opens with
+  why that is, then names the tells in a table with what to write instead — the greeting, the
+  Executive Summary over three sentences, "could potentially", "leverage", bold on every other
+  sentence, emoji severity markers, one-row tables, the restated impact, the Conclusion section,
+  sections filled only because the template has them. Two get their own paragraphs: hedging in the
+  impact sentence, and claiming a severity the rubric does not give. It asks for English, short
+  active sentences, first person for what you did, numbers instead of adjectives, a file and line
+  on every claim about the code, and under about two pages — the PoC carries the proof. A
+  before-you-send checklist closes it. The no-automatic-submission rule and the
+  individually-excluded-composition guidance are unchanged.
+
+21 regression tests in `tests/test_poc_gist.py`; 20 fail on `2ab8637` and the 21st is the control.
+Publishing is tested through an injected `gh`, so no test creates a gist or touches the network.
+898 tests green on Python 3.9 and 3.15.
+
+**This newly fails an old run**, on purpose: a verified record with no published PoC bundle.
+
 ## 0.25.0
 
 ### Tier 2: a mechanism instead of a theme, and the three layers nothing was reading

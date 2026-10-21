@@ -761,6 +761,26 @@ class RunTests(unittest.TestCase):
         record.update(overrides)
         return record
 
+
+    def published_poc(self, *findings):
+        """Record a prepared-and-published PoC bundle, the way `poc-bundle --publish` writes it.
+
+        The gate requires one before a report goes out: the team gets the test, its log and the
+        runner result on an unlisted gist instead of taking the claim on trust. Publishing needs
+        the network, so the fixture writes what the command would have written.
+        """
+        run_id = bounty.read_json(self.run / 'run.json')['run_id']
+        bounty.dump(self.run / bounty.POC_GIST_FILE, {
+            'schema_version': bounty.SCHEMA_VERSION, 'run_id': run_id,
+            'bundles': [{'finding': ident, 'run_id': run_id, 'published': True,
+                         'url': f'https://gist.github.com/tester/{i:032x}',
+                         'gist_id': f'{i:032x}', 'visibility': 'secret (unlisted)',
+                         'files': [{'gist_name': 'poc.t.sol', 'path': 'poc.t.sol',
+                                    'role': 'poc', 'bytes': 7, 'sha256': 'ab' * 32}],
+                         'verified_file_for_file': True,
+                         'delete_command': f'gh gist delete {i:032x} --yes'}
+                        for i, ident in enumerate(findings or ('BP-001',), start=1)]})
+
     def submittable(self):
         row = self.verified()
         row['escalation'] = self.escalation()
@@ -777,6 +797,7 @@ class RunTests(unittest.TestCase):
         row['dup_review'] = {'status': 'no-match', 'entry_ids': [],
                              'rationale': 'dup-check clean on 2026-10-09 against the known-issues '
                                           'list and the published audit'}
+        self.published_poc(row['id'])
         return self.paired(row)
 
     # ---- init ----
