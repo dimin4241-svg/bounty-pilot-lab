@@ -1254,6 +1254,7 @@ def lead_queue(run):
             'unanchored_closures': _unanchored_closures(run),
             'novelty_risk': read_novelty_risk(run),
             'audit_gap': read_audit_gap(run),
+            'theme_sweeps': _read_theme_sweeps(run),
             'anchors': _queue_anchor_state(run),
             'notice': 'Every open lead needs a decisive next experiment. A listed experiment is '
                       'not evidence that it was run. untracked_leads are open rows in '
@@ -1272,6 +1273,11 @@ def lead_queue(run):
                       'the obstacle is real, and every later pass reads it as closed ground, so '
                       'a wrong one silently deletes that surface. Reproduce each one - record '
                       'blocker as an object with claim, command and output_excerpt - or drop it. '
+                      'theme_sweeps are readings whose blocks never say what is specifically '
+                      'wrong - no mechanism: line anywhere. That is the one measured failure of '
+                      'an agent doing this job, and the same model scores 50.7% given only the '
+                      'file against 92.6% given the mechanism, so re-read those surfaces with a '
+                      'falsifiable sentence per block. '
                       'audit_gap is the reading order audit-gap computed: how many in-scope '
                       'files no audit ever saw, how many changed after one, and how many '
                       'deployment or migration files are in scope. It is null until that '
@@ -3734,6 +3740,26 @@ def _unrecorded_singletons(run, records, shown=25):
                       'else lists them: record each one or close it with its reason.'}
 
 
+def _theme_sweeps(recorded):
+    """Readings whose blocks never say what is specifically wrong.
+
+    The measured failure of an agent doing this job is a plausible report organised around
+    themes that misses the bug: on a published benchmark the same model found 50.7% of graded
+    bugs given the file and 92.6% given the mechanism. A reading with no `mechanism:` line
+    anywhere is that report, and it is counted rather than quietly accepted.
+    """
+    sweeps = []
+    for key in sorted(recorded):
+        blocks = recorded[key].get('blocks') or []
+        if not blocks:
+            continue
+        named = sum(1 for block in blocks if has_text(block.get('mechanism')))
+        if named:
+            continue
+        sweeps.append({'reading': Path(key).name, 'blocks': len(blocks)})
+    return sweeps
+
+
 def _reading_digest(text):
     """Content identity of a reading for duplicate detection: whitespace runs collapse, so a copy
     re-saved with trailing spaces or other line endings is the same reading, not a second one."""
@@ -3928,7 +3954,9 @@ def converge(readings, run, threshold=2, reset=False, drop_missing=False):
         'notice': 'What readings said they examined or could not reach, by surface. A reading '
                   'that examined a function did not establish that it is safe.'})
     all_readings = sorted(recorded)
+    theme_sweeps = _theme_sweeps(recorded)
     dump(run / 'convergence.json', {
+        'theme_sweeps': theme_sweeps,
         'schema_version': SCHEMA_VERSION, 'run_id': meta.get('run_id'),
         'generated_at': datetime.now(timezone.utc).isoformat(), 'threshold': threshold,
         'readings_parsed': len(all_readings), 'blocks_parsed': len(blocks),
@@ -3953,6 +3981,8 @@ def converge(readings, run, threshold=2, reset=False, drop_missing=False):
                                     for g in untriaged],
             'missing_sources': missing if not drop_missing else [],
             'blocks_skipped': len(skipped_blocks), 'unreadable_files': unreadable,
+            'theme_sweeps': theme_sweeps,
+            'blocks_without_mechanism': sum(1 for b in blocks if not has_text(b.get('mechanism'))),
             'examined_surfaces': len(examined), 'not_reached_surfaces': len(not_reached),
             'notes': notes,
             'written': [READINGS_LEDGER, 'saturated.md', 'convergence.json', EXAMINED_FILE],
@@ -6916,6 +6946,19 @@ def audit_gap(repo, run, audited=None, scope_prefixes=None, stale_days=AUDIT_STA
     return result
 
 
+def _read_theme_sweeps(run):
+    """The theme-sweep readings convergence.json last recorded, or [] when it has not run."""
+    path = Path(run) / 'convergence.json'
+    if not path.is_file():
+        return []
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return []
+    rows = data.get('theme_sweeps') if isinstance(data, dict) else None
+    return rows if isinstance(rows, list) else []
+
+
 def read_audit_gap(run):
     """audit-gap as the queue reports it, or None when the command has not run."""
     path = Path(run) / 'audit-gap.json'
@@ -7661,7 +7704,8 @@ LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence', 'privileg
           'accounting', 'integration-auth', 'external-call', 'economics', 'liveness', 'upgrade',
           'live-reality', 'anchor-account', 'seam', 'business-logic',
           'temporal-logic', 'recovery-failure', 'semantic-mismatch', 'composition',
-          'impact-first', 'classic', 'web-frontend')
+          'impact-first', 'classic', 'web-frontend', 'node-client', 'secrets-artifacts',
+          'wallet')
 TRIAGE = 'triage'
 # Aiming lenses produce a reading order, not findings: spec-divergence reads what the project
 # promised in its own documentation and says where to go looking for the promise being broken.
@@ -7680,6 +7724,13 @@ HIGH_IMPACT_LENSES = ('impact-first', 'privileged-path', 'business-logic',
                       'integration-auth')
 # The dApp page that builds the transaction. Its bundle carries the web sources, not contracts.
 WEB_LENSES = ('web-frontend',)
+# The layer under the contracts: node, client, runtime, precompile, prover. Six of the seven
+# largest public bounties were paid here, and no lens read it until 0.25.
+NODE_LENSES = ('node-client',)
+# What the project published without meaning to, and the wallet that signs on the user's
+# behalf. Both produced a confirmed High in this skill's own ledger with no lens looking.
+ARTIFACT_LENSES = ('secrets-artifacts',)
+WALLET_LENSES = ('wallet',)
 WEB_SOURCE_SUFFIXES = {'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.html', '.htm', '.vue',
                        '.svelte', '.astro'}
 # Build output and installed packages: a frontend's own tree holds megabytes of both.
@@ -8246,12 +8297,19 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
             chosen.extend(HIGH_IMPACT_LENSES)
         elif lens == 'web':
             chosen.extend(WEB_LENSES)
+        elif lens == 'node':
+            chosen.extend(NODE_LENSES)
+        elif lens == 'artifacts':
+            chosen.extend(ARTIFACT_LENSES)
+        elif lens == 'wallet-app':
+            chosen.extend(WALLET_LENSES)
         elif lens in LENSES or lens == TRIAGE:
             chosen.append(lens)
         else:
             raise ValueError(f'unknown lens {lens!r}; choose from ' + ', '.join(LENSES)
                              + f', {TRIAGE}, or the groups aim / attack / config / logic / '
-                               'cross-stack / high-impact / web / recommended / all')
+                               'cross-stack / high-impact / web / node / artifacts / '
+                               'wallet-app / recommended / all')
     chosen = list(dict.fromkeys(chosen))
     for lens in chosen:
         source_file = (references / f'{TRIAGE}.md' if lens == TRIAGE
@@ -8282,7 +8340,7 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                   + source)
     (out / 'source.md').write_text(source_doc, encoding='utf-8')
     web_doc, web_paths = '', []
-    if any(lens in WEB_LENSES for lens in chosen):
+    if any(lens in WEB_LENSES + WALLET_LENSES for lens in chosen):
         # The page that builds the transaction, not the contracts it calls: a web-frontend
         # bundle carries this in place of the contract source.
         web_paths = [p for p in tracked if _is_web_source(p) and path_in_scope(p, scope_prefixes)]
@@ -8450,7 +8508,11 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
         # The documented promise is read before the code that is supposed to keep it.
         if lens in DOCS_LENSES:
             pieces.append(docs_doc)
-        pieces.append(web_doc if lens in WEB_LENSES else source_doc)
+        # The wallet lens reads the client that signs: web sources where the target ships
+        # them (an extension or a webview app), the ordinary source tree otherwise (a mobile
+        # or desktop wallet in Swift, Kotlin or Rust).
+        use_web = lens in WEB_LENSES or (lens in WALLET_LENSES and bool(web_paths))
+        pieces.append(web_doc if use_web else source_doc)
         if lens in ('coverage-gap', 'business-logic', 'temporal-logic', 'composition'):
             pieces.append(tests_doc)
         pieces.append(BUNDLE_FOOTER.format(lens=lens, target=root.name, commit=commit))
@@ -8477,6 +8539,9 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
         notes.append('no in-scope source matched; check --scope and the tracked file list')
     if any(lens in WEB_LENSES for lens in chosen) and not web_paths:
         notes.append('web-frontend bundle holds no web source: none is tracked under --scope')
+    if any(lens in WALLET_LENSES for lens in chosen) and not web_paths:
+        notes.append('wallet bundle holds the ordinary source tree: no web source is tracked '
+                     'under --scope, so this target is read as a native client')
     for name, (_, record, _) in analysis.items():
         if record['cut']:
             notes.append(f"{name} was cut to fit the bundle: {record['cut']}")

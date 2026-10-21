@@ -110,6 +110,34 @@ name the broken property in your own words, you have a code smell — emit it as
 Prefer a LEAD over dropping. A trail with a named unknown is useful to the next pass; a dropped
 one costs the pass that re-finds it.
 
+## A mechanism, not a theme
+
+**The single measured failure of an agent doing this job is that it organises the audit around
+themes and writes a plausible report that misses the bug.** On a published benchmark the same
+model found 50.7% of graded bugs when told only which file to look at, and 92.6% when told what the
+mechanism was. You cannot be given the mechanism — so you have to state one, and the statement is
+what makes the difference between the two numbers.
+
+Every block carries a `mechanism:` line: **one sentence naming what specifically is wrong with
+this code**, in your own words, specific enough that reading the function could prove it false.
+
+| Not a mechanism | A mechanism |
+|---|---|
+| "withdraw has reentrancy concerns" | "`withdraw` sends ETH at line 142 before `totalDebt -=` at 147, so the receiver's fallback re-enters with the old debt" |
+| "access control should be reviewed" | "`setFeeRecipient` has no modifier, while every other setter in this contract carries `onlyOwner`" |
+| "the accounting may drift" | "`repay` writes `balances` but never `totalDebt`, so the two disagree after any partial repayment" |
+| "oracle usage is risky" | "`getPrice` reads `latestAnswer` and never checks `updatedAt`, so a halted feed keeps pricing collateral" |
+
+The test: **could a reader disprove this sentence by reading the named function?** "Concerns",
+"may be vulnerable", "should be reviewed" and "potential issue" cannot be disproved, so they are
+not mechanisms. Name the line, the missing operation, or the asymmetry against the sibling that
+has it.
+
+`mechanism:` is also the grouping key's tiebreaker: two different defects under one `bug_class` in
+one function stay two records instead of merging into one.
+
+A reading that emits no `mechanism:` line is a theme sweep, and `converge` counts it as one.
+
 ## Output
 
 One root cause per item. Same root cause in five contracts is one item with five surfaces. Different
@@ -117,6 +145,7 @@ fix needed means a different item.
 
 ```
 CANDIDATE | lens: <lens-name> | surface: <path:Contract.function> | bug_class: <kebab-case>
+mechanism: one sentence: what is wrong with this code, specific enough to be disproved by reading it
 capability: what the attacker holds before the first call, and nothing more
 path: entry -> state change -> harm, each step from code you read
 proof: concrete values, offsets, branch conditions or constants quoted from this source
@@ -130,6 +159,7 @@ next_experiment:
 
 ```
 LEAD | lens: <lens-name> | surface: <path:Contract.function> | bug_class: <kebab-case>
+mechanism: one sentence: what you think is wrong, even when the unknown below decides it
 smell: what is wrong-looking, from the code
 next_experiment:
   question: the specific unknown that would turn this into a candidate or kill it

@@ -24,13 +24,15 @@ ADAPTERS = {
 }
 LENSES = {
     "solidity-evm": ["impact-first", "privileged-path", "accounting", "business-logic", "temporal-logic"],
-    "rust-native": ["impact-first", "recovery-failure", "semantic-mismatch", "business-logic"],
+    "rust-native": ["impact-first", "recovery-failure", "semantic-mismatch", "business-logic",
+                    "node-client"],
     "rust-solana": ["impact-first", "anchor-account", "privileged-path", "business-logic", "temporal-logic"],
     "rust-cosmwasm": ["business-logic", "temporal-logic", "integration-auth"],
-    "rust-substrate": ["impact-first", "privileged-path", "composition", "accounting", "live-reality", "upstream-diff"],
+    "rust-substrate": ["impact-first", "privileged-path", "composition", "accounting",
+                       "live-reality", "upstream-diff", "node-client"],
     "move": ["privileged-path", "business-logic", "temporal-logic"],
     "cairo-starknet": ["privileged-path", "business-logic", "temporal-logic"],
-    "go": ["recovery-failure", "business-logic", "semantic-mismatch"],
+    "go": ["recovery-failure", "business-logic", "semantic-mismatch", "node-client"],
     "web-backend": ["privileged-path", "recovery-failure", "semantic-mismatch"],
 }
 
@@ -225,11 +227,16 @@ def prioritize(route_report, budget=6):
             "recovery-failure": 2, "integration-auth": 2, "accounting": 2,
             "external-call": 2, "economics": 2, "liveness": 2,
             "anchor-account": 0, "upgrade": 1, "live-reality": 1,
-            "delta": 1, "upstream-diff": 1, "seam": 1}
+            "delta": 1, "upstream-diff": 1, "seam": 1,
+            # Ranks like any specialised lens once a stack asks for it, and is dropped outright
+            # when none does: a node lens on a contracts-only target reads nothing.
+            "node-client": 3}
     reasons = {name: ["general baseline"] for name in base}
+    hinted = set()
     for stack in route_report["stacks"]:
         for lens in stack["recommended_lenses"]:
             base[lens] += 5
+            hinted.add(lens)
             reasons[lens].append("manifest hint: " + stack["stack"])
     if len(route_report["stacks"]) > 1:
         for name in ("semantic-mismatch", "recovery-failure", "composition"):
@@ -242,6 +249,10 @@ def prioritize(route_report, budget=6):
     # Anchor's account model must never be force-selected on ordinary Rust.
     if "rust-solana" not in {x["stack"] for x in route_report["stacks"]}:
         base.pop("anchor-account")
+    # The node lens belongs to a client or runtime stack. No stack asked for it means the
+    # target is contracts or an application, where it would read nothing.
+    if "node-client" not in hinted:
+        base.pop("node-client", None)
     ranked = sorted(base, key=lambda name: (-base[name], name))
     # Who may deliver a message is the boundary every bridge and relayer turns on: with any
     # messaging signal, integration-auth is selected whatever the budget.
