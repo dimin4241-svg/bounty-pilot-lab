@@ -472,7 +472,7 @@ class ImportFindingsTests(SearchFixture):
         self.assertEqual(vault['affected_paths'], ['src/Vault.sol:Vault.withdraw'])
         self.assertEqual(vault['evidence'], {})
         self.assertEqual(vault['origin']['tool'], 'solidity-auditor')
-        self.assertEqual(vault['origin']['key'], 'vault|withdraw|reentrancy')
+        self.assertEqual(vault['origin']['key'], 'src/vault.sol|vault|withdraw|reentrancy')
         self.assertEqual(vault['origin']['upstream_kind'], 'FINDING')
         self.assertEqual(vault['origin']['triage'], 'untriaged')
         self.assertEqual(vault['origin']['path_resolution'], 'resolved-from-contract')

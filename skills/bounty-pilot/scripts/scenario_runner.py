@@ -362,6 +362,20 @@ def _decode(blob):
     return blob[:MAX_OUTPUT_BYTES].decode("utf-8", "replace"), truncated
 
 
+# A runner prints its summary last: past the stored head of a long `-vvvv` run it was never
+# read, and a per-suite header was taken for proof that a test ran.
+DETECT_TAIL_BYTES = 16000
+
+
+def _detection_text(blob):
+    """What detection reads: the whole output, or its head and its tail when it is long."""
+    blob = blob or b""
+    if len(blob) <= MAX_OUTPUT_BYTES:
+        return blob.decode("utf-8", "replace")
+    return (blob[:MAX_OUTPUT_BYTES].decode("utf-8", "replace") + "\n...[cut]...\n"
+            + blob[-DETECT_TAIL_BYTES:].decode("utf-8", "replace"))
+
+
 def _dotenv_offenders(directory):
     allowed = {".env.example", ".env.sample", ".env.template", ".env.dist"}
     offenders = []
@@ -449,7 +463,10 @@ def _cargo_zero(argv, low):
     for count, body in zip(counts, bodies):
         result = re.search(r"test result: \w+\. (\d+) passed; (\d+) failed", body)
         executed.append(int(result.group(1)) + int(result.group(2)) if result else count)
-    binaries = len(re.findall(r"(?m)^\s*running (?!\d+ tests?$)\S", low))
+    # A test binary header, not cargo -v's `Running \`rustc ...\`` / `\`rustdoc ...\``
+    # compiler invocations: counted as binaries, those pushed doc-test blocks into the slice.
+    binaries = sum(1 for header in re.findall(r"(?m)^\s*running (?!\d+ tests?$)(\S.*)$", low)
+                   if not re.search(r"(?:^|[\s/`])rust(?:c|doc)(?:\s|`|$)", header))
     if binaries:
         return sum(executed[:binaries]) == 0
     ran = 0
@@ -517,9 +534,9 @@ def _forge_zero(argv, text, low):
     if summary:
         # Every test skipped (vm.skip) is a run that asserted nothing.
         return all(int(passed) + int(failed) == 0 for passed, failed, _ in summary)
-    if "ran " not in low and "test suite" not in low:
-        return True
-    return False
+    # No summary: only a test result line shows that a test executed. A `Ran 1 test for`
+    # header is printed for a suite whose every test was skipped, too.
+    return re.search(r"(?m)^\s*\[(?:pass|fail)", low) is None
 
 
 def _go_zero(argv, text, low):
@@ -736,7 +753,7 @@ def execute(plan, root, allow_exec=False, allow_dotenv=False):
                                    "truncated": out_trunc or err_trunc})
                 else:
                     status, detection, note = read_test_output(
-                        command, rc, out_text + "\n" + err_text,
+                        command, rc, _detection_text(raw_out) + "\n" + _detection_text(raw_err),
                         case.get("expect_tests_marker"))
                     ran = status == "ran"
                     record.update({"executed": True, "exit_code": rc, "timed_out": False,
@@ -787,6 +804,12 @@ def write_case_logs(report, out):
         if not case.get("executed"):
             continue
         name = stem + "." + re.sub(r"[^A-Za-z0-9_.-]", "_", str(case["id"])) + ".log"
+        # `poc 1` and `poc_1` sanitise alike; the second must not overwrite the first's log.
+        bump = 2
+        while name in written:
+            name = stem + "." + re.sub(r"[^A-Za-z0-9_.-]", "_", str(case["id"])) \
+                + "-" + str(bump) + ".log"
+            bump += 1
         body = ("$ " + " ".join(case.get("argv", [])) + "\n" + case.get("stdout", "")
                 + ("\n" if case.get("stdout") and not case["stdout"].endswith("\n") else "")
                 + case.get("stderr", ""))

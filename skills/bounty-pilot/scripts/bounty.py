@@ -460,12 +460,22 @@ def canonical_project(value):
     elif '://' in raw:
         parsed = urllib.parse.urlsplit(raw)
         host, path = parsed.hostname or '', parsed.path
+    elif re.fullmatch(r'[^./\s][^/\s]*/[^/\s]+', raw.strip('/')) and \
+            '.' not in raw.split('/', 1)[0]:
+        # `owner/repo` is GitHub's shorthand, and the key a remote derives is
+        # github.com/owner/repo: read as host `owner`, it never matched one ledger row.
+        host, path = 'github.com', raw.strip('/')
     elif '/' in raw:
         host, path = raw.split('/', 1)
     else:
         return None
     host = host.lower().strip()
-    path = path.strip('/').removesuffix('.git').lower()
+    # Lowercase first, then the .git suffix, then the slashes: in any other order
+    # `Repo.GIT` or `repo/.git` stored a key the reader rejects as non-canonical.
+    path = path.strip('/').lower()
+    if path.endswith('.git'):
+        path = path[:-4]
+    path = path.strip('/')
     if not host or not path or any(c.isspace() for c in host + path):
         return None
     return host + '/' + path
@@ -582,7 +592,9 @@ def _history_rows(path):
     if not path.exists():
         return []
     rows = []
-    for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+    # Split on newlines only: str.splitlines() also breaks on U+2028/U+2029/U+0085, which a
+    # ledger written with ensure_ascii=False could hold raw inside a JSON string.
+    for number, line in enumerate(path.read_text(encoding='utf-8').split('\n'), 1):
         if not line.strip():
             continue
         try:
@@ -644,7 +656,7 @@ def _append_history(path, event):
     flags = os.O_WRONLY | os.O_APPEND | getattr(os, 'O_NOFOLLOW', 0)
     fd = os.open(str(path), flags)
     with os.fdopen(fd, 'a', encoding='utf-8') as out:
-        out.write(json.dumps(event, ensure_ascii=False, separators=(',', ':')) + '\n')
+        out.write(json.dumps(event, ensure_ascii=True, separators=(',', ':')) + '\n')
 
 
 def history_record(run, finding_id, disposition, ledger=None, project=None, program='',
@@ -673,7 +685,8 @@ def history_record(run, finding_id, disposition, ledger=None, project=None, prog
     if not project_key and target_root and Path(target_root).is_dir():
         project_key = project_for_repo(target_root)
     if not project_key:
-        raise ValueError('No canonical repository remote in run.json; pass --project owner/repo')
+        raise ValueError('No canonical repository remote in run.json; pass --project '
+                         'host/owner/repo (owner/repo alone means GitHub)')
     if program and (len(program) > 120 or any(ord(c) < 32 for c in program)):
         raise ValueError('Program label must be plain text of at most 120 characters')
     if hours is not None:
@@ -3175,7 +3188,9 @@ def _located_block(word, tool, source, fields, surface, contract, function, bug_
     if function_key and path and contract:
         # Two contracts in one file each have their own `transfer`.
         function_key = _function_key(contract) + '.' + function_key
-    if not (location or function_key) and not class_key:
+    if not (location or function_key):
+        # A bug class with no place to put it groups with every other placeless block of that
+        # class, and an imported record of it fails `check`: it is skipped, with the reason.
         return None
     display = (path + (':' + symbol if symbol else '')) if path else (symbol or contract)
     return {'kind': BLOCK_KINDS.get(word, 'lead'), 'word': word, 'tool': tool, 'source': source,
@@ -3277,8 +3292,9 @@ def _auditor_marker_block(attributes, body, source, line, index, revision, skipp
                            bug_class, index)
     if block is None:
         return skip('no surface or bug_class to group on')
-    # The marker key is solidity-auditor's own, already normalised: it is the import key.
-    block['upstream_key'] = '|'.join(_converge_key(s) for s in (contract, function, bug_class))
+    # The marker key is solidity-auditor's own, already normalised - plus the file, so two
+    # same-named contracts in different files are two keys.
+    block['upstream_key'] = _auditor_key(block, contract, function, bug_class)
     block['fields'] = {'title': title, 'description': ' '.join(d for d in description if d)}
     if revision:
         block['upstream_revision'] = revision
@@ -3344,8 +3360,8 @@ def _header_block(word, header, body, source, line, index, skipped):
                         'reason': 'no surface or bug_class to group on'})
         return None
     if tool == 'solidity-auditor':
-        block['upstream_key'] = '|'.join(_converge_key(s) for s in (
-            block['contract'], block['function'], bug_class))
+        block['upstream_key'] = _auditor_key(block, block['contract'], block['function'],
+                                             bug_class)
     block['fields'] = body
     return block
 
@@ -3918,14 +3934,26 @@ def _finding_text(value, limit=IMPORT_FIELD_MAX_CHARS):
     return text if len(text) <= limit else text[:limit - 3].rstrip() + '...'
 
 
+def _auditor_key(block, contract, function, bug_class):
+    """`contract|function|bug-class`, with the file in front when the block names one: keyed
+    on the contract alone, src/v1/Vault.sol and src/v2/Vault.sol imported as one record."""
+    key = '|'.join((_converge_key(contract), _function_key(function), _converge_key(bug_class)))
+    if block.get('path_is_file') and block.get('surface_path'):
+        key = _norm_path(block['surface_path']).lower() + '|' + key
+    return key
+
+
 def _finding_key(block):
     """solidity-auditor's own `contract|function|bug-class` key for its blocks; for Bounty
-    Pilot's, the same three segments with the surface path in place of the contract."""
+    Pilot's, the same three segments with the surface path in place of the contract, and the
+    contract in front of the function when both are known."""
     if block.get('upstream_key'):
         return block['upstream_key']
     location = block['surface_path'] if block.get('path_is_file') else block.get('contract')
-    return '|'.join(_converge_key(s) for s in (location, block.get('function'),
-                                                block['bug_class']))
+    function = _function_key(block.get('function'))
+    if function and block.get('path_is_file') and block.get('contract'):
+        function = _function_key(block['contract']) + '.' + function
+    return '|'.join((_converge_key(location), function, _converge_key(block['bug_class'])))
 
 
 def _write_up_rank(block, sequence):
@@ -3944,6 +3972,12 @@ def _next_record_number(records):
     numbers = [int(match.group(1)) for row in records if isinstance(row, dict)
                for match in [re.fullmatch(r'BP-([0-9]{3,})', str(row.get('id', '')))] if match]
     return max(numbers, default=0) + 1
+
+
+# Upstream judgements a record must not inherit: they are not evidence, and the record says
+# they were not carried over. Agents may add custom fields, so they are filtered by name.
+UPSTREAM_SCORE_FIELDS = {'conf', 'confidence', 'confidence_score', 'score', 'agents',
+                         'agent_count', 'severity', 'votes'}
 
 
 def _imported_record(block, number, key, also_in, commit, imported_at):
@@ -3993,7 +4027,7 @@ def _imported_record(block, number, key, also_in, commit, imported_at):
                                  'was read'),
         'also_in': also_in,
         'reported': {name: _finding_text(value) for name, value in sorted(fields.items())
-                     if value},
+                     if value and name.lower() not in UPSTREAM_SCORE_FIELDS},
         'not_imported': 'upstream confidence scores and agent counts are not evidence and were '
                         'not carried over'}
     if resolution == 'unresolved':
@@ -5300,6 +5334,13 @@ def _check_deployment_evidence(row, prefix, run, errors):
             errors.append(label + ' was read on chain id ' + str(chain_id) + ', which program.json\'s '
                           'chain_ids does not list')
             continue
+        own_chains = _address_chains(run).get(stem)
+        if own_chains and EVM_ADDRESS.fullmatch(address) and chain_id not in own_chains:
+            errors.append(label + ' was read on chain id ' + str(chain_id) + ', but program.json '
+                          'lists ' + address + ' on chain id(s) '
+                          + ', '.join(str(c) for c in sorted(own_chains))
+                          + ' only; the same address on another chain can be other code')
+            continue
         if data.get('deployment_status') != 'exact':
             errors.append(label + ' reports ' + str(data.get('deployment_status'))
                           + ', not exact, for ' + address)
@@ -5340,6 +5381,32 @@ def _check_deployment_evidence(row, prefix, run, errors):
         problem = _recompare_deployment(data, built)
         if problem:
             errors.append(label + ': ' + problem)
+
+
+def _address_chains(run):
+    """{address stem: chain ids} for the addresses program.json lists with a chain_id.
+
+    An address listed with its chain is in scope on that chain only: the same address on
+    another chain can hold different code. One also listed bare is bound by chain_ids alone.
+    """
+    path = Path(run) / 'program.json'
+    try:
+        program = read_json(path) if path.is_file() else {}
+    except (OSError, ValueError):
+        return {}
+    items = program.get('in_scope_addresses') if isinstance(program, dict) else None
+    bound, unbound = {}, set()
+    for item in items if isinstance(items, list) else []:
+        address = item.get('address') if isinstance(item, dict) else item
+        stem = _evidence_stem(address.strip()) if isinstance(address, str) else None
+        if stem is None:
+            continue
+        chain = item.get('chain_id') if isinstance(item, dict) else None
+        if type(chain) is int:
+            bound.setdefault(stem, set()).add(chain)
+        else:
+            unbound.add(stem)
+    return {stem: chains for stem, chains in bound.items() if stem not in unbound}
 
 
 def _program_bindings(run):
@@ -6453,7 +6520,7 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
 # Squads and marginfi all ship their review reports in the repository - ten of them in the
 # Squads case - and nothing here ever listed them. This enumerates them; it cannot read a PDF,
 # so each one is an accounting entry the hunter has to close, not a summary.
-REVIEW_DIR_NAMES = {'audit', 'audits', 'security', 'reviews'}
+REVIEW_DIR_NAMES = {'audit', 'audits', 'security', 'review', 'reviews'}
 REVIEW_DOC_SUFFIXES = {'.pdf', '.md', '.markdown', '.txt', '.html', '.htm'}
 REVIEW_NAME_HINTS = ('audit', 'review', 'assessment', 'pentest')
 SECURITY_POLICY_NAMES = {'security.md'}
@@ -6505,10 +6572,15 @@ def _review_artifacts(root, tracked, skipped=None):
         name = parts[-1].lower()
         if Path(name).suffix not in REVIEW_DOC_SUFFIXES:
             continue
-        if any(part.lower() in REVIEW_DIR_NAMES for part in parts[:-1]):
+        # `audit-reports/`, `security-reviews/`, `Audits_2024/`: a review directory by any of
+        # its words, not only by its whole name.
+        if any(set(re.split(r'[-_.\s]+', part.lower())) & REVIEW_DIR_NAMES
+               for part in parts[:-1]):
             matched_by = 'review directory'
         elif any(hint in name for hint in REVIEW_NAME_HINTS):
             matched_by = 'review-shaped name'
+        elif Path(name).suffix == '.pdf' and _audit_firm(name):
+            matched_by = 'audit firm in the file name'
         elif name in SECURITY_POLICY_NAMES and _policy_names_review(root, path, skipped):
             matched_by = 'security policy naming a review'
         else:
@@ -6571,9 +6643,36 @@ def read_audit_inventory(run):
             'invalid': state['invalid']}
 
 
+def _submodule_entries(root):
+    """Every submodule pointer as an artifact to account for: `ls-files` never descends into one,
+    so audits shipped inside `lib/core/audits/` were invisible and an empty inventory passed."""
+    entries = []
+    for row in git(root, 'ls-files', '-z', '-s').split('\0'):
+        meta, _, path = row.partition('\t')
+        fields = meta.split()
+        if len(fields) >= 2 and fields[0] == '160000' and path:
+            entries.append({'path': path, 'bytes': 0, 'sha256': fields[1], 'firm': None,
+                            'matched_by': 'submodule: its own review artifacts are not listed; '
+                                          'look inside it and record what you found'})
+    return entries
+
+
 def _check_audit_inventory(run, errors):
     """A review the repository ships and nobody accounted for is a published list of answers."""
     state = _audit_inventory_state(run)
+    path = Path(run) / 'audit-inventory.json'
+    if state['present'] and not state['invalid']:
+        # Bound to this run like every other gate input: a hand-written inventory, or one
+        # copied from another run, says nothing about this target.
+        data = read_json(path)
+        meta = read_json(Path(run) / 'run.json') if (Path(run) / 'run.json').is_file() else {}
+        if meta.get('run_id') and data.get('run_id') != meta.get('run_id'):
+            errors.append('audit-inventory.json: belongs to a different run; rerun '
+                          'audit-inventory --repo <checkout> --run <run>')
+        elif meta.get('commit') and data.get('commit') and data['commit'] != meta['commit']:
+            errors.append('audit-inventory.json: was taken at commit ' + str(data['commit'])[:12]
+                          + ', not the run\'s ' + str(meta['commit'])[:12] + '; rerun '
+                          'audit-inventory at the run\'s commit')
     # A target that ships no review writes an inventory with no artifacts, and that passes: what
     # is required is that somebody looked. Runs that predate the command have to run it once.
     if not state['present']:
@@ -6604,7 +6703,7 @@ def audit_inventory(repo, run):
     meta = read_json(run / 'run.json')
     tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
     skipped = []
-    artifacts = _review_artifacts(root, tracked, skipped)
+    artifacts = _review_artifacts(root, tracked, skipped) + _submodule_entries(root)
     path = run / 'audit-inventory.json'
     if path.is_symlink():
         raise ValueError(f'{path} is a symlink; refusing to read or write through it')
@@ -6629,6 +6728,7 @@ def audit_inventory(repo, run):
         artifact['note'] = str(prior.get('note', ''))[:500] if same else ''
     result = {
         'repo': str(root), 'run_id': meta.get('run_id'),
+        'commit': git(root, 'rev-parse', 'HEAD').strip(),
         'inventoried_at': datetime.now(timezone.utc).isoformat(),
         'artifact_count': len(artifacts),
         'firms': sorted({row['firm'] for row in artifacts if row['firm']}),
@@ -6706,7 +6806,7 @@ def _numstat(root, base, head):
     split recovers reliably. With -z a rename is two separate NUL-terminated paths.
     """
     raw = git(root, 'diff', '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv',
-              f'{base}..{head}')
+              '--ignore-submodules=none', f'{base}..{head}')
     fields = raw.split('\0')
     i = 0
     while i < len(fields):
@@ -6754,8 +6854,10 @@ def _delta_config(path):
 
 def _gitlink_changes(root, base, head):
     """(path, old commit or None, new commit or None) for every submodule pointer changed."""
+    # `.gitmodules` `ignore = all` (most of TON's submodules) or a user-level
+    # diff.ignoreSubmodules hides a pointer change from a plain diff: 3 of 14 bumps showed.
     raw = git(root, 'diff', '--raw', '-z', '--no-abbrev', '--no-renames', '--no-ext-diff',
-              f'{base}..{head}')
+              '--ignore-submodules=none', f'{base}..{head}')
     fields, found, index = raw.split('\0'), [], 0
     while index < len(fields):
         meta = fields[index]
@@ -6781,8 +6883,10 @@ def _dependency_diff(root, path, old, new):
         return {'state': 'unavailable', 'reason': 'the submodule is not checked out here, or '
                 'the change adds or removes it'}
     try:
-        raw = git(location, 'diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv',
-                  f'{old}..{new}')
+        # --no-renames: a renamed file's -z numstat entry is `a\tb\t` + two paths, which the
+        # three-field parse below dropped - a moved file that lost a require read as no change.
+        raw = git(location, 'diff', '--numstat', '-z', '--no-renames', '--no-ext-diff',
+                  '--no-textconv', '--ignore-submodules=none', f'{old}..{new}')
     except subprocess.SubprocessError:
         return {'state': 'unavailable', 'reason': 'one of the two commits is not in the local '
                 'checkout of the submodule; fetch it and diff'}

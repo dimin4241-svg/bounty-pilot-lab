@@ -429,7 +429,7 @@ class AuditorLocationTests(Fixture):
                              name)
             self.assertEqual(rows[name]['origin']['path_resolution'] in
                              ('reported', 'resolved-from-contract'), True)
-            self.assertEqual(rows[name]['origin']['key'], f'vault|{function}|{name}')
+            self.assertEqual(rows[name]['origin']['key'], f'src/vault.sol|vault|{function}|{name}')
 
     def test_a_spaced_surface_keeps_its_function(self):
         parsed = bounty._parse_reading(

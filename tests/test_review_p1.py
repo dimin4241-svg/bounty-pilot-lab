@@ -666,5 +666,217 @@ class BacktestSealTests(unittest.TestCase):
             bounty.backtest_score(str(self.case))
 
 
+# ---------------------------------------------------------------------------------------------
+# Group 4: the remaining P1 items
+# ---------------------------------------------------------------------------------------------
+
+class HistoryLedgerTests(Fixture):
+    """A2/A3/A4: one character or one spelling could brick the ledger or hide a match."""
+
+    def setUp(self):
+        super().setUp()
+        self.ledger = self.base / 'private' / 'history.jsonl'
+
+    def imported(self, project, root_cause='stale price used'):
+        return bounty.history_import(project, 'C4-1', 'stale-price', ['src/Vault.sol:Vault.f'],
+                                     root_cause, 'duplicate', self.ledger)
+
+    def test_a_line_separator_in_a_root_cause_does_not_brick_the_ledger(self):
+        self.imported('https://github.com/org/vault', 'stale price used after a pause')
+        self.imported('https://github.com/org/vault', 'second row')
+        bounty.history_summary(self.ledger)                           # 2924bc2: not valid JSON
+        self.assertNotIn(' ', self.ledger.read_text(encoding='utf-8'))
+        self.assertEqual(len(self.ledger.read_text(encoding='utf-8').strip().split('\n')), 2)
+
+    def test_owner_repo_is_the_github_key_a_remote_gives(self):
+        self.assertEqual(bounty.canonical_project('owner/repo'), 'github.com/owner/repo')
+        self.assertEqual(bounty.canonical_project('example.invalid/test'), 'example.invalid/test')
+        row = bounty.template()
+        row.update(id='BP-001', title='t', root_cause='stale price used', bug_class='stale-price',
+                   revision='abc', attacker_capabilities='a', preconditions='p', impact='i',
+                   affected_paths=['src/Vault.sol:Vault.f'],
+                   next_experiment={'question': 'q', 'method': 'm', 'expected_evidence': 'e',
+                                    'blocker': ''})
+        bounty.dump(self.run / 'findings.json', [row])
+        self.imported('https://github.com/Owner/Repo.git')
+        result = bounty.history_check(self.run, self.ledger, 'owner/repo')
+        self.assertTrue(result['matches'])                              # 2924bc2: no match
+
+    def test_every_accepted_spelling_is_canonical_and_readable(self):
+        for project in ('https://github.com/Owner/Repo.GIT', 'https://github.com/o/r/.git',
+                        'git@github.com:Owner/Repo.git', 'Owner/Repo'):
+            key = bounty.canonical_project(project)
+            self.assertEqual(bounty.canonical_project(key), key, project)
+            self.imported(project)
+        bounty.history_summary(self.ledger)                           # 2924bc2: invalid row
+
+
+class SubmoduleFixture(Fixture):
+    """A target with one dependency submodule, bumped with `ignore = all` in .gitmodules."""
+
+    def setUp(self):
+        super().setUp()
+        dep = self.base / 'dep'
+        (dep / 'src').mkdir(parents=True)
+        git(dep, 'init', '-q')
+        (dep / 'src/Old.sol').write_text('contract Old {\n  function f() external {\n'
+                                         '    require(msg.sender == owner);\n  }\n}\n')
+        commit(dep)
+        subprocess.run(['git', '-C', str(self.repo), '-c', 'protocol.file.allow=always',
+                        'submodule', 'add', '-q', str(dep), 'lib/dep'], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        commit(self.repo, 'add dependency')
+        self.base_commit = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                          capture_output=True, text=True).stdout.strip()
+        inner = self.repo / 'lib/dep'
+        git(inner, 'mv', 'src/Old.sol', 'src/New.sol')
+        (inner / 'src/New.sol').write_text('contract Old {\n  function f() external {\n'
+                                           '  }\n}\n')
+        commit(inner, 'move and drop the require')
+        commit(self.repo, 'bump dependency')
+        git(self.repo, 'config', '-f', '.gitmodules', 'submodule.lib/dep.ignore', 'all')
+        commit(self.repo, 'quiet the submodule')
+
+
+class DeltaSubmoduleTests(SubmoduleFixture):
+    """C4/C5: delta lost an `ignore = all` bump and a renamed-and-modified dependency file."""
+
+    def test_an_ignored_submodule_bump_is_still_listed(self):
+        result = bounty.delta(self.repo, self.base_commit)
+        self.assertEqual(result['changed_submodules'], 1)              # 2924bc2: 0
+        row = next(r for r in result['ranked'] if r['kind'] == 'submodule')
+        self.assertGreaterEqual(row['dependency_diff'].get('changed_source_files', 0), 1)
+
+
+class AuditInventoryBindingTests(SubmoduleFixture):
+    """C6/C7: the inventory gate accepted another run's file and missed common layouts."""
+
+    def test_a_submodule_is_an_entry_to_account_for(self):
+        result = bounty.audit_inventory(self.repo, self.run)
+        self.assertIn('lib/dep', {row['path'] for row in result['artifacts']})  # 2924bc2: absent
+
+    def test_an_inventory_from_another_run_is_refused(self):
+        bounty.audit_inventory(self.repo, self.run)
+        data = bounty.read_json(self.run / 'audit-inventory.json')
+        data['run_id'] = 'SOME-OTHER-RUN'
+        for row in data['artifacts']:
+            row['triage'], row['note'] = 'not-applicable', 'vendored'
+        bounty.dump(self.run / 'audit-inventory.json', data)
+        errors = []
+        bounty._check_audit_inventory(self.run, errors)
+        self.assertTrue(any('different run' in e for e in errors), errors)  # 2924bc2: []
+
+    def test_review_directories_and_firm_named_reports_are_found(self):
+        for rel in ('audit-reports/2024-01-Spearbit.pdf', 'security-reviews/cantina-2025.pdf',
+                    'docs/ChainSecurity_Vault_v2.pdf'):
+            (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / rel).write_bytes(b'%PDF-1.4\n')
+        commit(self.repo, 'reports')
+        found = {row['path'] for row in bounty.audit_inventory(self.repo, self.run)['artifacts']}
+        for rel in ('audit-reports/2024-01-Spearbit.pdf', 'security-reviews/cantina-2025.pdf',
+                    'docs/ChainSecurity_Vault_v2.pdf'):
+            self.assertIn(rel, found)                                  # 2924bc2: none found
+
+
+AUDITOR_TWO_FILES = """FINDING | contract: src/v1/Vault.sol | function: withdraw | bug_class: reentrancy | group_key: Vault | withdraw | reentrancy
+confidence: 95
+agents: 8
+severity: High
+description: v1 lets withdraw re-enter.
+
+FINDING | contract: src/v2/Vault.sol | function: withdraw | bug_class: reentrancy | group_key: Vault | withdraw | reentrancy
+description: v2 lets withdraw re-enter.
+"""
+
+
+class ImportTests(Fixture):
+    """B5/B6/B10: import kept upstream confidence, merged files, and wrote invalid records."""
+
+    def setUp(self):
+        super().setUp()
+        for version in ('v1', 'v2'):
+            (self.repo / 'src' / version).mkdir()
+            (self.repo / 'src' / version / 'Vault.sol').write_text(
+                'contract Vault { function withdraw() external {} }\n')
+        commit(self.repo, 'two versions')
+
+    def source(self, text):
+        path = self.base / 'auditor.md'
+        path.write_text(text)
+        return str(path)
+
+    def test_same_contract_in_two_files_imports_twice_without_confidence(self):
+        result = bounty.import_findings(self.run, [self.source(AUDITOR_TWO_FILES)],
+                                        repo=self.repo)
+        self.assertEqual(result['imported'], 2)                         # 2924bc2: 1
+        rows = bounty.read_json(self.run / 'findings.json')
+        reported = rows[0]['origin']['reported']
+        for name in ('confidence', 'agents', 'severity'):
+            self.assertNotIn(name, reported)                             # 2924bc2: carried
+
+    def test_a_bug_class_with_no_place_is_not_imported(self):
+        result = bounty.import_findings(
+            self.run, [self.source('CANDIDATE | lens: accounting | bug_class: rounding-drift\n')],
+            repo=self.repo)
+        self.assertEqual(result['imported'], 0)                         # 2924bc2: 1 invalid
+        self.assertFalse(any('affected_paths' in e for e in bounty.validate(self.run)))
+
+
+class AddressChainBindingTests(hardening.SubmissionCase):
+    """B8: per-address chain_id in program.json was flattened into one chain set."""
+
+    def test_an_address_read_on_another_listed_chain_is_refused(self):
+        row = self.record()
+        listed = row['deployment_evidence'][0].split('/')[1][:-5]
+        hardening.bounty.dump(self.run / 'program.json', {'in_scope_addresses': [
+            {'address': listed, 'chain_id': 8453}, {'address': '0x' + '99' * 20, 'chain_id': 1}]})
+        errors = self.gates([row])
+        self.assertTrue(any('on chain id(s) 8453 only' in e for e in errors), errors)
+
+    def test_control_the_listed_chain_still_passes(self):
+        row = self.record()
+        listed = row['deployment_evidence'][0].split('/')[1][:-5]
+        hardening.bounty.dump(self.run / 'program.json', {'in_scope_addresses': [
+            {'address': listed, 'chain_id': 1}, {'address': '0x' + '99' * 20, 'chain_id': 8453}]})
+        self.assertEqual(self.gates([row]), [])
+
+
+class RunnerOutputTests(unittest.TestCase):
+    """E6/E7/E10: cargo -v, a long forge run, and two ids sharing one log."""
+
+    def test_cargo_verbose_compiler_lines_are_not_test_binaries(self):
+        output = ('   Compiling poc v0.1.0\n'
+                  '     Running `rustc --crate-name poc --edition=2021 src/lib.rs`\n'
+                  '     Running `/tmp/target/debug/deps/poc-abc123 test_exploit`\n\n'
+                  'running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured;'
+                  ' 3 filtered out\n\n   Doc-tests poc\n'
+                  '     Running `rustdoc --edition=2021 --test src/lib.rs`\n\n'
+                  'running 1 test\ntest src/lib.rs - Vault::withdraw (line 10) ... ok\n\n'
+                  'test result: ok. 1 passed; 0 failed; 0 ignored\n')
+        self.assertTrue(scenario_runner._cargo_zero(                 # 2924bc2: False
+            ['cargo', 'test', '-v', 'test_exploit'], output.lower()))
+
+    def test_a_forge_header_with_only_skips_is_no_test(self):
+        text = 'Ran 1 test for test/V.t.sol:VTest\n[SKIP] test_x()\n'
+        self.assertEqual(scenario_runner.read_test_output(['forge', 'test'], 0, text)[0],
+                         'no-tests-ran')                               # 2924bc2: ran
+
+    def test_detection_reads_the_tail_of_a_long_output(self):
+        blob = b'trace line\n' * 10000 + b'Ran 1 test suite: 0 tests passed, 0 failed, 1 skipped'
+        text = scenario_runner._detection_text(blob)
+        self.assertIn('1 skipped', text)
+        self.assertEqual(scenario_runner.read_test_output(['forge', 'test'], 0, text)[0],
+                         'no-tests-ran')
+
+    def test_two_ids_that_sanitise_alike_get_two_logs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            report = {'cases': [{'id': 'poc 1', 'executed': True, 'argv': ['a'], 'stdout': 'A'},
+                                {'id': 'poc_1', 'executed': True, 'argv': ['b'], 'stdout': 'B'}]}
+            written = scenario_runner.write_case_logs(report, Path(temp) / 'r.json')
+            self.assertEqual(len(set(written)), 2)                     # 2924bc2: one file
+            first = (Path(temp) / report['cases'][0]['log_file']).read_text()
+            self.assertIn('A', first)
+
+
 if __name__ == '__main__':
     unittest.main()
