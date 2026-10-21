@@ -357,5 +357,314 @@ class VerifyDeploymentFalseExactTests(unittest.TestCase):
         self.assertEqual(result['status'], 'mismatch')              # 2924bc2: partial
 
 
+# ---------------------------------------------------------------------------------------------
+# Group 3: gates that passed when they should not
+# ---------------------------------------------------------------------------------------------
+
+def load_test_module(name, filename):
+    spec = importlib.util.spec_from_file_location(name, ROOT / 'tests' / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+hardening = load_test_module('p1_hardening', 'test_evidence_hardening.py')
+fcov_fixture = load_test_module('p1_fcov', 'test_function_coverage.py')
+gate = load('p1_gate', 'experiment_gate.py')
+
+
+class DispatchLensColumnTests(Fixture):
+    """B1: a lens named anywhere in a coverage.md row counted as read."""
+
+    def test_only_the_lens_column_marks_a_lens_read(self):
+        bounty.bundle(self.repo, self.run, ['privileged-path', 'liveness', 'accounting'])
+        with open(self.run / 'coverage.md', 'a', encoding='utf-8') as out:
+            out.write('| src/Vault.sol:Vault.f | privileged-path | 1 | read | '
+                      'no liveness or accounting issue |\n')
+        unread = {row['lens'] for row in bounty._dispatch_state(self.run)['unread']}
+        self.assertEqual(unread, {'liveness', 'accounting'})       # 2924bc2: set()
+
+
+class LexicalSolidityTests(Fixture):
+    """B2: a graph holding any Solidity dropped every lexical .sol entry point."""
+
+    def test_solidity_outside_the_graph_is_still_counted(self):
+        graph = fcov_fixture.graph_of(self.base)
+        bounty.dump(self.run / 'semantic-graph.json', graph)
+        (self.repo / 'bridge').mkdir()
+        (self.repo / 'bridge/Bridge.sol').write_text(
+            'contract Bridge {\n    function lock(uint256 a) external {}\n'
+            '    function release(uint256 a) external {}\n}\n')
+        commit(self.repo, 'second solc version')
+        bounty.function_coverage(self.run, repo=self.repo)
+        rows = bounty.read_json(self.run / 'function-coverage.json')['unexamined']
+        names = {(row['path'], row['name']) for row in rows}
+        self.assertIn(('bridge/Bridge.sol', 'Bridge.lock'), names)     # 2924bc2: missing
+        self.assertNotIn('lexical', {row['source'] for row in rows
+                                     if row['path'] == 'src/Vault.sol'})
+
+
+class ConvergeSeparationTests(Fixture):
+    """B3/B4: converge merged two functions; a file-only record closed every sibling."""
+
+    def reading(self, name, line):
+        folder = self.base / 'readings'
+        folder.mkdir(exist_ok=True)
+        (folder / name).write_text(line + '\n')
+        return folder
+
+    def test_same_function_name_in_two_contracts_is_two_groups(self):
+        self.reading('a.md', 'CANDIDATE | lens: a | surface: src/Vault.sol:Token.transfer | '
+                             'bug_class: missing-auth')
+        folder = self.reading('b.md', 'CANDIDATE | lens: b | surface: '
+                                      'src/Vault.sol:WrappedToken.transfer | bug_class: missing-auth')
+        result = bounty.converge([str(folder)], self.run)
+        self.assertEqual(result['saturated_groups'], 0)               # 2924bc2: 1
+        self.assertEqual(result['singletons'], 2)
+
+    def test_underscore_function_is_its_own_group(self):
+        self.reading('a.md', 'CANDIDATE | lens: a | surface: src/Vault.sol:Vault.withdraw | '
+                             'bug_class: reentrancy')
+        folder = self.reading('b.md', 'CANDIDATE | lens: b | surface: src/Vault.sol:Vault._withdraw '
+                                      '| bug_class: reentrancy')
+        result = bounty.converge([str(folder)], self.run)
+        self.assertEqual(result['singletons'], 2)                     # 2924bc2: 0 (merged)
+
+    def test_a_file_only_record_does_not_hide_a_sibling_singleton(self):
+        folder = self.reading('a.md', 'LEAD | lens: a | surface: src/Vault.sol:Vault.sweep | '
+                                      'bug_class: reentrancy')
+        row = bounty.template()
+        row.update(id='BP-001', title='t', root_cause='r', bug_class='reentrancy',
+                   revision='abc', attacker_capabilities='a', preconditions='p', impact='i',
+                   affected_paths=['src/Vault.sol'],
+                   next_experiment={'question': 'q', 'method': 'm', 'expected_evidence': 'e',
+                                    'blocker': ''})
+        bounty.dump(self.run / 'findings.json', [row])
+        bounty.converge([str(folder)], self.run)
+        queue = bounty.lead_queue(self.run)
+        self.assertEqual(queue['unrecorded_singletons']['count'], 1)  # 2924bc2: 0
+
+
+class BookkeepingEvidenceTests(hardening.SubmissionCase):
+    """B7: the run's own mechanical outputs were accepted as a PoC and its log."""
+
+    def test_examined_json_is_not_a_log(self):
+        row = self.record()
+        hardening.bounty.dump(self.run / 'examined.json', {'surfaces': []})
+        hardening.bounty.dump(self.run / 'readings-ledger.json', {'readings': {}})
+        row['evidence']['log_path'] = 'examined.json'
+        row['evidence']['poc_path'] = 'readings-ledger.json'
+        errors = self.gates([row])
+        self.assertTrue(any('evidence.log_path names examined.json' in e for e in errors), errors)
+        self.assertTrue(any('evidence.poc_path names readings-ledger.json' in e for e in errors))
+
+
+class DupJoinSpellingTests(Fixture):
+    """C1: the dup join compared whole strings by substring."""
+
+    def collisions(self, affected):
+        bounty.dump(self.run / 'dup-map.json', [{
+            'id': 'KI-1', 'kind': 'program-known-issue', 'source': 'https://example.invalid/known',
+            'surfaces': ['src/oracle/PriceOracle.sol:latestAnswer'],
+            'bug_classes': ['stale-price'], 'note': 'stale answer accepted'}])
+        row = bounty.template()
+        row.update(id='BP-001', title='t', root_cause='r', bug_class='stale-price',
+                   revision='abc', attacker_capabilities='a', preconditions='p', impact='i',
+                   affected_paths=[affected],
+                   next_experiment={'question': 'q', 'method': 'm', 'expected_evidence': 'e',
+                                    'blocker': ''})
+        bounty.dump(self.run / 'findings.json', [row])
+        return bounty.dup_check(self.run)['collisions']
+
+    def test_every_documented_spelling_collides(self):
+        for affected in ('src/oracle/PriceOracle.sol:PriceOracle.latestAnswer',
+                         'src/oracle/PriceOracle.sol (latestAnswer)',
+                         'src/oracle/PriceOracle.sol#L42',
+                         'oracle/PriceOracle.sol:latestAnswer'):
+            self.assertTrue(self.collisions(affected), affected)       # 2924bc2: [] for 3 of 4
+
+    def test_control_another_function_in_the_file_does_not_collide(self):
+        self.assertEqual(self.collisions('src/oracle/PriceOracle.sol:PriceOracle.getPrice'), [])
+
+
+class HarvestTests(Fixture):
+    """C2/C3/C10/C8: the closed-issue harvest and the map it is checked against."""
+
+    def item(self, number, repo='org/contracts', labels=('wontfix',)):
+        return {'number': number, 'title': f'issue {number}',
+                'html_url': f'https://github.com/{repo}/issues/{number}',
+                'repository_url': f'https://api.github.com/repos/{repo}',
+                'labels': [{'name': name} for name in labels], 'body': ''}
+
+    def harvest(self, payload, repo='org/contracts', labels=('wontfix',)):
+        source = self.base / 'search.json'
+        source.write_text(json.dumps(payload))
+        return bounty.dup_harvest(self.run, repo=repo, labels=list(labels),
+                                  from_file=str(source))
+
+    def test_triage_does_not_carry_to_another_repository(self):
+        self.harvest({'items': [self.item(12, 'org/frontend')]}, repo='org/frontend')
+        data = bounty.read_json(self.run / 'dup-harvest.json')
+        data['triage'] = {'#12': {'disposition': 'irrelevant', 'note': 'CI flake'}}
+        bounty.dump(self.run / 'dup-harvest.json', data)
+        result = self.harvest({'items': [self.item(12)]})
+        self.assertEqual(result['untriaged'], ['#12'])                 # 2924bc2: []
+
+    def test_one_number_in_two_repositories_is_two_candidates(self):
+        result = self.harvest({'items': [self.item(7, 'org/a'), self.item(7, 'org/b')]},
+                              repo='org/a')
+        self.assertEqual(result['candidate_count'], 2)                # 2924bc2: 1
+        self.assertEqual({c['ref'] for c in result['candidates']}, {'#7', 'org/b#7'})
+
+    def test_a_saved_page_of_a_larger_search_is_truncated(self):
+        result = self.harvest({'total_count': 450, 'incomplete_results': False,
+                               'items': [self.item(n) for n in range(1, 101)]})
+        self.assertTrue(result['truncated'])                           # 2924bc2: False
+        result = self.harvest({'total_count': 3, 'incomplete_results': True,
+                               'items': [self.item(1)]})
+        self.assertTrue(result['truncated'])
+
+    def test_a_label_the_repository_lacks_searches_nothing(self):
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                return Response([{'name': 'bug'}, {'name': 'enhancement'}])
+            return Response({'total_count': 0, 'incomplete_results': False, 'items': []})
+        result = bounty.dup_harvest(self.run, repo='org/contracts', labels=['wontfx'],
+                                    opener=opener)
+        self.assertEqual(result['labels_unknown'], ['wontfx'])
+        self.assertTrue(result['vacuous'])                              # 2924bc2: False
+
+    def test_a_label_on_page_four_is_found(self):
+        pages = {page: [{'name': f'label-{page}-{i}'} for i in range(100)] for page in (1, 2, 3)}
+        pages[4] = [{'name': 'wontfix'}]
+
+        def opener(request, timeout=None):
+            if '/labels' in request.full_url:
+                page = int(request.full_url.rsplit('page=', 1)[1])
+                return Response(pages.get(page, []))
+            return Response({'total_count': 0, 'incomplete_results': False, 'items': []})
+        result = bounty.dup_harvest(self.run, repo='org/contracts', opener=opener)
+        self.assertIn('wontfix', result['labels'])                     # 2924bc2: cut at page 3
+
+    def test_a_dup_map_that_is_not_a_list_is_refused(self):
+        bounty.dump(self.run / 'dup-map.json', {})
+        errors = []
+        bounty._submission_dup_matches(self.run, bounty.read_json(self.run / 'run.json'), [],
+                                       errors)
+        self.assertTrue(any('must be a JSON array' in e for e in errors), errors)
+
+
+class RunnerDetectionTests(unittest.TestCase):
+    """E1/E8: a fake pytest or a failed import read as a test that ran."""
+
+    def test_the_word_pytest_in_an_argument_is_not_pytest(self):
+        argv = ['python3', '-m', 'timeit', '-s', 'print("1 passed in 0.01s")', 'pytest']
+        with self.assertRaises(ValueError):                             # 2924bc2: allowed
+            scenario_runner._reject_shell(argv)
+        status, tool, _ = scenario_runner.read_test_output(argv, 0, '1 passed in 0.01s\n')
+        self.assertNotEqual(status, 'ran')                              # 2924bc2: ran/pytest
+
+    def test_launchers_and_long_command_forms_are_refused(self):
+        for argv in (['perl', '-MPOSIX;system("id")', 'x.pl'], ['fish', '--command=id'],
+                     ['setsid', 'sh', '-c', 'id'], ['xargs', 'sh', '-c', 'id'],
+                     ['busybox', 'sh', '-c', 'id'], ['npx', '-c', 'id'],
+                     ['uv', 'run', 'sh', '-c', 'id']):
+            with self.assertRaises(ValueError, msg=argv):
+                scenario_runner._reject_shell(argv)
+
+    def test_control_real_test_commands_still_pass_and_detect(self):
+        for argv in (['python3', '-m', 'pytest', '-q'], ['pytest', 'tests/'],
+                     ['uv', 'run', 'pytest'], ['perl', '-MTest::More', 't/poc.t']):
+            scenario_runner._reject_shell(argv)
+        self.assertEqual(scenario_runner.read_test_output(
+            ['uv', 'run', 'pytest'], 0, '1 passed in 0.01s\n')[0], 'ran')
+
+    def test_a_unittest_import_error_is_no_test(self):
+        output = ('E\n=====\nERROR: test_poc_typo (unittest.loader._FailedTest.test_poc_typo)\n'
+                  'ImportError: Failed to import test module: test_poc_typo\n'
+                  '-----\nRan 1 test in 0.000s\n\nFAILED (errors=1)\n')
+        status, _, _ = scenario_runner.read_test_output(
+            ['python3', '-m', 'unittest', 'test_poc_typo'], 1, output)
+        self.assertEqual(status, 'no-tests-ran')                        # 2924bc2: ran
+
+
+class PublishedRevisionTests(unittest.TestCase):
+    """E2: a commit made in the target checkout itself passed as a published revision."""
+
+    def test_a_local_commit_is_not_published_when_remote_refs_exist(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp).resolve() / 'repo'
+            repo.mkdir()
+            git(repo, 'init', '-q')
+            (repo / 'Vault.sol').write_text('require(msg.sender == owner);\n')
+            commit(repo, 'published')
+            published = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'],
+                                       capture_output=True, text=True).stdout.strip()
+            git(repo, 'update-ref', 'refs/remotes/origin/main', published)
+            (repo / 'Vault.sol').write_text('\n')
+            commit(repo, 'drop the require')
+            local = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'],
+                                   capture_output=True, text=True).stdout.strip()
+            self.assertTrue(gate._known_commit(str(repo), published))
+            self.assertFalse(gate._known_commit(str(repo), local))      # 2924bc2: True
+
+
+class BacktestSealTests(unittest.TestCase):
+    """D4/D7/D9: the backtest credited findings that were never sealed."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name).resolve()
+        self.repo = base / 'repo'
+        (self.repo / 'src').mkdir(parents=True)
+        git(self.repo, 'init', '-q')
+        (self.repo / 'src/Vault.sol').write_text('contract Vault {}\n')
+        commit(self.repo)
+        self.case = base / 'case'
+        bounty.backtest_init('c', str(self.repo), str(self.case), None, None)
+        self.run = base / 'run'
+        bounty.initialize(self.repo, self.run)
+
+    def finding(self, ident, **fields):
+        row = bounty.template()
+        row.update(id=ident, title='Oracle staleness', bug_class='stale-price', lens='oracle',
+                   root_cause='latestAnswer age is never checked', status='hypothesis',
+                   affected_paths=['src/Vault.sol'])
+        row.update(fields)
+        return row
+
+    def test_a_matches_row_for_an_unsealed_finding_earns_nothing(self):
+        bounty.dump(self.run / 'findings.json', [self.finding('BP-001', title='Unrelated',
+                                                              bug_class='rounding',
+                                                              affected_paths=['src/Other.sol'])])
+        bounty.backtest_seal(str(self.case), str(self.run))
+        bounty.dump(self.case / 'truth.json', [{'id': 'T-1', 'severity': 'high',
+                                                'title': 'Stale oracle price', 'source': 'x'}])
+        bounty.dump(self.case / 'matches.json', [{
+            'truth_id': 'T-1', 'finding_id': 'BP-999', 'decision': 'same-mechanism',
+            'decision_reason': 'added after reading the answers', 'finding_lens': 'oracle'}])
+        result = bounty.backtest_score(str(self.case))
+        self.assertEqual(result['rediscovered'], [])                    # 2924bc2: found_by BP-999
+        self.assertEqual(result['credited_lenses'], {})
+
+    def test_seal_refuses_unusable_ids_and_existing_decisions(self):
+        bounty.dump(self.run / 'findings.json', [self.finding(7)])
+        with self.assertRaises(ValueError):                              # 2924bc2: sealed
+            bounty.backtest_seal(str(self.case), str(self.run))
+        bounty.dump(self.run / 'findings.json', [self.finding('BP-001')])
+        bounty.dump(self.case / 'matches.json', [])
+        with self.assertRaises(ValueError):
+            bounty.backtest_seal(str(self.case), str(self.run))
+
+    def test_an_edited_sealed_note_voids_the_case(self):
+        (self.run / 'coverage.md').write_text('| a | b | c |\n')
+        bounty.dump(self.run / 'findings.json', [self.finding('BP-001')])
+        bounty.backtest_seal(str(self.case), str(self.run))
+        (self.case / 'sealed-coverage.md').write_text('| rewritten after the answers |\n')
+        with self.assertRaises(ValueError):                              # 2924bc2: not checked
+            bounty.backtest_score(str(self.case))
+
+
 if __name__ == '__main__':
     unittest.main()

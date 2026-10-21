@@ -2498,7 +2498,7 @@ def _lexical_functions(path, text, language, native_crate=False):
     return found
 
 
-def _lexical_entry_points(root, scope_prefixes, excluded, skip=()):
+def _lexical_entry_points(root, scope_prefixes, excluded, skip_paths=frozenset()):
     tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
     crates = {str(Path(p).parent) for p in tracked if Path(p).name.lower() == 'cargo.toml'}
 
@@ -2509,7 +2509,7 @@ def _lexical_entry_points(root, scope_prefixes, excluded, skip=()):
     texts = {}
     for path in tracked:
         language = LEXICAL_SUFFIXES.get(Path(path).suffix.lower())
-        if not language or Path(path).suffix.lower() in skip:
+        if not language or path in skip_paths:
             continue
         # Counted in files, apart from the graph's entry points.
         reason = _excluded_reason(path, scope_prefixes)
@@ -2574,19 +2574,21 @@ def function_coverage(run, graph=None, repo=None, scope_prefixes=None,
         raise ValueError(f'--graph {graph_path} does not exist')
     excluded = {}
     entries, sources = [], []
-    graph_has_solidity = False
+    # The files the compiler-resolved graph already holds. Only those are left out of the
+    # lexical pass: one build-info covers one solc version, and skipping every `.sol` because
+    # the graph had some dropped the rest of a multi-version project from the denominator.
+    graph_paths = frozenset()
     if graph_path.is_file():
         data = read_json(graph_path)
         entries = _graph_entry_points(data, scope_prefixes, excluded)
-        graph_has_solidity = any(isinstance(s, dict) and s.get('language') == 'solidity'
-                                 for s in data.get('symbols', []))
+        graph_paths = frozenset(str(s.get('path', '')) for s in data.get('symbols', [])
+                                if isinstance(s, dict) and s.get('language') == 'solidity')
         sources.append('semantic-graph')
     elif root is None:
         raise ValueError('no semantic-graph.json in the run: run impact-plan --solc <build-info> '
                          '--out <run> first, or pass --repo for the lexical fallback')
     if root is not None:
-        lexical = _lexical_entry_points(root, scope_prefixes, excluded,
-                                        skip=('.sol',) if graph_has_solidity else ())
+        lexical = _lexical_entry_points(root, scope_prefixes, excluded, skip_paths=graph_paths)
         if lexical:
             sources.append('lexical')
         entries.extend(lexical)
@@ -3055,6 +3057,12 @@ def _converge_key(text):
     return re.sub(r'[^a-z0-9]+', '-', (text or '').lower()).strip('-')
 
 
+def _function_key(text):
+    """The grouping key of a function or contract name. Unlike `_converge_key` it keeps `_`
+    and `$`: `_withdraw` and `withdraw` are two functions, and keyed alike they merged."""
+    return re.sub(r'[^a-z0-9_$]+', '-', (text or '').lower()).strip('-')
+
+
 def _same_path(left, right):
     """Equal, or one a whole-segment suffix of the other: `core/Vault.sol` is
     `src/core/Vault.sol`, and `src/v1/Vault.sol` is not `src/v2/Vault.sol`."""
@@ -3158,10 +3166,15 @@ def _located_block(word, tool, source, fields, surface, contract, function, bug_
             'ambiguous' if len(candidates) > 1 else 'unresolved')
     else:
         resolution = 'unresolved'
-    if not symbol and contract and function:
-        symbol = f'{contract}.{function}'
+    if not symbol and function:
+        # Named whenever the function is known, so an imported record's affected_paths says
+        # which function it covers instead of crediting every function in the file.
+        symbol = f'{contract}.{function}' if contract else function
     location = path.lower() if path else contract.lower()
-    function_key, class_key = _converge_key(function), _converge_key(bug_class)
+    function_key, class_key = _function_key(function), _converge_key(bug_class)
+    if function_key and path and contract:
+        # Two contracts in one file each have their own `transfer`.
+        function_key = _function_key(contract) + '.' + function_key
     if not (location or function_key) and not class_key:
         return None
     display = (path + (':' + symbol if symbol else '')) if path else (symbol or contract)
@@ -3551,13 +3564,14 @@ def _record_matches(row, group, strict=False):
     if is_file is None:     # a convergence.json written before groups carried it
         is_file = '/' in group_path or bool(Path(group_path).suffix)
     group_contract = (group.get('contract') or '').lower()
-    group_function = _converge_key(group.get('function'))
+    group_function = _function_key(group.get('function'))
     for entry in paths:
         if not isinstance(entry, str):
             continue
         path, _, qualifier, function = _split_surface(entry)
         if is_file and path:
-            located = _same_path(path, group_path)
+            located = _same_path(path, group_path) and not (
+                qualifier and group_contract and qualifier.lower() != group_contract)
         elif path:
             located = bool(group_contract) and group_contract in (
                 Path(path).stem.lower(), qualifier.lower())
@@ -3568,7 +3582,7 @@ def _record_matches(row, group, strict=False):
         if not located:
             continue
         if function:
-            if group_function and _converge_key(function) == group_function:
+            if group_function and _function_key(function) == group_function:
                 return True
         elif not strict:
             return True
@@ -3576,8 +3590,12 @@ def _record_matches(row, group, strict=False):
 
 
 def _record_for_group(group, records):
-    """The record that carries a converged mechanism: same path, function and bug class."""
-    hits = [row for row in records if _record_matches(row, group)]
+    """The record that carries a converged mechanism: same path, function and bug class.
+
+    Strict: a record naming only the file covers no function group. Loose, one file-only
+    record marked every sibling function recorded and hid their singletons from `queue`.
+    """
+    hits = [row for row in records if _record_matches(row, group, strict=bool(group.get('function')))]
     # A live record is the better answer than a refuted one for the same mechanism.
     hits.sort(key=lambda row: (row.get('status') == 'refuted', str(row.get('id'))))
     return hits[0] if hits else None
@@ -4266,8 +4284,12 @@ def _reading_evidence(run):
             # The header names the columns and the rule is dashes; neither is a lens that ran.
             if line.count('|') < 3 or re.match(r'\s*\|?\s*:?-{3}', line):
                 continue
+            # Only the Lens column says which lens read: a lens named in the surface path or
+            # in the result prose ("no liveness or accounting issue") read nothing.
+            cells = line.strip().strip('|').split('|')
+            lens_cell = cells[1] if len(cells) > 1 else ''
             for lens in known:
-                if any(_names_lens(cell, lens) for cell in line.split('|')):
+                if _names_lens(lens_cell, lens):
                     mark(lens, 'coverage.md')
     path = run / 'findings.json'
     if path.is_file():
@@ -4688,7 +4710,12 @@ RUN_BOOKKEEPING = {'run.json', 'findings.json', 'experiments.json', 'program.jso
                    'dup-map.json', 'dup-matches.json', 'dup-harvest.json', 'history-matches.json',
                    'audit-inventory.json', 'capabilities.json', 'coverage-floor.json',
                    'convergence.json', 'candidate-template.json', 'saturated.md', 'scope.md',
-                   'model.md', 'coverage.md', 'known-hypotheses.md', '.gitignore'}
+                   'model.md', 'coverage.md', 'known-hypotheses.md', '.gitignore',
+                   # The run's own mechanical outputs: as evidence they show nothing either.
+                   EXAMINED_FILE, READINGS_LEDGER, FUNCTION_COVERAGE_FILE,
+                   ODD_ONE_OUT_REVIEW_FILE, 'semantic-graph.json', 'impact-paths.json',
+                   'odd-one-out.json', 'coverage-priority.json', 'state-graph.json',
+                   'stack-route.json', 'delta.json'}
 RUN_BOOKKEEPING_DIRS = {'deployments', 'bundles'}
 COMMIT_HASH = re.compile(r'[0-9a-f]{7,64}')
 COMMAND_PLACEHOLDER = re.compile(r'\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<[^<>\s]*>|%[A-Za-z_]\w*%')
@@ -5930,8 +5957,7 @@ def check_dup_map(run):
         for entry in entries:
             classes = [c.lower() for c in entry.get('bug_classes', []) if isinstance(c, str)]
             for surface in entry['surfaces']:
-                key = surface.lower()
-                if not any(key in p or p in key for p in paths):
+                if not any(_dup_surface_match(surface, p) for p in paths):
                     continue
                 # A different bug class on the same surface is still reported, as surface-only:
                 # the same root cause often carries a different consequence label.
@@ -5945,6 +5971,39 @@ def check_dup_map(run):
                     'note': entry.get('note', '')})
                 break
     return errors, collisions
+
+
+def _dup_locus(text):
+    """(file, function) a dup-map surface or an affected path names, in any documented spelling.
+
+    `src/O.sol:latestAnswer`, `src/O.sol:O.latestAnswer`, `src/O.sol (latestAnswer)` and
+    `src/O.sol#L42` all name src/O.sol; the first three also name latestAnswer.
+    """
+    path = _affected_file(text or '')
+    function = _split_surface(text or '')[3]
+    if not function:
+        named = re.search(r'\(\s*([A-Za-z_$][\w$]*)\s*\)', text or '')
+        function = named.group(1) if named else ''
+    return path.lower(), function.lower()
+
+
+def _dup_surface_match(surface, affected):
+    """Whether a burned surface and a finding's affected path are the same place.
+
+    Compared as file + function, not as strings: the documented map spelling
+    `File.sol:fn` and the agent spelling `File.sol:Contract.fn` never contain one another, so
+    a substring test let a known issue pass dup-check as no-match.
+    """
+    surface_file, surface_function = _dup_locus(surface)
+    affected_file, affected_function = _dup_locus(affected)
+    if surface_file and affected_file:
+        if not _same_path(surface_file, affected_file):
+            return False
+        # A file-wide entry burns every function in the file; two named functions must agree.
+        return not (surface_function and affected_function
+                    and surface_function != affected_function)
+    key, path = surface.lower(), affected.lower()
+    return key in path or path in key
 
 
 def _dup_map_digest(entries):
@@ -5987,10 +6046,14 @@ def _harvest_state(run, entries=None):
         elif row['disposition'] == 'irrelevant' and not has_text(row.get('note')):
             untriaged.append(candidate['ref'])
     labels = data.get('labels') if isinstance(data.get('labels'), list) else []
+    # A label nobody verified exists (a typo, a label from another repository) searched
+    # nothing. Harvests written before labels_verified existed keep their old reading.
+    verified = data.get('labels_verified') if isinstance(data.get('labels_verified'), list) \
+        else labels
     not_planned = data.get('not_planned') is True
     # Nothing searched and nothing found is not a clean result: it is no result. A repository
     # whose labels never say "already judged" returns zero candidates and must not read as clear.
-    vacuous = (not data['candidates'] and not labels and not not_planned
+    vacuous = (not data['candidates'] and not verified and not not_planned
                and not has_text(data.get('empty_reason')))
     return {'present': True, 'candidates': len(data['candidates']),
             'harvested_at': data.get('harvested_at', ''), 'repo': data.get('repo', ''),
@@ -6046,7 +6109,12 @@ def _submission_dup_matches(run, meta, records, errors):
         errors.append('dup-map.json: submission requires a built duplicate map in the run')
         return None
     entries = read_json(run / 'dup-map.json')
-    harvest = _harvest_state(run, entries if isinstance(entries, list) else [])
+    if not isinstance(entries, list):
+        # `{}` or `null` hashed like `[]` and skipped the empty-map check below entirely.
+        errors.append('dup-map.json: must be a JSON array of entries; rebuild it and rerun '
+                      'dup-check')
+        return None
+    harvest = _harvest_state(run, entries)
     if not harvest['present']:
         errors.append('dup-harvest.json: submission requires the closed-issue harvest '
                       '(run dup-harvest): a team that already closed this as wontfix or a known '
@@ -6165,9 +6233,17 @@ def _harvest_slug(repo, meta, require_github=True):
     raise ValueError('--repo must be a GitHub owner/repo, a repository URL, or a local checkout')
 
 
+GITHUB_LABEL_PAGES = 30
+
+
 def _github_labels(slug, token=None, opener=None):
-    names = []
-    for page in range(1, 4):
+    """Every label of the repository, and whether the page bound cut the list.
+
+    Three pages (300 labels) used to be the silent limit: `wontfix` on page four was missing
+    from both the search and labels_skipped.
+    """
+    names, cut = [], False
+    for page in range(1, GITHUB_LABEL_PAGES + 1):
         batch = _github_get(f'{GITHUB_API}/repos/{slug}/labels?per_page=100&page={page}',
                             token, opener)
         if not isinstance(batch, list) or not batch:
@@ -6175,7 +6251,9 @@ def _github_labels(slug, token=None, opener=None):
         names.extend(item.get('name', '') for item in batch if isinstance(item, dict))
         if len(batch) < 100:
             break
-    return [name for name in names if has_text(name)]
+    else:
+        cut = True
+    return [name for name in names if has_text(name)], cut
 
 
 def _label_matches(name, hint):
@@ -6193,7 +6271,7 @@ def _dup_label_candidates(names, extra=None):
 
 def _github_search(query, token=None, opener=None, limit=200):
     """Issues and PRs matching one search query. Returns the items kept and whether any were cut."""
-    found, total = [], 0
+    found, total, incomplete = [], 0, False
     for page in range(1, 11):
         url = (f'{GITHUB_API}/search/issues?q=' + urllib.parse.quote(query, safe='')
                + f'&per_page=100&page={page}')
@@ -6201,13 +6279,15 @@ def _github_search(query, token=None, opener=None, limit=200):
         items = body.get('items') if isinstance(body, dict) else None
         if isinstance(body, dict) and isinstance(body.get('total_count'), int):
             total = body['total_count']
+        if isinstance(body, dict) and body.get('incomplete_results') is True:
+            incomplete = True     # GitHub timed out and returned only part of the matches
         if not isinstance(items, list) or not items:
             break
         found.extend(items)
         if len(found) >= limit or len(items) < 100:
             break
     kept = found[:limit]
-    return kept, max(total, len(found)) > len(kept)
+    return kept, incomplete or max(total, len(found)) > len(kept)
 
 
 def _label_query(slug, labels):
@@ -6222,11 +6302,29 @@ def _not_planned_query(slug):
     return f'repo:{slug} is:closed reason:"not planned"'
 
 
-def _harvest_candidate(item, matched_by):
+def _item_repo(item):
+    """owner/name of a search item, from repository_url or html_url; '' when it names none."""
+    for key, pattern in (('repository_url', r'/repos/([^/]+/[^/]+?)/?$'),
+                         ('html_url', r'github\.com/([^/]+/[^/]+)/(?:issues|pull)/\d+')):
+        found = re.search(pattern, str(item.get(key) or ''))
+        if found:
+            return found.group(1).lower()
+    return ''
+
+
+def _harvest_ref(item, own):
+    """`#12` for the harvested repository, `owner/name#12` for any other: a number alone is
+    not an issue once a saved search spans repositories or a rerun points somewhere else."""
+    repo = _item_repo(item)
+    prefix = repo if repo and repo != own else ''
+    return prefix + '#' + str(item.get('number'))
+
+
+def _harvest_candidate(item, matched_by, own=''):
     labels = [label.get('name', '') for label in item.get('labels', [])
               if isinstance(label, dict)] if isinstance(item.get('labels'), list) else []
     body = item.get('body') or ''
-    return {'ref': '#' + str(item.get('number')), 'url': item.get('html_url', ''),
+    return {'ref': _harvest_ref(item, own), 'url': item.get('html_url', ''),
             'title': ' '.join(str(item.get('title', '')).split())[:200],
             'labels': [label for label in labels if label],
             'closed_at': item.get('closed_at') or '',
@@ -6255,19 +6353,22 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
             raise
         slug, no_tracker = None, str(exc)
     token = os.environ.get(token_env) if token_env else None
-    skipped = []
+    skipped, unknown, labels_cut = [], [], False
+    own = '/'.join(slug.lower().split('/')[-2:]) if slug else ''
     by_number, truncated = {}, False
 
     def collect(items, how):
         for item in items:
             if not isinstance(item, dict) or item.get('number') is None:
                 continue
-            row = by_number.setdefault(item['number'], {'item': item, 'matched_by': []})
+            row = by_number.setdefault((_item_repo(item) or own, item['number']),
+                                       {'item': item, 'matched_by': []})
             if how not in row['matched_by']:
                 row['matched_by'].append(how)
 
     if no_tracker is not None:
         used = sorted(set(name for name in labels or [] if has_text(name)), key=str.lower)
+        verified = used
     elif from_file:
         payload = read_json(Path(from_file).expanduser())
         items = payload.get('items') if isinstance(payload, dict) else payload
@@ -6276,10 +6377,21 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
         # --label and --include-not-planned describe how the saved search was made.
         used = sorted(set(name for name in labels or [] if has_text(name)), key=str.lower)
         collect(items[:limit], 'saved-search')
-        truncated = len(items) > limit
+        # A saved page of a larger search is a partial harvest, whatever --limit says.
+        total = payload.get('total_count') if isinstance(payload, dict) else None
+        truncated = (len(items) > limit or (type(total) is int and total > len(items))
+                     or (isinstance(payload, dict) and payload.get('incomplete_results') is True))
+        # A saved search is taken at its word about the labels it used: there is no repository
+        # label list here to check them against. The live path below checks them.
+        verified = used
     else:
-        names = _github_labels(slug, token, opener)
-        used = _dup_label_candidates(names, labels)
+        names, labels_cut = _github_labels(slug, token, opener)
+        present = {name.lower() for name in names}
+        unknown = sorted((name for name in labels or [] if has_text(name)
+                          and name.lower() not in present), key=str.lower)
+        used = _dup_label_candidates(names, [name for name in labels or []
+                                             if has_text(name) and name.lower() in present])
+        verified = used
         skipped = sorted((name for name in names if name not in used), key=str.lower)
         if used:
             items, cut = _github_search(_label_query(slug, used), token, opener, limit)
@@ -6289,20 +6401,27 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
             items, cut = _github_search(_not_planned_query(slug), token, opener, limit)
             collect(items, 'not-planned')
             truncated = truncated or cut
-    ordered = sorted(by_number.values(), key=lambda row: row['item']['number'], reverse=True)
-    candidates = [_harvest_candidate(row['item'], row['matched_by']) for row in ordered]
+    ordered = sorted(by_number.values(),
+                     key=lambda row: (row['item']['number'], _item_repo(row['item'])), reverse=True)
+    truncated = truncated or labels_cut
+    candidates = [_harvest_candidate(row['item'], row['matched_by'], own) for row in ordered]
     if len(candidates) > limit:
         candidates, truncated = candidates[:limit], True
     refs = {candidate['ref'] for candidate in candidates}
     previous = read_json(run / 'dup-harvest.json') if (run / 'dup-harvest.json').is_file() else {}
     previous = previous if isinstance(previous, dict) else {}
     kept = previous['triage'] if isinstance(previous.get('triage'), dict) else {}
+    if previous.get('repo') != slug:
+        # Triage of another repository's #12 says nothing about this one's #12.
+        kept = {}
     reason = empty_reason if has_text(empty_reason) else previous.get('empty_reason', '')
     result = {
         'repo': slug, 'source': ('no-tracker' if no_tracker is not None else
                                  'from-file' if from_file else 'github-search'),
         'harvested_at': datetime.now(timezone.utc).isoformat(),
-        'labels': used, 'labels_skipped': skipped, 'not_planned': bool(include_not_planned),
+        'labels': used, 'labels_verified': verified, 'labels_unknown': unknown,
+        'labels_truncated': labels_cut,
+        'labels_skipped': skipped, 'not_planned': bool(include_not_planned),
         'candidate_count': len(candidates), 'truncated': truncated,
         'empty_reason': reason if has_text(reason) else '',
         'candidates': candidates,
@@ -9922,9 +10041,20 @@ def backtest_seal(case, run):
     if truth:
         raise ValueError('truth.json already has entries, so this hunt was not blind. '
                          'This case cannot produce a measurement; start a new one.')
+    if (case / 'matches.json').exists():
+        raise ValueError('matches.json already exists, so match decisions predate the seal. '
+                         'This case cannot produce a measurement; start a new one.')
     findings = read_json(run / 'findings.json')
     if not isinstance(findings, list):
         raise ValueError('findings.json must be an array')
+    ids = [row.get('id') if isinstance(row, dict) else None for row in findings]
+    if any(not has_text(ident) for ident in ids):
+        # A finding without a string id can never be matched: its decision would be dropped on
+        # every score and the case would wait for it forever.
+        raise ValueError('every sealed finding needs a non-empty string id; fix findings.json '
+                         'before sealing')
+    if len(set(ids)) != len(ids):
+        raise ValueError('findings.json repeats an id; every sealed finding needs its own')
     dump(case / 'sealed-findings.json', findings)
     for name in ('coverage.md', 'known-hypotheses.md', 'scope.md'):
         source = run / name
@@ -9934,6 +10064,9 @@ def backtest_seal(case, run):
     run_meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
     seal = {'sealed_at': datetime.now(timezone.utc).isoformat(),
             'sealed_findings_sha256': _sha256_file(case / 'sealed-findings.json'),
+            # Every sealed file, so an edit to any of them voids the case, not only findings.
+            'sealed_files_sha256': {path.name: _sha256_file(path)
+                                    for path in sorted(case.glob('sealed-*'))},
             'finding_count': len(findings), 'run': str(run),
             'run_commit': run_meta.get('commit'), 'pinned_commit': meta.get('pinned_commit')}
     if run_meta.get('commit') and run_meta['commit'] != meta.get('pinned_commit'):
@@ -9954,6 +10087,13 @@ def backtest_score(case):
     actual = _sha256_file(case / 'sealed-findings.json')
     if actual != seal['sealed_findings_sha256']:
         raise ValueError('sealed-findings.json changed after it was sealed; this case is void')
+    hashed = seal.get('sealed_files_sha256')
+    if isinstance(hashed, dict):
+        present = {path.name for path in case.glob('sealed-*')}
+        for name in sorted(present | set(hashed)):
+            if name not in hashed or name not in present or \
+                    _sha256_file(case / name) != hashed[name]:
+                raise ValueError(f'{name} changed after the case was sealed; this case is void')
     truth = read_json(case / 'truth.json')
     if not truth:
         return {'state': 'awaiting-truth', 'case': meta.get('name'),
@@ -10002,12 +10142,21 @@ def backtest_score(case):
                 'finding_lens': finding.get('lens'), 'finding_status': finding.get('status'),
                 'overlap_score': round(score, 2), 'overlap_reasons': why,
                 'decision': decision, 'decision_reason': row.get('decision_reason', '')})
-    # keep any decided pair the heuristic no longer proposes, so a judgment is never lost
+    # keep any decided pair the heuristic no longer proposes, so a judgment is never lost - but
+    # only for a finding that was sealed. A row naming any other id is a finding written after
+    # the truth was seen, which is what the seal exists to refuse; and its lens and status come
+    # from the sealed record, never from the editable matches file.
+    sealed_by_id = {row['id']: row for row in sealed if isinstance(row.get('id'), str)}
     seen = {(p['truth_id'], p['finding_id']) for p in proposals}
     for key, row in existing.items():
-        if key not in seen and row.get('decision') not in (None, 'undecided'):
-            proposals.append(row)
-    proposals.sort(key=lambda r: (-r['overlap_score'], str(r['truth_id'])))
+        if key in seen or row.get('decision') in (None, 'undecided'):
+            continue
+        if row.get('finding_id') not in sealed_by_id:
+            continue
+        finding = sealed_by_id[row['finding_id']]
+        proposals.append(dict(row, finding_lens=finding.get('lens'),
+                              finding_status=finding.get('status')))
+    proposals.sort(key=lambda r: (-r.get('overlap_score', 0), str(r['truth_id'])))
     dump(decisions_path, proposals)
 
     if undecided:

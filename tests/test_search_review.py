@@ -437,7 +437,7 @@ class AuditorLocationTests(Fixture):
             'a.md', bounty._TargetIndex(self.repo))
         block = parsed['blocks'][0]
         self.assertEqual((block['surface'], block['key']),
-                         ('src/Vault.sol:Vault.WITHDRAW', 'src/vault.sol|withdraw|reentrancy'))
+                         ('src/Vault.sol:Vault.WITHDRAW', 'src/vault.sol|vault.withdraw|reentrancy'))
 
     def test_split_surface_reads_a_file_name_with_a_glued_symbol(self):
         self.assertEqual(bounty._split_surface('src/Vault.sol.withdraw')[:2],
