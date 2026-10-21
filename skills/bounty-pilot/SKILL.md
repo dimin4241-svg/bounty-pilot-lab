@@ -383,8 +383,17 @@ python3 $S dup-check --run <run>
 python3 $S novelty-risk --run <run> --gate
 python3 $S history check --run <run>
 python3 $S verify-anchors --run <run> --gate
+python3 $S poc-bundle --run <run> --finding <BP-id> --publish
 python3 $S check --run <run> --submission
 ```
+
+`poc-bundle` packs the test, the log it printed and the paired-runner result, **refuses outright if
+any of them carries a credential shape** — a redacted PoC does not run, so it is a refusal and not a
+redaction — and with `--publish` creates an **unlisted** gist, then verifies its file list against
+the manifest in both directions. The submission gate requires a published bundle for every verified
+record, because a team that can rerun the proof does not have to take the claim on trust. An
+unlisted gist is **not** access-controlled: the link belongs in the private report and nowhere else,
+and `poc-gists.json` carries the exact command to delete it once the finding is triaged.
 
 `verify-anchors` opens the file every anchor cites and reports the quotes that are not in it —
 objections and their answers, escalation amplifiers, `intended` odd-one-out reviews, closed
@@ -414,7 +423,10 @@ zero-finding result is legitimate only when it says which surfaces are closed an
 Run `queue --run <run>` and resolve gate errors before presenting anything. Return a concise summary
 in the user's language: verified findings, unresolved leads with their next experiment, refuted
 mechanisms with reasons, and the coverage actually achieved — the function-coverage fraction and what
-was not reached. Write English drafts only for evidence-supported candidates (`references/report.md`).
+was not reached. Write English drafts only for evidence-supported candidates, and write them the way a
+hunter writes to an engineer rather than the way a model writes to a form: `references/report.md` lists
+the tells that get a report skimmed and batch-closed, and programs are explicitly delaying triage over
+machine-written submissions.
 If scope or deployment is unknown, label them source-review findings, not submission-ready.
 
 Never submit, open a public issue, publish a PoC, or contact a project unless the user explicitly

@@ -193,7 +193,29 @@ class SubmissionCase(unittest.TestCase):
         bounty.dup_check(self.run, empty_map_reason=empty_map_reason)
         if not (self.run / 'audit-inventory.json').exists():
             bounty.audit_inventory(self.repo, self.run)
+        if not (self.run / bounty.POC_GIST_FILE).exists():
+            self.published_poc(*[r['id'] for r in rows
+                                 if isinstance(r, dict) and isinstance(r.get('id'), str)])
         return bounty.validate(self.run, submission=True)
+
+    def published_poc(self, *findings):
+        """Record a prepared-and-published PoC bundle, the way `poc-bundle --publish` writes it.
+
+        The gate requires one before a report goes out: the team gets the test, its log and the
+        runner result on an unlisted gist instead of taking the claim on trust. Publishing needs
+        the network, so the fixture writes what the command would have written.
+        """
+        run_id = bounty.read_json(self.run / 'run.json')['run_id']
+        bounty.dump(self.run / bounty.POC_GIST_FILE, {
+            'schema_version': bounty.SCHEMA_VERSION, 'run_id': run_id,
+            'bundles': [{'finding': ident, 'run_id': run_id, 'published': True,
+                         'url': f'https://gist.github.com/tester/{i:032x}',
+                         'gist_id': f'{i:032x}', 'visibility': 'secret (unlisted)',
+                         'files': [{'gist_name': 'poc.t.sol', 'path': 'poc.t.sol',
+                                    'role': 'poc', 'bytes': 7, 'sha256': 'ab' * 32}],
+                         'verified_file_for_file': True,
+                         'delete_command': f'gh gist delete {i:032x} --yes'}
+                        for i, ident in enumerate(findings or ('BP-001',), start=1)]})
 
 
 class HonestBaselineTests(SubmissionCase):

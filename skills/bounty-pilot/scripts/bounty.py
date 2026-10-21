@@ -1255,6 +1255,7 @@ def lead_queue(run):
             'novelty_risk': read_novelty_risk(run),
             'audit_gap': read_audit_gap(run),
             'theme_sweeps': _read_theme_sweeps(run),
+            'poc_gists': read_poc_gists(run),
             'anchors': _queue_anchor_state(run),
             'notice': 'Every open lead needs a decisive next experiment. A listed experiment is '
                       'not evidence that it was run. untracked_leads are open rows in '
@@ -1273,6 +1274,11 @@ def lead_queue(run):
                       'the obstacle is real, and every later pass reads it as closed ground, so '
                       'a wrong one silently deletes that surface. Reproduce each one - record '
                       'blocker as an object with claim, command and output_excerpt - or drop it. '
+                      'poc_gists are the PoC bundles poc-bundle packed, with the unlisted gist '
+                      'each one was published to. A secret gist is unlisted and NOT '
+                      'access-controlled, so the link belongs in the private report and nowhere '
+                      'else, and delete_command is how you remove it once the finding is '
+                      'triaged. '
                       'theme_sweeps are readings whose blocks never say what is specifically '
                       'wrong - no mechanism: line anywhere. That is the one measured failure of '
                       'an agent doing this job, and the same model scores 50.7% given only the '
@@ -6228,6 +6234,7 @@ def validate(run, submission=False, ledger=True):
         _check_ledger_blockers(run, meta, records, errors)
         _check_distinct_evidence(run, [row for row in records if isinstance(row, dict)], errors)
         _check_anchors(run, errors)
+        _check_poc_bundles(run, [row for row in records if isinstance(row, dict)], errors)
     seen, targets = set(), 0
     for i, row in enumerate(records):
         prefix = f'finding[{i}]'
@@ -6794,6 +6801,292 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
                           'searched. Pass --label, rerun with --include-not-planned, or record '
                           'why with --empty-reason; the submission gate blocks until then.')
     return out
+
+
+# --------------------------------------------------------------------------- #
+# the PoC bundle the program is handed, and the secret gist that carries it
+# --------------------------------------------------------------------------- #
+
+POC_GIST_FILE = 'poc-gists.json'
+POC_BUNDLE_DIR = 'gists'
+# A gist has no directories, so every path is flattened and the README carries the layout.
+POC_FLAT_SEPARATOR = '__'
+POC_FILE_MAX_BYTES = 1_000_000
+POC_MAX_FILES = 60
+
+
+def _poc_sources(run, row):
+    """(relative path, absolute path, role) for everything the program needs to rerun this.
+
+    The test, the log it printed, and the paired-runner result the experiment ledger names:
+    a triage engineer who cannot run it reads a claim, not a proof.
+    """
+    found, seen = [], set()
+
+    def add(value, role):
+        if not has_text(value):
+            return
+        rel = Path(str(value))
+        if rel.is_absolute():
+            return
+        target = (run / rel).resolve()
+        if run not in target.parents or not target.is_file() or target.is_symlink():
+            return
+        key = str(target)
+        if key in seen:
+            return
+        seen.add(key)
+        found.append({'path': str(target.relative_to(run)), 'absolute': target, 'role': role})
+
+    evidence = row.get('evidence') if isinstance(row.get('evidence'), dict) else {}
+    add(evidence.get('poc_path'), 'poc')
+    add(evidence.get('log_path'), 'log')
+    ident = row.get('id') if isinstance(row.get('id'), str) else ''
+    entry, _ = _experiment_entry(run, ident)
+    if isinstance(entry, dict):
+        add(entry.get('result_path'), 'runner-result')
+    for extra in row.get('deployment_evidence') or []:
+        add(extra, 'deployment-evidence')
+    return found
+
+
+def _flat_gist_name(rel, taken):
+    """A gist filename for a path inside the run, unique and without directories."""
+    flat = re.sub(r'[^A-Za-z0-9_.-]', POC_FLAT_SEPARATOR, str(rel).replace('/', POC_FLAT_SEPARATOR))
+    name, suffix = flat, 2
+    while name in taken:
+        stem = Path(flat).stem
+        name = f'{stem}-{suffix}{Path(flat).suffix}'
+        suffix += 1
+    taken.add(name)
+    return name
+
+
+def _poc_readme(row, files, meta, program):
+    """The layout note a flattened gist needs, plus how to run it. No findings narrative."""
+    ident = row.get('id', '?')
+    evidence = row.get('evidence') if isinstance(row.get('evidence'), dict) else {}
+    lines = [f"# {ident} — proof of concept", '',
+             'Attached to a private bug bounty report. Not a disclosure: this gist is unlisted,',
+             'it is **not** access-controlled, and it is deleted once the report is triaged.', '']
+    if has_text(program.get('program')):
+        lines += [f"Program: {program['program']}", '']
+    # The revision the PoC ran against, not the one the run was opened at: a report pinned to
+    # the deployed commit is reproducible, one pinned to the run's HEAD may not be.
+    ran_at = row.get('revision') if has_text(row.get('revision')) else meta.get('commit')
+    lines += [f"Target commit: `{ran_at or 'unrecorded'}`", '']
+    if has_text(evidence.get('command')):
+        lines += ['Run it with:', '', '```', str(evidence['command']).strip(), '```', '']
+    lines += ['A gist has no directories, so the paths were flattened. Original layout:', '',
+              '| file in this gist | path in the run | what it is |', '|---|---|---|']
+    for item in files:
+        lines.append(f"| `{item['gist_name']}` | `{item['path']}` | {item['role']} |")
+    lines += ['', 'The PoC runs against unmodified production source at the commit above.']
+    if has_text(evidence.get('negative_control')):
+        lines += ['', 'Negative control: ' + str(evidence['negative_control']).strip()]
+    return '\n'.join(lines) + '\n'
+
+
+def poc_bundle(run, finding, publish=False, description=None, opener=None):
+    """Assemble the PoC a report hands over, refuse to ship a credential, and optionally publish.
+
+    Preparing is the default. Publishing is one explicit flag, because a secret gist is
+    unlisted and **not** access-controlled: anybody with the URL reads it, so the link belongs
+    in the report and nowhere else, and the gist is deleted once the finding is triaged.
+    """
+    run = _deployment_run(Path(run))
+    meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
+    program = {}
+    if (run / 'program.json').is_file():
+        try:
+            loaded = read_json(run / 'program.json')
+            program = loaded if isinstance(loaded, dict) else {}
+        except (OSError, ValueError):
+            program = {}
+    records = read_json(run / 'findings.json') if (run / 'findings.json').is_file() else []
+    row = next((r for r in records if isinstance(r, dict) and r.get('id') == finding), None) \
+        if isinstance(records, list) else None
+    if row is None:
+        raise ValueError(f'findings.json holds no record {finding}')
+
+    sources = _poc_sources(run, row)
+    if not any(item['role'] == 'poc' for item in sources):
+        raise ValueError(f'{finding} names no PoC file inside the run, and the PoC is what the '
+                         'team reruns; record evidence.poc_path (and evidence.log_path) first')
+    if len(sources) > POC_MAX_FILES:
+        raise ValueError(f'{len(sources)} files is more than this packs ({POC_MAX_FILES})')
+
+    taken, files, problems = set(), [], []
+    for item in sources:
+        size = item['absolute'].stat().st_size
+        if size > POC_FILE_MAX_BYTES:
+            problems.append({'path': item['path'],
+                             'problem': f'{size} bytes is over the {POC_FILE_MAX_BYTES} cap'})
+            continue
+        body = read_target_file(run, Path(item['path']), errors='replace',
+                                max_bytes=POC_FILE_MAX_BYTES)
+        if body is None:
+            problems.append({'path': item['path'], 'problem': 'not readable as text'})
+            continue
+        # Nothing with a credential in it leaves this machine. The scan is the same one the
+        # record gates use, and a hit is a refusal, not a redaction: a redacted PoC does not run.
+        kinds = secret_kinds(body)
+        if kinds:
+            problems.append({'path': item['path'],
+                             'problem': 'carries ' + '; '.join(kinds)
+                                        + '. Replace it with an environment-variable '
+                                          'placeholder and rerun the PoC'})
+            continue
+        files.append(dict(item, gist_name=_flat_gist_name(item['path'], taken), bytes=size,
+                          sha256=hashlib.sha256(body.encode('utf-8')).hexdigest(), body=body))
+    if problems:
+        raise ValueError('refusing to bundle: '
+                         + '; '.join(f"{p['path']}: {p['problem']}" for p in problems))
+
+    folder = run / POC_BUNDLE_DIR / str(finding)
+    folder.mkdir(parents=True, exist_ok=True)
+    for item in files:
+        (folder / item['gist_name']).write_text(item['body'], encoding='utf-8')
+    readme = _poc_readme(row, files, meta, program)
+    (folder / 'README.md').write_text(readme, encoding='utf-8')
+    manifest = [{'gist_name': item['gist_name'], 'path': item['path'], 'role': item['role'],
+                 'bytes': item['bytes'], 'sha256': item['sha256']} for item in files]
+    digest = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode('utf-8')).hexdigest()
+
+    record = {'finding': finding, 'run_id': meta.get('run_id'),
+              'commit': meta.get('commit'),
+              'prepared_at': datetime.now(timezone.utc).isoformat(),
+              'folder': str(folder.relative_to(run)), 'files': manifest,
+              'manifest_sha256': digest, 'published': False, 'url': '', 'gist_id': '',
+              'visibility': '', 'verified_file_for_file': None, 'delete_command': ''}
+    if publish:
+        record.update(_publish_poc_gist(folder, files, finding, description, program, opener))
+    held = read_json(run / POC_GIST_FILE) if (run / POC_GIST_FILE).is_file() else {}
+    held = held if isinstance(held, dict) else {}
+    entries = held.get('bundles') if isinstance(held.get('bundles'), list) else []
+    entries = [e for e in entries if isinstance(e, dict) and e.get('finding') != finding]
+    entries.append(record)
+    dump(run / POC_GIST_FILE, {
+        'schema_version': SCHEMA_VERSION, 'run_id': meta.get('run_id'),
+        'bundles': sorted(entries, key=lambda e: str(e.get('finding'))),
+        'notice': 'A secret gist is unlisted, NOT access-controlled: anybody with the URL reads '
+                  'it. Put the link in the private report and nowhere else, and delete the gist '
+                  'once the finding is triaged or closed - delete_command is the exact command. '
+                  'The bundle is refused outright when any file carries a credential shape, '
+                  'because a redacted PoC does not run.'})
+    return dict(record, readme_bytes=len(readme), files_prepared=len(files))
+
+
+def _gh_json(args, opener=None):
+    """One `gh` call returning JSON, or a ValueError naming what failed."""
+    if opener is not None:          # tests inject the transport; nothing is executed
+        return opener(args)
+    try:
+        done = subprocess.run(['gh', *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=120)
+    except FileNotFoundError:
+        raise ValueError('the GitHub CLI (gh) is not on PATH; install it or publish by hand') \
+            from None
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f'gh {args[0]} failed: {exc}') from None
+    if done.returncode != 0:
+        raise ValueError('gh ' + ' '.join(args[:2]) + ' failed: '
+                         + done.stderr.decode('utf-8', 'replace').strip()[:300])
+    body = done.stdout.decode('utf-8', 'replace').strip()
+    try:
+        return json.loads(body) if body.startswith(('{', '[')) else body
+    except json.JSONDecodeError:
+        return body
+
+
+def _publish_poc_gist(folder, files, finding, description, program, opener=None):
+    """Create the unlisted gist and verify its file list against the manifest, both directions.
+
+    `gh gist create` is secret by default and has no `--secret` flag; `--public` is the opt-in,
+    so it is never passed here.
+    """
+    note = description or (f'{finding} PoC for a private bug bounty report'
+                           + (f" to {program['program']}" if has_text(program.get('program'))
+                              else ''))
+    names = ['README.md'] + [item['gist_name'] for item in files]
+    created = _gh_json(['gist', 'create', '--desc', note,
+                        *[str(folder / name) for name in names]], opener)
+    url = created if isinstance(created, str) else str(created)
+    gist_id = url.rstrip('/').rsplit('/', 1)[-1]
+    listed = _gh_json(['api', f'gists/{gist_id}', '--jq', '{files: (.files|keys), public: .public}'],
+                      opener)
+    if isinstance(listed, str):
+        try:
+            listed = json.loads(listed)
+        except json.JSONDecodeError:
+            listed = {}
+    remote = set(listed.get('files') or []) if isinstance(listed, dict) else set()
+    expected = set(names)
+    verified = {'missing': sorted(expected - remote), 'orphans': sorted(remote - expected)}
+    public = bool(listed.get('public')) if isinstance(listed, dict) else None
+    return {'published': True, 'url': url, 'gist_id': gist_id,
+            'visibility': 'PUBLIC - delete it now' if public else 'secret (unlisted)',
+            'verified_file_for_file': not verified['missing'] and not verified['orphans'],
+            'verification': verified,
+            'delete_command': f'gh gist delete {gist_id} --yes'}
+
+
+def read_poc_gists(run):
+    """The PoC bundles this run prepared, as the queue and the gate read them."""
+    path = Path(run) / POC_GIST_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return {'invalid': True}
+    entries = data.get('bundles') if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return {'invalid': True}
+    return {'bundles': [{'finding': e.get('finding'), 'published': bool(e.get('published')),
+                         'url': e.get('url', ''), 'files': len(e.get('files') or []),
+                         'verified_file_for_file': e.get('verified_file_for_file'),
+                         'delete_command': e.get('delete_command', '')}
+                        for e in entries if isinstance(e, dict)]}
+
+
+def _check_poc_bundles(run, records, errors):
+    """A report that is ready to send has its PoC packed, scanned and published for the team."""
+    path = Path(run) / POC_GIST_FILE
+    held = {}
+    if path.is_file():
+        try:
+            data = read_json(path)
+            held = {e['finding']: e for e in (data.get('bundles') or [])
+                    if isinstance(e, dict) and has_text(e.get('finding'))} \
+                if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            errors.append(POC_GIST_FILE + ': not a result poc-bundle wrote; rerun poc-bundle')
+            return
+    for row in records:
+        if not isinstance(row, dict) or row.get('status') != SUBMISSION_STATUS:
+            continue
+        ident = row.get('id') if isinstance(row.get('id'), str) else '?'
+        entry = held.get(ident)
+        if entry is None:
+            errors.append(f'{POC_GIST_FILE}: {ident} has no PoC bundle. Run poc-bundle --run '
+                          f'<run> --finding {ident} --publish: the report carries the link to an '
+                          'unlisted gist holding the test, its log and the runner result, so the '
+                          'team can rerun it instead of taking the claim on trust')
+            continue
+        if entry.get('run_id') and entry['run_id'] != (read_json(Path(run) / 'run.json')
+                                                       .get('run_id')
+                                                       if (Path(run) / 'run.json').is_file()
+                                                       else None):
+            errors.append(f'{POC_GIST_FILE}: {ident} was bundled in a different run; rerun '
+                          'poc-bundle')
+        if not entry.get('published'):
+            errors.append(f'{POC_GIST_FILE}: {ident} is packed but not published. Rerun '
+                          f'poc-bundle --finding {ident} --publish, then put the URL in the '
+                          'report')
+        elif entry.get('verified_file_for_file') is False:
+            errors.append(f'{POC_GIST_FILE}: {ident} published, but the gist does not match the '
+                          'manifest file for file: ' + json.dumps(entry.get('verification', {})))
 
 
 # --------------------------------------------------------------------------- #
@@ -11305,6 +11598,15 @@ def build_parser():
                      help='private run directory: also save the lead as '
                           'selectors/<address>.json')
 
+    poc = sub.add_parser('poc-bundle',
+                         help='pack the PoC, its log and the runner result for the report, and '
+                              'publish them as an unlisted gist with --publish')
+    poc.add_argument('--run', required=True)
+    poc.add_argument('--finding', required=True)
+    poc.add_argument('--publish', action='store_true',
+                     help='create the gist (secret by default; gh has no --secret flag). '
+                          'Without it the bundle is only prepared in the run')
+    poc.add_argument('--desc', help='gist description; a neutral one is generated otherwise')
     gap = sub.add_parser('audit-gap',
                          help='rank in-scope files by whether anybody reviewed THIS version')
     gap.add_argument('--repo', required=True)
@@ -11498,6 +11800,10 @@ def main(argv=None):
         if args.action == 'selectors':
             print(json.dumps(selectors_report(args.rpc, args.address, args.code, args.abi,
                                               args.signatures, args.block, args.run), indent=2))
+            return 0
+        if args.action == 'poc-bundle':
+            result = poc_bundle(args.run, args.finding, args.publish, args.desc)
+            print(json.dumps(result, indent=2))
             return 0
         if args.action == 'audit-gap':
             print(json.dumps(audit_gap(args.repo, args.run, args.audited, args.scope,
