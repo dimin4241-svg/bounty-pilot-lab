@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.25.0
+
+### Tier 2: a mechanism instead of a theme, and the three layers nothing was reading
+
+- **Every block now carries `mechanism:`** — one sentence naming what is specifically wrong,
+  specific enough that reading the named function could prove it false. `_shared.md` gains the
+  contract with four worked not-a-mechanism/mechanism pairs and the test that settles it: could a
+  reader disprove this sentence by reading the code? `converge` counts blocks without one and
+  reports any reading that has none as a `theme_sweep`; `queue` lists them. **Why:** the measured
+  failure of an agent doing this job is a plausible report organised around themes that misses
+  the bug — the same model finds 50.7% of graded bugs given only the file and 92.6% given the
+  mechanism, and this skill's own spec-divergence, business-logic and coverage-gap lenses
+  produced 91 structured blocks and no survivors of their own.
+
+- **`node-client` (new lens, group `node`).** The node, client, runtime, precompile or prover:
+  untrusted ingress to its first parser, wire-supplied lengths that size allocations, panics on
+  the block-processing path, determinism where consensus reads it, unmetered block hooks. Six of
+  the seven largest public bounties ever paid were in this layer, and about a fifth of one
+  platform's lifetime payout value went to blockchain and DLT targets. `stack_route.py` selects
+  it for Go, native-Rust and Substrate stacks and drops it entirely otherwise, so a
+  contracts-only target never gets a lens that would read nothing. Its discipline is the rule
+  that cost this skill a report: **trace the panic to the process** before calling it a crash.
+
+- **`secrets-artifacts` (new lens, group `artifacts`).** What the project published without
+  meaning to: served bundles and source maps, packaged mobile and desktop clients, container and
+  CI artifacts, and the history behind the checkout. One of the two confirmed Highs in the ledger
+  came from this class, found by accident outside the pipeline because no lens looked. The lens
+  never uses a credential it finds — the finding is that the value is published and what the
+  service's own permission model says it would authorise.
+
+- **`wallet` (new lens, group `wallet-app`).** Extension, mobile, desktop and hardware companion
+  apps, after four wallet hunts with no wallet lens. Every finding in the class is one sentence:
+  the user saw A and signed B, or an origin that should not have been able to ask, asked. Its
+  bundle carries the web sources when the target ships them and the ordinary source tree
+  otherwise, saying which. It leads with the exclusion that decides the class: a precondition of
+  a compromised host pays nothing on every programme in it, so the entry point has to be remote.
+
+16 regression tests in `tests/test_tier2.py`; 15 fail on `b6ee81f` and the 16th is the control.
+877 tests green on Python 3.9 and 3.15.
+
 ## 0.24.0
 
 ### Tier 1 of the 2026-10-21 design: hunt the audit gap, price duplicates first, check your own citations

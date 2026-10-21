@@ -76,6 +76,34 @@ Two disciplines carry over to every target: prove the sink and the source **sepa
 neither alone; and settle a URL guard against `new URL()` rather than by eye, because a hostname check
 that ignores the scheme passes `javascript://host/%0a…`.
 
+## Below the contracts, beside them, and in front of the user
+
+Three groups added in 0.25.0, each selected from what the target **is**, not from its language.
+
+**`node` → `hunt-agents/node-client-agent.md`.** The node, client, runtime, precompile or prover.
+Six of the seven largest public bounties ever paid were in this layer — a precompile delegatecall,
+a client fork duplicating ETH, a system contract missing a balance check, a malleable bridge proof,
+an uninitialised proxy whose impact was a permanent freeze — and about a fifth of one platform's
+lifetime payout value went to blockchain and DLT targets. The lens walks untrusted ingress to the
+first parser, follows wire-supplied lengths into allocations, finds panics on the block-processing
+path, and asks about determinism. `stack_route.py` selects it when a Go, native-Rust or Substrate
+stack is detected and never otherwise, because on a contracts-only target it reads nothing.
+Its discipline is one rule: **trace the panic to the process** before calling it a crash.
+
+**`artifacts` → `hunt-agents/secrets-artifacts-agent.md`.** What the project published without
+meaning to: served bundles and source maps, packaged mobile and desktop clients, container and CI
+artifacts, and the commit history behind the current checkout. One of the two confirmed Highs in
+this skill's own ledger came from this class and was found by accident, outside the pipeline. The
+lens never uses a credential it finds; the finding is that the value is published and what the
+service's own permission model says it would authorise.
+
+**`wallet-app` → `hunt-agents/wallet-agent.md`.** The client that signs: extension, mobile, desktop
+or a hardware device's companion app. Every finding in the class is one sentence — the user saw A
+and signed B, or an origin that should not have been able to ask, asked. Its bundle carries the web
+sources when the target ships them and the ordinary source tree otherwise. The exclusion that
+decides the class: **a precondition of a compromised host pays nothing** on every programme in it,
+so the entry point has to be remote — a page, a link, a message, a peer.
+
 ## Other languages
 
 Route from `adapters.md`. Build the model from primary documentation and the project's own tooling,

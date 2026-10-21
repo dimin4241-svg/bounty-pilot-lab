@@ -229,7 +229,11 @@ Read `references/passes.md`; it settles lens selection, dispatch and stop rules.
    `coverage.md`, plus quoted documentation promises that later answer "this is intended".
 2. **Pick one base group** — `attack` (EVM default), `high-impact` (large value at risk) or
    `recommended` (non-EVM or mixed, from `stack_route.py`) — then add what the shape calls for:
-   `config`, `logic`, `cross-stack`, `anchor-account`, `web` when a website or app is in scope.
+   `config`, `logic`, `cross-stack`, `anchor-account`, `web` when a website or app is in scope,
+   `node` for a client, runtime, precompile or prover, `artifacts` whenever the project ships a
+   built bundle, package or image, and `wallet-app` for anything that signs on a user's behalf.
+   The last three are where this skill's own confirmed Highs and six of the seven largest public
+   bounties came from, and none of them is reached by a contract lens (`lenses.md`).
 3. **Classic classes.** The `attack` group includes `classic`: Part A (post-2023 EVM semantics —
    EIP-7702, transient storage, Permit2, signatures, L2 differences, v4 hooks, ERC-4337) runs on
    every EVM target; Part B (the classic bug-class sweep) is `solidity-auditor`'s ground when it ran
