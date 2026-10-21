@@ -13,6 +13,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The target checkout is untrusted: its .git/config can name an fsmonitor or hooks program
+# that git would run even for a read-only `ls-files` or `status`.
+GIT_HARDENING = ("--no-optional-locks", "-c", "core.fsmonitor=false",
+                 "-c", "core.hooksPath=/dev/null")
+
 MAX_OUTPUT_BYTES = 40000
 MAX_TIMEOUT_SEC = 1800
 # Toolchains need a working home/cache or go/cargo refuse to run; keep this list
@@ -42,7 +47,18 @@ LONG_CODE_OPTIONS = ("--eval", "--print", "--eval-file", "--command")
 SHELL_VALUE_OPTIONS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 # Commands that run another command unchanged. Detection, the shell guard and the gate read
 # the command they wrap, so `env forge test` and `timeout 60 forge test` are still forge.
-WRAPPERS = {"env", "timeout", "nice", "nohup", "stdbuf", "time", "ionice"}
+WRAPPERS = {"env", "timeout", "nice", "nohup", "stdbuf", "time", "ionice", "setsid"}
+# Launchers that run a command line they assemble themselves (`xargs sh -c`, `busybox sh -c`,
+# `sudo sh -c`): there is no honest test command behind them that the guard could read.
+REFUSED_LAUNCHERS = {"xargs", "sudo", "doas", "su", "busybox", "parallel"}
+# Project runners whose `run` subcommand runs the command that follows it, so `uv run pytest`
+# is pytest - for detection and for the shell guard alike.
+RUN_PREFIXES = {"uv", "poetry", "pipenv", "hatch", "pdm", "rye"}
+RUN_PREFIX_VALUE_OPTIONS = {"--with", "--python", "-p", "--project", "--directory", "--extra",
+                            "--group", "--env-file", "--package", "-e", "--env"}
+# `python -m <module>` modules that run code taken from their own arguments.
+CODE_RUNNING_MODULES = {"timeit", "trace", "pdb", "profile", "cprofile", "code", "runpy",
+                        "idlelib"}
 WRAPPER_VALUE_OPTIONS = {"env": {"-u", "--unset", "-C", "--chdir"},
                          "timeout": {"-k", "-s", "--kill-after", "--signal"},
                          "nice": {"-n", "--adjustment"},
@@ -119,6 +135,15 @@ def unwrap(argv):
         if not argv:
             return argv
         base = Path(argv[0]).name.lower()
+        if base in RUN_PREFIXES and len(argv) > 1 and argv[1] == "run":
+            idx = 2
+            while idx < len(argv) and argv[idx].startswith("-"):
+                if argv[idx] == "--":
+                    idx += 1
+                    break
+                idx += 2 if argv[idx] in RUN_PREFIX_VALUE_OPTIONS else 1
+            argv = argv[idx:]
+            continue
         if base not in WRAPPERS:
             return argv
         takes = WRAPPER_VALUE_OPTIONS.get(base, set())
@@ -160,12 +185,53 @@ def _leading_options(args, value_options=()):
     return found
 
 
+def python_module(argv):
+    """The module `python -m <module>` runs, or None: argv[0] must be a Python interpreter.
+
+    Detection used to pick pytest whenever any word was `pytest`, so
+    `python3 -m timeit -s <code> pytest` read as a pytest run that executed a test.
+    """
+    if not argv:
+        return None
+    stem = Path(argv[0]).name.lower()
+    stem = stem[:-4] if stem.endswith(".exe") else stem
+    if re.sub(r"[0-9.]+$", "", stem) not in ("python", "py"):
+        return None
+    idx = 1
+    while idx < len(argv):
+        word = argv[idx]
+        if word == "--" or not word.startswith("-"):
+            return None
+        if word.startswith("--"):
+            idx += 1
+            continue
+        letters = word[1:]
+        for pos, letter in enumerate(letters):
+            if letter == "m":
+                rest = letters[pos + 1:]
+                if rest:
+                    return rest
+                return argv[idx + 1] if idx + 1 < len(argv) else None
+            if letter in VALUE_LETTERS["python"]:
+                idx += 0 if letters[pos + 1:] else 1
+                break
+        idx += 1
+    return None
+
+
 def _reject_shell(argv):
     argv = unwrap(argv)
     if not argv:
         raise ValueError("argv names a wrapper with no command")
     base = Path(argv[0]).name.lower()
     stem = base[:-4] if base.endswith(".exe") else base
+    if stem in REFUSED_LAUNCHERS:
+        raise ValueError("argv runs its command through " + stem + ", which builds the command "
+                         "line itself; give the test binary and its arguments as argv")
+    if stem in ("npx", "npm", "pnpm", "yarn", "bunx") and any(
+            word in ("-c", "--call") or word.startswith("--call=") for word in argv[1:]):
+        raise ValueError("argv runs an inline command through " + stem + " -c/--call; name the "
+                         "test binary instead")
     if base in SHELLS or stem in SHELLS:
         # PowerShell takes -Command anywhere on its line; a POSIX shell reads options up to
         # the script, and what follows the script is that script's own arguments.
@@ -173,7 +239,10 @@ def _reject_shell(argv):
                  else _leading_options(argv[1:], SHELL_VALUE_OPTIONS))
         for word in words:
             low = word.lower()
-            if low in SHELL_CODE_FLAGS:
+            name = low.split("=", 1)[0]
+            if low in SHELL_CODE_FLAGS or name in ("--command", "--init-command") or (
+                    stem == "fish" and (name == "-c" or low.startswith("-c")
+                                        or "C" in word[1:2])):
                 raise ValueError("argv runs an inline shell command; name a real test binary "
                                  "instead")
             if stem in ("powershell", "pwsh"):
@@ -194,6 +263,21 @@ def _reject_shell(argv):
     if stem == "deno" and any(word in ("eval", "repl") for word in argv[1:2]):
         raise ValueError("argv runs inline interpreter code (deno eval); run a test file instead")
     code, values = CODE_LETTERS.get(stem, ""), VALUE_LETTERS.get(stem, "")
+    module = python_module(argv) if stem == "python" else None
+    if module and module.lower() in CODE_RUNNING_MODULES:
+        raise ValueError("argv runs python -m " + module + ", which executes code given in its "
+                         "own arguments; run a test module or file instead")
+    if stem == "perl":
+        # `-MPOSIX;system(...)` is `use POSIX; system(...)`: a module option can carry code.
+        for idx, word in enumerate(argv[1:], 1):
+            value = None
+            if word in ("-M", "-m") and idx + 1 < len(argv):
+                value = argv[idx + 1]
+            elif word.startswith(("-M", "-m")) and len(word) > 2:
+                value = word[2:]
+            if value is not None and re.search(r"[;\s(){}'\"]", value):
+                raise ValueError("argv passes code through perl " + word[:2] + "; run a test "
+                                 "file instead")
     takes_value = {"-" + letter for letter in values} | {"--require", "--import", "--loader",
                                                           "--conditions"}
     for word in _leading_options(argv[1:], takes_value):
@@ -276,6 +360,20 @@ def _scrub(text, extra_secrets=()):
 def _decode(blob):
     truncated = len(blob) > MAX_OUTPUT_BYTES
     return blob[:MAX_OUTPUT_BYTES].decode("utf-8", "replace"), truncated
+
+
+# A runner prints its summary last: past the stored head of a long `-vvvv` run it was never
+# read, and a per-suite header was taken for proof that a test ran.
+DETECT_TAIL_BYTES = 16000
+
+
+def _detection_text(blob):
+    """What detection reads: the whole output, or its head and its tail when it is long."""
+    blob = blob or b""
+    if len(blob) <= MAX_OUTPUT_BYTES:
+        return blob.decode("utf-8", "replace")
+    return (blob[:MAX_OUTPUT_BYTES].decode("utf-8", "replace") + "\n...[cut]...\n"
+            + blob[-DETECT_TAIL_BYTES:].decode("utf-8", "replace"))
 
 
 def _dotenv_offenders(directory):
@@ -365,7 +463,10 @@ def _cargo_zero(argv, low):
     for count, body in zip(counts, bodies):
         result = re.search(r"test result: \w+\. (\d+) passed; (\d+) failed", body)
         executed.append(int(result.group(1)) + int(result.group(2)) if result else count)
-    binaries = len(re.findall(r"(?m)^\s*running (?!\d+ tests?$)\S", low))
+    # A test binary header, not cargo -v's `Running \`rustc ...\`` / `\`rustdoc ...\``
+    # compiler invocations: counted as binaries, those pushed doc-test blocks into the slice.
+    binaries = sum(1 for header in re.findall(r"(?m)^\s*running (?!\d+ tests?$)(\S.*)$", low)
+                   if not re.search(r"(?:^|[\s/`])rust(?:c|doc)(?:\s|`|$)", header))
     if binaries:
         return sum(executed[:binaries]) == 0
     ran = 0
@@ -433,9 +534,9 @@ def _forge_zero(argv, text, low):
     if summary:
         # Every test skipped (vm.skip) is a run that asserted nothing.
         return all(int(passed) + int(failed) == 0 for passed, failed, _ in summary)
-    if "ran " not in low and "test suite" not in low:
-        return True
-    return False
+    # No summary: only a test result line shows that a test executed. A `Ran 1 test for`
+    # header is printed for a suite whose every test was skipped, too.
+    return re.search(r"(?m)^\s*\[(?:pass|fail)", low) is None
 
 
 def _go_zero(argv, text, low):
@@ -484,7 +585,10 @@ def _unittest_zero(low):
     if not ran or not any(ran) or "no tests ran" in low:
         return True
     skipped = sum(_counts(r"\bskipped=(\d+)", low))
-    return sum(ran) - skipped <= 0
+    # A module that failed to import is counted as one test (`unittest.loader._FailedTest`)
+    # that errored: `Ran 1 test ... FAILED (errors=1)` from a typo in the module name.
+    unimported = len(re.findall(r"failed to import test module", low))
+    return sum(ran) - skipped - unimported <= 0
 
 
 def _detect(argv, returncode, text):
@@ -503,9 +607,10 @@ def _detect(argv, returncode, text):
         return "cargo", _cargo_zero(argv, low)
     if re.fullmatch(r"go(?:[0-9][\w.]*)?", base) and sub == "test":
         return "go", _go_zero(argv, plain, low)
-    if base.startswith("pytest") or "pytest" in argv:
+    module = python_module(argv)
+    if base.startswith("pytest") or module == "pytest":
         return "pytest", _pytest_zero(argv, returncode, low)
-    if "unittest" in argv and (base.startswith("python") or base == "py"):
+    if module == "unittest":
         return "unittest", _unittest_zero(low)
     if (base == "move" or base in ("sui", "aptos", "iota") and "move" in argv) and "test" in argv:
         totals = _counts(r"total tests: (\d+)", low)
@@ -585,9 +690,9 @@ def _run_case(command, cwd, timeout, env):
 def _checkout_identity(root):
     """Observed local checkout SHA and status; untracked PoC files make it dirty."""
     try:
-        rev = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+        rev = subprocess.run(["git", *GIT_HARDENING, "-C", str(root), "rev-parse", "HEAD"],
                              capture_output=True, text=True, timeout=5, check=True).stdout.strip()
-        status = subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+        status = subprocess.run(["git", *GIT_HARDENING, "-C", str(root), "status", "--porcelain"],
                                 capture_output=True, text=True, timeout=5, check=True).stdout
         return rev, "dirty" if status.strip() else "clean"
     except (OSError, subprocess.SubprocessError):
@@ -648,7 +753,7 @@ def execute(plan, root, allow_exec=False, allow_dotenv=False):
                                    "truncated": out_trunc or err_trunc})
                 else:
                     status, detection, note = read_test_output(
-                        command, rc, out_text + "\n" + err_text,
+                        command, rc, _detection_text(raw_out) + "\n" + _detection_text(raw_err),
                         case.get("expect_tests_marker"))
                     ran = status == "ran"
                     record.update({"executed": True, "exit_code": rc, "timed_out": False,
@@ -699,6 +804,12 @@ def write_case_logs(report, out):
         if not case.get("executed"):
             continue
         name = stem + "." + re.sub(r"[^A-Za-z0-9_.-]", "_", str(case["id"])) + ".log"
+        # `poc 1` and `poc_1` sanitise alike; the second must not overwrite the first's log.
+        bump = 2
+        while name in written:
+            name = stem + "." + re.sub(r"[^A-Za-z0-9_.-]", "_", str(case["id"])) \
+                + "-" + str(bump) + ".log"
+            bump += 1
         body = ("$ " + " ".join(case.get("argv", [])) + "\n" + case.get("stdout", "")
                 + ("\n" if case.get("stdout") and not case["stdout"].endswith("\n") else "")
                 + case.get("stderr", ""))

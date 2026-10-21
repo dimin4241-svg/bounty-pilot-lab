@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.23.0
+
+### Review of 0.22.0: what ran target code, leaked, read exact, or passed when it should not
+
+A six-reader review of `2924bc2` (four on `bounty.py`, one on the other scripts, one comparing
+the docs with the CLI) found defects on paths the 773 tests never reached; every code finding was
+reproduced before it was fixed. This release fixes the P1 set. Each fix has a regression test in
+`tests/test_review_p1.py` that failed on `2924bc2`, and seven negative controls that pass on both.
+
+- **Nothing runs target code before `--deep`.** The toolchain version probes ran in the caller's
+  directory, so a committed `.yarnrc` `yarn-path` executed a script from the checkout; they now run
+  in an empty directory with `YARN_IGNORE_PATH=1` and `GOTOOLCHAIN=local`. Every helper's git call
+  carries the fsmonitor/hooksPath hardening `bounty.py` already had.
+- **Nothing bundled or stored leaks.** `--include` bodies and run-context files are redacted and
+  counted; raw keys in `accounts: [...]` arrays are redacted; the record secret scan walks nested
+  values; `--deep` excerpts are scrubbed of the `--rpc` endpoint.
+- **`verify-deployment` never calls a proxy or other code `exact`.** Only a revert means "no getter":
+  a rate-limited proxy probe leaves the result `partial`. A `null` RPC result is refused instead of
+  read as empty code, an empty slot or a zero balance. A metadata tail is stripped only when it
+  parses as exactly one CBOR map of solc's own keys. An empty artifact is a `mismatch`.
+- **Gates that passed falsely now fail.** A lens is read only by the Lens column of `coverage.md`;
+  `function-coverage` skips only the `.sol` files the graph holds; `converge` keeps the contract
+  in the key and `_` in function names; `dup-check` joins by file and function, not substring;
+  `dup-harvest` keys triage by repository, reads `total_count`/`incomplete_results`, paginates
+  labels and searches only labels the repository has; the runner detects pytest/unittest only as
+  the command or the `python -m` module and refuses the inline-code launchers its guard missed; a
+  revision other than the run's must be reachable from a remote ref or tag where the checkout has
+  any; the backtest credits only sealed findings and hashes every sealed file.
+- **Smaller P1 items:** the history ledger survives U+2028 and odd `.git` spellings, and
+  `owner/repo` means GitHub; `delta` lists `ignore = all` submodule bumps (14 instead of 3 on
+  TON v2025.06..v2026.10) and renamed dependency files; `audit-inventory` is bound to its run and
+  commit, lists submodules, and finds `audit-reports/` and firm-named PDFs; import drops upstream
+  confidence and keeps same-named contracts in different files apart; a per-address `chain_id`
+  binds that address to its chain; cargo `-v`, long forge output and colliding case ids are read
+  correctly.
+
+**This can newly fail old runs**, on purpose:
+- a record whose `affected_paths` names only the file no longer covers a function group, so its
+  singletons reappear in `queue`;
+- an `audit-inventory.json` from another run or commit is refused, and each submodule is now an
+  entry to triage;
+- a deployment file read on a chain other than the one `program.json` gives that address fails;
+- a `--label` the repository does not have searches nothing;
+- a non-array `dup-map.json`, run outputs cited as a PoC or log, and a PoC revision made locally
+  in a checkout with remotes are refused;
+- the backtest refuses to seal non-string or repeated ids, or over an existing `matches.json`.
+
+The P2 items and the documentation mismatches from the same review are not in this release.
+
 ## 0.22.0
 
 ### The ceiling is chosen at target selection, and the reports that decide a finding are published elsewhere

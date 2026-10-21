@@ -11,6 +11,11 @@ import re
 import subprocess
 from pathlib import Path
 
+# The target checkout is untrusted: its .git/config can name an fsmonitor or hooks program
+# that git would run even for a read-only `ls-files` or `status`.
+GIT_HARDENING = ("--no-optional-locks", "-c", "core.fsmonitor=false",
+                 "-c", "core.hooksPath=/dev/null")
+
 LANGUAGES = {
     ".sol": "solidity", ".vy": "vyper", ".rs": "rust", ".move": "move",
     ".cairo": "cairo", ".go": "go", ".py": "python", ".ts": "typescript",
@@ -74,7 +79,7 @@ def _tracked(root):
     """Prefer git-tracked files; fall back to a bounded filesystem walk so a
     non-git directory produces results (and never a traceback)."""
     try:
-        proc = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
+        proc = subprocess.run(["git", *GIT_HARDENING, "-C", str(root), "ls-files", "-z"],
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         return sorted(p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p), "git"
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):

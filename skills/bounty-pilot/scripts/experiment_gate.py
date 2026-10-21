@@ -47,21 +47,44 @@ def same_revision(left, right):
     return bool(a and b and (a.startswith(b) or b.startswith(a)))
 
 
+GIT_HARDENING = ["--no-optional-locks", "-c", "core.fsmonitor=false",
+                 "-c", "core.hooksPath=/dev/null"]
+
+
+def _git_out(target_root, *args):
+    done = subprocess.run(["git", *GIT_HARDENING, "-C", str(target_root), *args],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
+                          env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    return done.returncode, done.stdout.decode("utf-8", "replace").strip()
+
+
 def _known_commit(target_root, revision):
-    """Whether the run's target checkout holds this commit (one fetched, not made locally)."""
+    """Whether the run's target checkout holds this commit (one fetched, not made locally).
+
+    Existing in the checkout is not enough: a commit made in the target checkout itself - one
+    that deletes the require under test - exists there too. Where the checkout has remote
+    refs or tags, the commit must be reachable from one of them. A checkout with neither
+    has nothing published to compare against, and is read by existence alone.
+    """
     if not target_root or not Path(target_root).is_dir():
         return False
     try:
-        done = subprocess.run(
-            ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
-             "-c", "core.hooksPath=/dev/null", "-C", str(target_root), "rev-parse", "--verify",
-             "--quiet", revision + "^{commit}"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
-            env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+        code, full = _git_out(target_root, "rev-parse", "--verify", "--quiet",
+                              revision + "^{commit}")
+        full = full.lower()
+        if code != 0 or not full.startswith(revision):
+            return False
+        code, published = _git_out(target_root, "for-each-ref", "--format=%(refname)",
+                                   "refs/remotes", "refs/tags")
+        if code != 0:
+            return False
+        if not published:
+            return True
+        code, containing = _git_out(target_root, "for-each-ref", "--contains", full,
+                                    "--format=%(refname)", "refs/remotes", "refs/tags")
+        return code == 0 and bool(containing)
     except (OSError, subprocess.SubprocessError):
         return False
-    full = done.stdout.decode("utf-8", "replace").strip().lower()
-    return done.returncode == 0 and full.startswith(revision)
 
 
 def blocker_evidence_reason(blocker):

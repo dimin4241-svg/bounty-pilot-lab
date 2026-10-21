@@ -15,6 +15,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import traceback
 import uuid
 import urllib.error
@@ -459,12 +460,22 @@ def canonical_project(value):
     elif '://' in raw:
         parsed = urllib.parse.urlsplit(raw)
         host, path = parsed.hostname or '', parsed.path
+    elif re.fullmatch(r'[^./\s][^/\s]*/[^/\s]+', raw.strip('/')) and \
+            '.' not in raw.split('/', 1)[0]:
+        # `owner/repo` is GitHub's shorthand, and the key a remote derives is
+        # github.com/owner/repo: read as host `owner`, it never matched one ledger row.
+        host, path = 'github.com', raw.strip('/')
     elif '/' in raw:
         host, path = raw.split('/', 1)
     else:
         return None
     host = host.lower().strip()
-    path = path.strip('/').removesuffix('.git').lower()
+    # Lowercase first, then the .git suffix, then the slashes: in any other order
+    # `Repo.GIT` or `repo/.git` stored a key the reader rejects as non-canonical.
+    path = path.strip('/').lower()
+    if path.endswith('.git'):
+        path = path[:-4]
+    path = path.strip('/')
     if not host or not path or any(c.isspace() for c in host + path):
         return None
     return host + '/' + path
@@ -581,7 +592,9 @@ def _history_rows(path):
     if not path.exists():
         return []
     rows = []
-    for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+    # Split on newlines only: str.splitlines() also breaks on U+2028/U+2029/U+0085, which a
+    # ledger written with ensure_ascii=False could hold raw inside a JSON string.
+    for number, line in enumerate(path.read_text(encoding='utf-8').split('\n'), 1):
         if not line.strip():
             continue
         try:
@@ -643,7 +656,7 @@ def _append_history(path, event):
     flags = os.O_WRONLY | os.O_APPEND | getattr(os, 'O_NOFOLLOW', 0)
     fd = os.open(str(path), flags)
     with os.fdopen(fd, 'a', encoding='utf-8') as out:
-        out.write(json.dumps(event, ensure_ascii=False, separators=(',', ':')) + '\n')
+        out.write(json.dumps(event, ensure_ascii=True, separators=(',', ':')) + '\n')
 
 
 def history_record(run, finding_id, disposition, ledger=None, project=None, program='',
@@ -672,7 +685,8 @@ def history_record(run, finding_id, disposition, ledger=None, project=None, prog
     if not project_key and target_root and Path(target_root).is_dir():
         project_key = project_for_repo(target_root)
     if not project_key:
-        raise ValueError('No canonical repository remote in run.json; pass --project owner/repo')
+        raise ValueError('No canonical repository remote in run.json; pass --project '
+                         'host/owner/repo (owner/repo alone means GitHub)')
     if program and (len(program) > 120 or any(ord(c) < 32 for c in program)):
         raise ValueError('Program label must be plain text of at most 120 characters')
     if hours is not None:
@@ -1344,13 +1358,14 @@ def _scrub_endpoint(text, url):
     return _redact_context_secrets(text)
 
 
-def _probe_command(argv, cwd=None, timeout=PROBE_TIMEOUT):
+def _probe_command(argv, cwd=None, timeout=PROBE_TIMEOUT, extra_env=None):
     """Run one command with no shell and a hard timeout, and report what happened.
 
     A missing tool, a timeout and a failure are three different facts and are recorded as
     three different reasons; none of them is an error for the probe itself.
     """
-    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_PAGER='cat', NO_COLOR='1')
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_PAGER='cat', NO_COLOR='1',
+               **(extra_env or {}))
     try:
         done = subprocess.run(list(argv), cwd=str(cwd) if cwd else None, check=False,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1366,10 +1381,20 @@ def _probe_command(argv, cwd=None, timeout=PROBE_TIMEOUT):
             'output_excerpt': _probe_excerpt(done.stdout.decode('utf-8', 'replace'))}
 
 
+# A version probe must never pick up the target's own toolchain config: a committed `.yarnrc`
+# `yarn-path` runs a script from the checkout, and `rust-toolchain.toml` or a `go.mod`
+# toolchain line starts a download. Both are found by searching up from the working directory,
+# so the probes run in a fresh empty directory with the per-tool switches off as well.
+TOOLCHAIN_PROBE_ENV = {'YARN_IGNORE_PATH': '1', 'GOTOOLCHAIN': 'local'}
+
+
 def _probe_toolchains(timeout):
     found = {}
-    for name, argv in TOOLCHAIN_PROBES:
-        result = _probe_command(argv, timeout=timeout)
+    with tempfile.TemporaryDirectory(prefix='bp-probe-') as neutral:
+        probed = [(name, _probe_command(argv, cwd=neutral, timeout=timeout,
+                                        extra_env=TOOLCHAIN_PROBE_ENV))
+                  for name, argv in TOOLCHAIN_PROBES]
+    for name, result in probed:
         if not result['ran']:
             found[name] = {'present': False, 'reason': result['reason']}
         elif result['exit_code'] != 0:
@@ -1645,6 +1670,9 @@ def capability_probe(repo, run, rpc=None, deep=False, timeout=PROBE_TIMEOUT, ope
             if not command or not command['toolchain_present']:
                 continue
             result = _probe_command(command['argv'], cwd=root, timeout=timeout)
+            if rpc and 'output_excerpt' in result:
+                # A forked test that fails prints the endpoint it was given; never store it.
+                result['output_excerpt'] = _scrub_endpoint(result['output_excerpt'], rpc)
             if slot == 'build':
                 build_run = result
             else:
@@ -2483,7 +2511,7 @@ def _lexical_functions(path, text, language, native_crate=False):
     return found
 
 
-def _lexical_entry_points(root, scope_prefixes, excluded, skip=()):
+def _lexical_entry_points(root, scope_prefixes, excluded, skip_paths=frozenset()):
     tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
     crates = {str(Path(p).parent) for p in tracked if Path(p).name.lower() == 'cargo.toml'}
 
@@ -2494,7 +2522,7 @@ def _lexical_entry_points(root, scope_prefixes, excluded, skip=()):
     texts = {}
     for path in tracked:
         language = LEXICAL_SUFFIXES.get(Path(path).suffix.lower())
-        if not language or Path(path).suffix.lower() in skip:
+        if not language or path in skip_paths:
             continue
         # Counted in files, apart from the graph's entry points.
         reason = _excluded_reason(path, scope_prefixes)
@@ -2559,19 +2587,21 @@ def function_coverage(run, graph=None, repo=None, scope_prefixes=None,
         raise ValueError(f'--graph {graph_path} does not exist')
     excluded = {}
     entries, sources = [], []
-    graph_has_solidity = False
+    # The files the compiler-resolved graph already holds. Only those are left out of the
+    # lexical pass: one build-info covers one solc version, and skipping every `.sol` because
+    # the graph had some dropped the rest of a multi-version project from the denominator.
+    graph_paths = frozenset()
     if graph_path.is_file():
         data = read_json(graph_path)
         entries = _graph_entry_points(data, scope_prefixes, excluded)
-        graph_has_solidity = any(isinstance(s, dict) and s.get('language') == 'solidity'
-                                 for s in data.get('symbols', []))
+        graph_paths = frozenset(str(s.get('path', '')) for s in data.get('symbols', [])
+                                if isinstance(s, dict) and s.get('language') == 'solidity')
         sources.append('semantic-graph')
     elif root is None:
         raise ValueError('no semantic-graph.json in the run: run impact-plan --solc <build-info> '
                          '--out <run> first, or pass --repo for the lexical fallback')
     if root is not None:
-        lexical = _lexical_entry_points(root, scope_prefixes, excluded,
-                                        skip=('.sol',) if graph_has_solidity else ())
+        lexical = _lexical_entry_points(root, scope_prefixes, excluded, skip_paths=graph_paths)
         if lexical:
             sources.append('lexical')
         entries.extend(lexical)
@@ -3040,6 +3070,12 @@ def _converge_key(text):
     return re.sub(r'[^a-z0-9]+', '-', (text or '').lower()).strip('-')
 
 
+def _function_key(text):
+    """The grouping key of a function or contract name. Unlike `_converge_key` it keeps `_`
+    and `$`: `_withdraw` and `withdraw` are two functions, and keyed alike they merged."""
+    return re.sub(r'[^a-z0-9_$]+', '-', (text or '').lower()).strip('-')
+
+
 def _same_path(left, right):
     """Equal, or one a whole-segment suffix of the other: `core/Vault.sol` is
     `src/core/Vault.sol`, and `src/v1/Vault.sol` is not `src/v2/Vault.sol`."""
@@ -3143,11 +3179,18 @@ def _located_block(word, tool, source, fields, surface, contract, function, bug_
             'ambiguous' if len(candidates) > 1 else 'unresolved')
     else:
         resolution = 'unresolved'
-    if not symbol and contract and function:
-        symbol = f'{contract}.{function}'
+    if not symbol and function:
+        # Named whenever the function is known, so an imported record's affected_paths says
+        # which function it covers instead of crediting every function in the file.
+        symbol = f'{contract}.{function}' if contract else function
     location = path.lower() if path else contract.lower()
-    function_key, class_key = _converge_key(function), _converge_key(bug_class)
-    if not (location or function_key) and not class_key:
+    function_key, class_key = _function_key(function), _converge_key(bug_class)
+    if function_key and path and contract:
+        # Two contracts in one file each have their own `transfer`.
+        function_key = _function_key(contract) + '.' + function_key
+    if not (location or function_key):
+        # A bug class with no place to put it groups with every other placeless block of that
+        # class, and an imported record of it fails `check`: it is skipped, with the reason.
         return None
     display = (path + (':' + symbol if symbol else '')) if path else (symbol or contract)
     return {'kind': BLOCK_KINDS.get(word, 'lead'), 'word': word, 'tool': tool, 'source': source,
@@ -3249,8 +3292,9 @@ def _auditor_marker_block(attributes, body, source, line, index, revision, skipp
                            bug_class, index)
     if block is None:
         return skip('no surface or bug_class to group on')
-    # The marker key is solidity-auditor's own, already normalised: it is the import key.
-    block['upstream_key'] = '|'.join(_converge_key(s) for s in (contract, function, bug_class))
+    # The marker key is solidity-auditor's own, already normalised - plus the file, so two
+    # same-named contracts in different files are two keys.
+    block['upstream_key'] = _auditor_key(block, contract, function, bug_class)
     block['fields'] = {'title': title, 'description': ' '.join(d for d in description if d)}
     if revision:
         block['upstream_revision'] = revision
@@ -3316,8 +3360,8 @@ def _header_block(word, header, body, source, line, index, skipped):
                         'reason': 'no surface or bug_class to group on'})
         return None
     if tool == 'solidity-auditor':
-        block['upstream_key'] = '|'.join(_converge_key(s) for s in (
-            block['contract'], block['function'], bug_class))
+        block['upstream_key'] = _auditor_key(block, block['contract'], block['function'],
+                                             bug_class)
     block['fields'] = body
     return block
 
@@ -3536,13 +3580,14 @@ def _record_matches(row, group, strict=False):
     if is_file is None:     # a convergence.json written before groups carried it
         is_file = '/' in group_path or bool(Path(group_path).suffix)
     group_contract = (group.get('contract') or '').lower()
-    group_function = _converge_key(group.get('function'))
+    group_function = _function_key(group.get('function'))
     for entry in paths:
         if not isinstance(entry, str):
             continue
         path, _, qualifier, function = _split_surface(entry)
         if is_file and path:
-            located = _same_path(path, group_path)
+            located = _same_path(path, group_path) and not (
+                qualifier and group_contract and qualifier.lower() != group_contract)
         elif path:
             located = bool(group_contract) and group_contract in (
                 Path(path).stem.lower(), qualifier.lower())
@@ -3553,7 +3598,7 @@ def _record_matches(row, group, strict=False):
         if not located:
             continue
         if function:
-            if group_function and _converge_key(function) == group_function:
+            if group_function and _function_key(function) == group_function:
                 return True
         elif not strict:
             return True
@@ -3561,8 +3606,12 @@ def _record_matches(row, group, strict=False):
 
 
 def _record_for_group(group, records):
-    """The record that carries a converged mechanism: same path, function and bug class."""
-    hits = [row for row in records if _record_matches(row, group)]
+    """The record that carries a converged mechanism: same path, function and bug class.
+
+    Strict: a record naming only the file covers no function group. Loose, one file-only
+    record marked every sibling function recorded and hid their singletons from `queue`.
+    """
+    hits = [row for row in records if _record_matches(row, group, strict=bool(group.get('function')))]
     # A live record is the better answer than a refuted one for the same mechanism.
     hits.sort(key=lambda row: (row.get('status') == 'refuted', str(row.get('id'))))
     return hits[0] if hits else None
@@ -3885,14 +3934,26 @@ def _finding_text(value, limit=IMPORT_FIELD_MAX_CHARS):
     return text if len(text) <= limit else text[:limit - 3].rstrip() + '...'
 
 
+def _auditor_key(block, contract, function, bug_class):
+    """`contract|function|bug-class`, with the file in front when the block names one: keyed
+    on the contract alone, src/v1/Vault.sol and src/v2/Vault.sol imported as one record."""
+    key = '|'.join((_converge_key(contract), _function_key(function), _converge_key(bug_class)))
+    if block.get('path_is_file') and block.get('surface_path'):
+        key = _norm_path(block['surface_path']).lower() + '|' + key
+    return key
+
+
 def _finding_key(block):
     """solidity-auditor's own `contract|function|bug-class` key for its blocks; for Bounty
-    Pilot's, the same three segments with the surface path in place of the contract."""
+    Pilot's, the same three segments with the surface path in place of the contract, and the
+    contract in front of the function when both are known."""
     if block.get('upstream_key'):
         return block['upstream_key']
     location = block['surface_path'] if block.get('path_is_file') else block.get('contract')
-    return '|'.join(_converge_key(s) for s in (location, block.get('function'),
-                                                block['bug_class']))
+    function = _function_key(block.get('function'))
+    if function and block.get('path_is_file') and block.get('contract'):
+        function = _function_key(block['contract']) + '.' + function
+    return '|'.join((_converge_key(location), function, _converge_key(block['bug_class'])))
 
 
 def _write_up_rank(block, sequence):
@@ -3911,6 +3972,12 @@ def _next_record_number(records):
     numbers = [int(match.group(1)) for row in records if isinstance(row, dict)
                for match in [re.fullmatch(r'BP-([0-9]{3,})', str(row.get('id', '')))] if match]
     return max(numbers, default=0) + 1
+
+
+# Upstream judgements a record must not inherit: they are not evidence, and the record says
+# they were not carried over. Agents may add custom fields, so they are filtered by name.
+UPSTREAM_SCORE_FIELDS = {'conf', 'confidence', 'confidence_score', 'score', 'agents',
+                         'agent_count', 'severity', 'votes'}
 
 
 def _imported_record(block, number, key, also_in, commit, imported_at):
@@ -3960,7 +4027,7 @@ def _imported_record(block, number, key, also_in, commit, imported_at):
                                  'was read'),
         'also_in': also_in,
         'reported': {name: _finding_text(value) for name, value in sorted(fields.items())
-                     if value},
+                     if value and name.lower() not in UPSTREAM_SCORE_FIELDS},
         'not_imported': 'upstream confidence scores and agent counts are not evidence and were '
                         'not carried over'}
     if resolution == 'unresolved':
@@ -4251,8 +4318,12 @@ def _reading_evidence(run):
             # The header names the columns and the rule is dashes; neither is a lens that ran.
             if line.count('|') < 3 or re.match(r'\s*\|?\s*:?-{3}', line):
                 continue
+            # Only the Lens column says which lens read: a lens named in the surface path or
+            # in the result prose ("no liveness or accounting issue") read nothing.
+            cells = line.strip().strip('|').split('|')
+            lens_cell = cells[1] if len(cells) > 1 else ''
             for lens in known:
-                if any(_names_lens(cell, lens) for cell in line.split('|')):
+                if _names_lens(lens_cell, lens):
                     mark(lens, 'coverage.md')
     path = run / 'findings.json'
     if path.is_file():
@@ -4673,7 +4744,12 @@ RUN_BOOKKEEPING = {'run.json', 'findings.json', 'experiments.json', 'program.jso
                    'dup-map.json', 'dup-matches.json', 'dup-harvest.json', 'history-matches.json',
                    'audit-inventory.json', 'capabilities.json', 'coverage-floor.json',
                    'convergence.json', 'candidate-template.json', 'saturated.md', 'scope.md',
-                   'model.md', 'coverage.md', 'known-hypotheses.md', '.gitignore'}
+                   'model.md', 'coverage.md', 'known-hypotheses.md', '.gitignore',
+                   # The run's own mechanical outputs: as evidence they show nothing either.
+                   EXAMINED_FILE, READINGS_LEDGER, FUNCTION_COVERAGE_FILE,
+                   ODD_ONE_OUT_REVIEW_FILE, 'semantic-graph.json', 'impact-paths.json',
+                   'odd-one-out.json', 'coverage-priority.json', 'state-graph.json',
+                   'stack-route.json', 'delta.json'}
 RUN_BOOKKEEPING_DIRS = {'deployments', 'bundles'}
 COMMIT_HASH = re.compile(r'[0-9a-f]{7,64}')
 COMMAND_PLACEHOLDER = re.compile(r'\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<[^<>\s]*>|%[A-Za-z_]\w*%')
@@ -4845,7 +4921,17 @@ def secret_kinds(text):
     return sorted(set(kinds), key=kinds.index)
 
 
-def _secret_errors(where, value, errors):
+def _secret_errors(where, value, errors, depth=0):
+    # A key nested one level down - `evidence.commands[0]`, `evidence.runs.fork` - is published
+    # exactly as surely as one at the top, so lists and objects are walked, not skipped.
+    if isinstance(value, dict) and depth < 8:
+        for key, item in sorted(value.items(), key=lambda kv: str(kv[0])):
+            _secret_errors(f'{where}.{key}', item, errors, depth + 1)
+        return
+    if isinstance(value, list) and depth < 8:
+        for index, item in enumerate(value):
+            _secret_errors(f'{where}[{index}]', item, errors, depth + 1)
+        return
     for kind in secret_kinds(value):
         errors.append(where + ' carries ' + kind + '. Replace it with an environment variable '
                       'placeholder such as $ETH_RPC_URL or $PRIVATE_KEY, and rotate the '
@@ -5248,6 +5334,13 @@ def _check_deployment_evidence(row, prefix, run, errors):
             errors.append(label + ' was read on chain id ' + str(chain_id) + ', which program.json\'s '
                           'chain_ids does not list')
             continue
+        own_chains = _address_chains(run).get(stem)
+        if own_chains and EVM_ADDRESS.fullmatch(address) and chain_id not in own_chains:
+            errors.append(label + ' was read on chain id ' + str(chain_id) + ', but program.json '
+                          'lists ' + address + ' on chain id(s) '
+                          + ', '.join(str(c) for c in sorted(own_chains))
+                          + ' only; the same address on another chain can be other code')
+            continue
         if data.get('deployment_status') != 'exact':
             errors.append(label + ' reports ' + str(data.get('deployment_status'))
                           + ', not exact, for ' + address)
@@ -5288,6 +5381,32 @@ def _check_deployment_evidence(row, prefix, run, errors):
         problem = _recompare_deployment(data, built)
         if problem:
             errors.append(label + ': ' + problem)
+
+
+def _address_chains(run):
+    """{address stem: chain ids} for the addresses program.json lists with a chain_id.
+
+    An address listed with its chain is in scope on that chain only: the same address on
+    another chain can hold different code. One also listed bare is bound by chain_ids alone.
+    """
+    path = Path(run) / 'program.json'
+    try:
+        program = read_json(path) if path.is_file() else {}
+    except (OSError, ValueError):
+        return {}
+    items = program.get('in_scope_addresses') if isinstance(program, dict) else None
+    bound, unbound = {}, set()
+    for item in items if isinstance(items, list) else []:
+        address = item.get('address') if isinstance(item, dict) else item
+        stem = _evidence_stem(address.strip()) if isinstance(address, str) else None
+        if stem is None:
+            continue
+        chain = item.get('chain_id') if isinstance(item, dict) else None
+        if type(chain) is int:
+            bound.setdefault(stem, set()).add(chain)
+        else:
+            unbound.add(stem)
+    return {stem: chains for stem, chains in bound.items() if stem not in unbound}
 
 
 def _program_bindings(run):
@@ -5905,8 +6024,7 @@ def check_dup_map(run):
         for entry in entries:
             classes = [c.lower() for c in entry.get('bug_classes', []) if isinstance(c, str)]
             for surface in entry['surfaces']:
-                key = surface.lower()
-                if not any(key in p or p in key for p in paths):
+                if not any(_dup_surface_match(surface, p) for p in paths):
                     continue
                 # A different bug class on the same surface is still reported, as surface-only:
                 # the same root cause often carries a different consequence label.
@@ -5920,6 +6038,39 @@ def check_dup_map(run):
                     'note': entry.get('note', '')})
                 break
     return errors, collisions
+
+
+def _dup_locus(text):
+    """(file, function) a dup-map surface or an affected path names, in any documented spelling.
+
+    `src/O.sol:latestAnswer`, `src/O.sol:O.latestAnswer`, `src/O.sol (latestAnswer)` and
+    `src/O.sol#L42` all name src/O.sol; the first three also name latestAnswer.
+    """
+    path = _affected_file(text or '')
+    function = _split_surface(text or '')[3]
+    if not function:
+        named = re.search(r'\(\s*([A-Za-z_$][\w$]*)\s*\)', text or '')
+        function = named.group(1) if named else ''
+    return path.lower(), function.lower()
+
+
+def _dup_surface_match(surface, affected):
+    """Whether a burned surface and a finding's affected path are the same place.
+
+    Compared as file + function, not as strings: the documented map spelling
+    `File.sol:fn` and the agent spelling `File.sol:Contract.fn` never contain one another, so
+    a substring test let a known issue pass dup-check as no-match.
+    """
+    surface_file, surface_function = _dup_locus(surface)
+    affected_file, affected_function = _dup_locus(affected)
+    if surface_file and affected_file:
+        if not _same_path(surface_file, affected_file):
+            return False
+        # A file-wide entry burns every function in the file; two named functions must agree.
+        return not (surface_function and affected_function
+                    and surface_function != affected_function)
+    key, path = surface.lower(), affected.lower()
+    return key in path or path in key
 
 
 def _dup_map_digest(entries):
@@ -5962,10 +6113,14 @@ def _harvest_state(run, entries=None):
         elif row['disposition'] == 'irrelevant' and not has_text(row.get('note')):
             untriaged.append(candidate['ref'])
     labels = data.get('labels') if isinstance(data.get('labels'), list) else []
+    # A label nobody verified exists (a typo, a label from another repository) searched
+    # nothing. Harvests written before labels_verified existed keep their old reading.
+    verified = data.get('labels_verified') if isinstance(data.get('labels_verified'), list) \
+        else labels
     not_planned = data.get('not_planned') is True
     # Nothing searched and nothing found is not a clean result: it is no result. A repository
     # whose labels never say "already judged" returns zero candidates and must not read as clear.
-    vacuous = (not data['candidates'] and not labels and not not_planned
+    vacuous = (not data['candidates'] and not verified and not not_planned
                and not has_text(data.get('empty_reason')))
     return {'present': True, 'candidates': len(data['candidates']),
             'harvested_at': data.get('harvested_at', ''), 'repo': data.get('repo', ''),
@@ -6021,7 +6176,12 @@ def _submission_dup_matches(run, meta, records, errors):
         errors.append('dup-map.json: submission requires a built duplicate map in the run')
         return None
     entries = read_json(run / 'dup-map.json')
-    harvest = _harvest_state(run, entries if isinstance(entries, list) else [])
+    if not isinstance(entries, list):
+        # `{}` or `null` hashed like `[]` and skipped the empty-map check below entirely.
+        errors.append('dup-map.json: must be a JSON array of entries; rebuild it and rerun '
+                      'dup-check')
+        return None
+    harvest = _harvest_state(run, entries)
     if not harvest['present']:
         errors.append('dup-harvest.json: submission requires the closed-issue harvest '
                       '(run dup-harvest): a team that already closed this as wontfix or a known '
@@ -6140,9 +6300,17 @@ def _harvest_slug(repo, meta, require_github=True):
     raise ValueError('--repo must be a GitHub owner/repo, a repository URL, or a local checkout')
 
 
+GITHUB_LABEL_PAGES = 30
+
+
 def _github_labels(slug, token=None, opener=None):
-    names = []
-    for page in range(1, 4):
+    """Every label of the repository, and whether the page bound cut the list.
+
+    Three pages (300 labels) used to be the silent limit: `wontfix` on page four was missing
+    from both the search and labels_skipped.
+    """
+    names, cut = [], False
+    for page in range(1, GITHUB_LABEL_PAGES + 1):
         batch = _github_get(f'{GITHUB_API}/repos/{slug}/labels?per_page=100&page={page}',
                             token, opener)
         if not isinstance(batch, list) or not batch:
@@ -6150,7 +6318,9 @@ def _github_labels(slug, token=None, opener=None):
         names.extend(item.get('name', '') for item in batch if isinstance(item, dict))
         if len(batch) < 100:
             break
-    return [name for name in names if has_text(name)]
+    else:
+        cut = True
+    return [name for name in names if has_text(name)], cut
 
 
 def _label_matches(name, hint):
@@ -6168,7 +6338,7 @@ def _dup_label_candidates(names, extra=None):
 
 def _github_search(query, token=None, opener=None, limit=200):
     """Issues and PRs matching one search query. Returns the items kept and whether any were cut."""
-    found, total = [], 0
+    found, total, incomplete = [], 0, False
     for page in range(1, 11):
         url = (f'{GITHUB_API}/search/issues?q=' + urllib.parse.quote(query, safe='')
                + f'&per_page=100&page={page}')
@@ -6176,13 +6346,15 @@ def _github_search(query, token=None, opener=None, limit=200):
         items = body.get('items') if isinstance(body, dict) else None
         if isinstance(body, dict) and isinstance(body.get('total_count'), int):
             total = body['total_count']
+        if isinstance(body, dict) and body.get('incomplete_results') is True:
+            incomplete = True     # GitHub timed out and returned only part of the matches
         if not isinstance(items, list) or not items:
             break
         found.extend(items)
         if len(found) >= limit or len(items) < 100:
             break
     kept = found[:limit]
-    return kept, max(total, len(found)) > len(kept)
+    return kept, incomplete or max(total, len(found)) > len(kept)
 
 
 def _label_query(slug, labels):
@@ -6197,11 +6369,29 @@ def _not_planned_query(slug):
     return f'repo:{slug} is:closed reason:"not planned"'
 
 
-def _harvest_candidate(item, matched_by):
+def _item_repo(item):
+    """owner/name of a search item, from repository_url or html_url; '' when it names none."""
+    for key, pattern in (('repository_url', r'/repos/([^/]+/[^/]+?)/?$'),
+                         ('html_url', r'github\.com/([^/]+/[^/]+)/(?:issues|pull)/\d+')):
+        found = re.search(pattern, str(item.get(key) or ''))
+        if found:
+            return found.group(1).lower()
+    return ''
+
+
+def _harvest_ref(item, own):
+    """`#12` for the harvested repository, `owner/name#12` for any other: a number alone is
+    not an issue once a saved search spans repositories or a rerun points somewhere else."""
+    repo = _item_repo(item)
+    prefix = repo if repo and repo != own else ''
+    return prefix + '#' + str(item.get('number'))
+
+
+def _harvest_candidate(item, matched_by, own=''):
     labels = [label.get('name', '') for label in item.get('labels', [])
               if isinstance(label, dict)] if isinstance(item.get('labels'), list) else []
     body = item.get('body') or ''
-    return {'ref': '#' + str(item.get('number')), 'url': item.get('html_url', ''),
+    return {'ref': _harvest_ref(item, own), 'url': item.get('html_url', ''),
             'title': ' '.join(str(item.get('title', '')).split())[:200],
             'labels': [label for label in labels if label],
             'closed_at': item.get('closed_at') or '',
@@ -6230,19 +6420,22 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
             raise
         slug, no_tracker = None, str(exc)
     token = os.environ.get(token_env) if token_env else None
-    skipped = []
+    skipped, unknown, labels_cut = [], [], False
+    own = '/'.join(slug.lower().split('/')[-2:]) if slug else ''
     by_number, truncated = {}, False
 
     def collect(items, how):
         for item in items:
             if not isinstance(item, dict) or item.get('number') is None:
                 continue
-            row = by_number.setdefault(item['number'], {'item': item, 'matched_by': []})
+            row = by_number.setdefault((_item_repo(item) or own, item['number']),
+                                       {'item': item, 'matched_by': []})
             if how not in row['matched_by']:
                 row['matched_by'].append(how)
 
     if no_tracker is not None:
         used = sorted(set(name for name in labels or [] if has_text(name)), key=str.lower)
+        verified = used
     elif from_file:
         payload = read_json(Path(from_file).expanduser())
         items = payload.get('items') if isinstance(payload, dict) else payload
@@ -6251,10 +6444,21 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
         # --label and --include-not-planned describe how the saved search was made.
         used = sorted(set(name for name in labels or [] if has_text(name)), key=str.lower)
         collect(items[:limit], 'saved-search')
-        truncated = len(items) > limit
+        # A saved page of a larger search is a partial harvest, whatever --limit says.
+        total = payload.get('total_count') if isinstance(payload, dict) else None
+        truncated = (len(items) > limit or (type(total) is int and total > len(items))
+                     or (isinstance(payload, dict) and payload.get('incomplete_results') is True))
+        # A saved search is taken at its word about the labels it used: there is no repository
+        # label list here to check them against. The live path below checks them.
+        verified = used
     else:
-        names = _github_labels(slug, token, opener)
-        used = _dup_label_candidates(names, labels)
+        names, labels_cut = _github_labels(slug, token, opener)
+        present = {name.lower() for name in names}
+        unknown = sorted((name for name in labels or [] if has_text(name)
+                          and name.lower() not in present), key=str.lower)
+        used = _dup_label_candidates(names, [name for name in labels or []
+                                             if has_text(name) and name.lower() in present])
+        verified = used
         skipped = sorted((name for name in names if name not in used), key=str.lower)
         if used:
             items, cut = _github_search(_label_query(slug, used), token, opener, limit)
@@ -6264,20 +6468,27 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
             items, cut = _github_search(_not_planned_query(slug), token, opener, limit)
             collect(items, 'not-planned')
             truncated = truncated or cut
-    ordered = sorted(by_number.values(), key=lambda row: row['item']['number'], reverse=True)
-    candidates = [_harvest_candidate(row['item'], row['matched_by']) for row in ordered]
+    ordered = sorted(by_number.values(),
+                     key=lambda row: (row['item']['number'], _item_repo(row['item'])), reverse=True)
+    truncated = truncated or labels_cut
+    candidates = [_harvest_candidate(row['item'], row['matched_by'], own) for row in ordered]
     if len(candidates) > limit:
         candidates, truncated = candidates[:limit], True
     refs = {candidate['ref'] for candidate in candidates}
     previous = read_json(run / 'dup-harvest.json') if (run / 'dup-harvest.json').is_file() else {}
     previous = previous if isinstance(previous, dict) else {}
     kept = previous['triage'] if isinstance(previous.get('triage'), dict) else {}
+    if previous.get('repo') != slug:
+        # Triage of another repository's #12 says nothing about this one's #12.
+        kept = {}
     reason = empty_reason if has_text(empty_reason) else previous.get('empty_reason', '')
     result = {
         'repo': slug, 'source': ('no-tracker' if no_tracker is not None else
                                  'from-file' if from_file else 'github-search'),
         'harvested_at': datetime.now(timezone.utc).isoformat(),
-        'labels': used, 'labels_skipped': skipped, 'not_planned': bool(include_not_planned),
+        'labels': used, 'labels_verified': verified, 'labels_unknown': unknown,
+        'labels_truncated': labels_cut,
+        'labels_skipped': skipped, 'not_planned': bool(include_not_planned),
         'candidate_count': len(candidates), 'truncated': truncated,
         'empty_reason': reason if has_text(reason) else '',
         'candidates': candidates,
@@ -6309,7 +6520,7 @@ def dup_harvest(run, repo=None, labels=None, token_env='GITHUB_TOKEN', from_file
 # Squads and marginfi all ship their review reports in the repository - ten of them in the
 # Squads case - and nothing here ever listed them. This enumerates them; it cannot read a PDF,
 # so each one is an accounting entry the hunter has to close, not a summary.
-REVIEW_DIR_NAMES = {'audit', 'audits', 'security', 'reviews'}
+REVIEW_DIR_NAMES = {'audit', 'audits', 'security', 'review', 'reviews'}
 REVIEW_DOC_SUFFIXES = {'.pdf', '.md', '.markdown', '.txt', '.html', '.htm'}
 REVIEW_NAME_HINTS = ('audit', 'review', 'assessment', 'pentest')
 SECURITY_POLICY_NAMES = {'security.md'}
@@ -6361,10 +6572,15 @@ def _review_artifacts(root, tracked, skipped=None):
         name = parts[-1].lower()
         if Path(name).suffix not in REVIEW_DOC_SUFFIXES:
             continue
-        if any(part.lower() in REVIEW_DIR_NAMES for part in parts[:-1]):
+        # `audit-reports/`, `security-reviews/`, `Audits_2024/`: a review directory by any of
+        # its words, not only by its whole name.
+        if any(set(re.split(r'[-_.\s]+', part.lower())) & REVIEW_DIR_NAMES
+               for part in parts[:-1]):
             matched_by = 'review directory'
         elif any(hint in name for hint in REVIEW_NAME_HINTS):
             matched_by = 'review-shaped name'
+        elif Path(name).suffix == '.pdf' and _audit_firm(name):
+            matched_by = 'audit firm in the file name'
         elif name in SECURITY_POLICY_NAMES and _policy_names_review(root, path, skipped):
             matched_by = 'security policy naming a review'
         else:
@@ -6427,9 +6643,36 @@ def read_audit_inventory(run):
             'invalid': state['invalid']}
 
 
+def _submodule_entries(root):
+    """Every submodule pointer as an artifact to account for: `ls-files` never descends into one,
+    so audits shipped inside `lib/core/audits/` were invisible and an empty inventory passed."""
+    entries = []
+    for row in git(root, 'ls-files', '-z', '-s').split('\0'):
+        meta, _, path = row.partition('\t')
+        fields = meta.split()
+        if len(fields) >= 2 and fields[0] == '160000' and path:
+            entries.append({'path': path, 'bytes': 0, 'sha256': fields[1], 'firm': None,
+                            'matched_by': 'submodule: its own review artifacts are not listed; '
+                                          'look inside it and record what you found'})
+    return entries
+
+
 def _check_audit_inventory(run, errors):
     """A review the repository ships and nobody accounted for is a published list of answers."""
     state = _audit_inventory_state(run)
+    path = Path(run) / 'audit-inventory.json'
+    if state['present'] and not state['invalid']:
+        # Bound to this run like every other gate input: a hand-written inventory, or one
+        # copied from another run, says nothing about this target.
+        data = read_json(path)
+        meta = read_json(Path(run) / 'run.json') if (Path(run) / 'run.json').is_file() else {}
+        if meta.get('run_id') and data.get('run_id') != meta.get('run_id'):
+            errors.append('audit-inventory.json: belongs to a different run; rerun '
+                          'audit-inventory --repo <checkout> --run <run>')
+        elif meta.get('commit') and data.get('commit') and data['commit'] != meta['commit']:
+            errors.append('audit-inventory.json: was taken at commit ' + str(data['commit'])[:12]
+                          + ', not the run\'s ' + str(meta['commit'])[:12] + '; rerun '
+                          'audit-inventory at the run\'s commit')
     # A target that ships no review writes an inventory with no artifacts, and that passes: what
     # is required is that somebody looked. Runs that predate the command have to run it once.
     if not state['present']:
@@ -6460,7 +6703,7 @@ def audit_inventory(repo, run):
     meta = read_json(run / 'run.json')
     tracked = [p for p in git(root, 'ls-files', '-z').split('\0') if p]
     skipped = []
-    artifacts = _review_artifacts(root, tracked, skipped)
+    artifacts = _review_artifacts(root, tracked, skipped) + _submodule_entries(root)
     path = run / 'audit-inventory.json'
     if path.is_symlink():
         raise ValueError(f'{path} is a symlink; refusing to read or write through it')
@@ -6485,6 +6728,7 @@ def audit_inventory(repo, run):
         artifact['note'] = str(prior.get('note', ''))[:500] if same else ''
     result = {
         'repo': str(root), 'run_id': meta.get('run_id'),
+        'commit': git(root, 'rev-parse', 'HEAD').strip(),
         'inventoried_at': datetime.now(timezone.utc).isoformat(),
         'artifact_count': len(artifacts),
         'firms': sorted({row['firm'] for row in artifacts if row['firm']}),
@@ -6562,7 +6806,7 @@ def _numstat(root, base, head):
     split recovers reliably. With -z a rename is two separate NUL-terminated paths.
     """
     raw = git(root, 'diff', '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv',
-              f'{base}..{head}')
+              '--ignore-submodules=none', f'{base}..{head}')
     fields = raw.split('\0')
     i = 0
     while i < len(fields):
@@ -6610,8 +6854,10 @@ def _delta_config(path):
 
 def _gitlink_changes(root, base, head):
     """(path, old commit or None, new commit or None) for every submodule pointer changed."""
+    # `.gitmodules` `ignore = all` (most of TON's submodules) or a user-level
+    # diff.ignoreSubmodules hides a pointer change from a plain diff: 3 of 14 bumps showed.
     raw = git(root, 'diff', '--raw', '-z', '--no-abbrev', '--no-renames', '--no-ext-diff',
-              f'{base}..{head}')
+              '--ignore-submodules=none', f'{base}..{head}')
     fields, found, index = raw.split('\0'), [], 0
     while index < len(fields):
         meta = fields[index]
@@ -6637,8 +6883,10 @@ def _dependency_diff(root, path, old, new):
         return {'state': 'unavailable', 'reason': 'the submodule is not checked out here, or '
                 'the change adds or removes it'}
     try:
-        raw = git(location, 'diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv',
-                  f'{old}..{new}')
+        # --no-renames: a renamed file's -z numstat entry is `a\tb\t` + two paths, which the
+        # three-field parse below dropped - a moved file that lost a require read as no change.
+        raw = git(location, 'diff', '--numstat', '-z', '--no-renames', '--no-ext-diff',
+                  '--no-textconv', '--ignore-submodules=none', f'{old}..{new}')
     except subprocess.SubprocessError:
         return {'state': 'unavailable', 'reason': 'one of the two commits is not in the local '
                 'checkout of the submodule; fetch it and diff'}
@@ -6988,6 +7236,32 @@ QUOTED_HEX_KEY_ASSIGNMENT = re.compile(
     r'[:=]\s*)(["\'])(0x[0-9a-f]{64})(\2)')
 
 
+# A Hardhat/Truffle network's `accounts: ["0x…", "0x…"]` holds raw signing keys with no key-named
+# variable in front of them, so QUOTED_HEX_KEY_ASSIGNMENT never sees them.
+ACCOUNTS_ARRAY = re.compile(r'(?i)\baccounts["\']?\s*[:=]\s*\[[^\]]*\]')
+QUOTED_HEX_KEY = re.compile(r'(?i)(["\'])0x[0-9a-f]{64}\1')
+
+
+def _redact_account_keys(text):
+    """Quoted 32-byte hex values inside an `accounts` array replaced, and how many were."""
+    count = [0]
+
+    def block(match):
+        def key(inner):
+            count[0] += 1
+            return inner.group(1) + '<redacted>' + inner.group(1)
+        return QUOTED_HEX_KEY.sub(key, match.group(0))
+    return ACCOUNTS_ARRAY.sub(block, text), count[0]
+
+
+def _redact_bundled_text(text):
+    """Configuration-strength redaction for text that is not target source - an `--include`d
+    file or the run's own notes - and how many values it withheld, so the bundle can say so."""
+    text, keys = _redact_account_keys(text)
+    redacted = _redact_context_secrets(text)
+    return redacted, keys + max(0, redacted.count('<redacted>') - text.count('<redacted>'))
+
+
 def _redact_source_secrets(text):
     """Credentials in bundled source replaced by `<redacted>`, and how many were.
 
@@ -7031,7 +7305,8 @@ def _redact_source_secrets(text):
                                     if _opaque_secret(m.group(2)) else m.group(0)), text)
     text = QUOTED_HEX_KEY_ASSIGNMENT.sub(counted(lambda m: m.group(1) + m.group(2) + '<redacted>'
                                           + m.group(4)), text)
-    return text, count[0]
+    text, keys = _redact_account_keys(text)
+    return text, count[0] + keys
 
 
 def _collect_project_context(root, paths, skipped=None):
@@ -7042,7 +7317,7 @@ def _collect_project_context(root, paths, skipped=None):
         if body is None:
             missed.extend(notes)
             continue
-        parts.append(_fenced(path, _redact_context_secrets(body)))
+        parts.append(_fenced(path, _redact_account_keys(_redact_context_secrets(body))[0]))
     if skipped is not None:
         skipped.extend(missed)
     return '\n'.join(parts), [item['path'] for item in missed]
@@ -7401,14 +7676,18 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                  'saturated.md'):
         path = run / name
         if path.is_file() and path.stat().st_size > 0:
-            body = path.read_text(encoding='utf-8')
-            context.append(f'## Run context: {name}\n\n```\n{body.rstrip()}\n```\n')
+            body, count = _redact_bundled_text(path.read_text(encoding='utf-8'))
+            if count:
+                redactions.append({'path': f'run:{name}', 'count': count})
+            context.append(f'## Run context: {name}\n\n{_fence(body)}')
     for extra in includes or []:
         path = Path(extra)
         if not path.is_file():
             raise ValueError(f'--include {extra!r} is not a file')
-        body = path.read_text(encoding='utf-8', errors='replace')
-        context.append(f'## Included: {path.name}\n\n```\n{body.rstrip()}\n```\n')
+        body, count = _redact_bundled_text(path.read_text(encoding='utf-8', errors='replace'))
+        if count:
+            redactions.append({'path': f'--include:{extra}', 'count': count})
+        context.append(f'## Included: {path.name}\n\n{_fence(body)}')
     context_doc = '\n'.join(context)
     explicit = {Path(extra).resolve() for extra in includes or []}
     analysis = {}
@@ -7565,7 +7844,7 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
     redacted = [{'path': path, 'count': count} for path, count in sorted(redacted.items())]
     if redacted:
         notes.append(f"{sum(r['count'] for r in redacted)} credential-shaped value(s) in "
-                     f"{len(redacted)} source file(s) were replaced by <redacted> in the bundles "
+                     f"{len(redacted)} file(s) were replaced by <redacted> in the bundles "
                      '(see redacted_secrets); the checkout still holds them, and a committed '
                      'live credential can itself be worth reporting')
     if classic_records and classic_records['included'] < classic_records['records']:
@@ -8054,6 +8333,44 @@ def score_target(repo, program_path, ledger=None):
 # on-chain identity
 # --------------------------------------------------------------------------- #
 
+class RpcError(ValueError):
+    """A JSON-RPC error answer, with the node's error object kept so a caller can tell a revert
+    from a rate limit. Still a ValueError, so every existing handler keeps catching it."""
+
+    def __init__(self, method, error):
+        super().__init__(f'rpc {method} failed: {error}')
+        self.method, self.error = method, error
+
+
+# What a node says when an eth_call simply reverts or runs out of code - the normal answer from a
+# contract without the getter. Anything else (a rate limit, a timeout, a pruned block) is a
+# failure to look, never evidence that there is nothing to see.
+REVERT_MESSAGE = re.compile(r'(?i)revert|vm execution error|invalid opcode|out of gas|'
+                            r'stack underflow|bad instruction|invalid jump')
+
+
+def is_revert(exc):
+    if not isinstance(exc, RpcError):
+        return False
+    error = exc.error if isinstance(exc.error, dict) else {}
+    if error.get('code') == 3:
+        return True
+    return bool(REVERT_MESSAGE.search(str(error.get('message', ''))))
+
+
+def rpc_hex(url, method, params, opener=None):
+    """An RPC result that must be hex: a `null` or a non-string is refused, never read as 0x.
+
+    `or '0x'` turned a provider's null into an empty storage slot and a zero balance - an
+    EIP-1967 proxy read as not-a-proxy and compared exact, and a value-at-rest of zero.
+    """
+    value = rpc_call(url, method, params, opener)
+    if not isinstance(value, str) or not re.fullmatch(r'0x[0-9a-fA-F]*', value):
+        raise ValueError(f'rpc {method} returned {value!r} instead of hex data; refusing to '
+                         'read it as empty - retry, or use another endpoint')
+    return value
+
+
 def rpc_call(url, method, params, opener=None, timeout=30):
     payload = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method,
                           'params': params}).encode('utf-8')
@@ -8067,7 +8384,7 @@ def rpc_call(url, method, params, opener=None, timeout=30):
     with open_fn(request, timeout=timeout) as response:
         body = json.loads(response.read().decode('utf-8'))
     if 'error' in body:
-        raise ValueError(f"rpc {method} failed: {body['error']}")
+        raise RpcError(method, body['error'])
     return body.get('result')
 
 
@@ -8415,6 +8732,9 @@ def compare_bytecode(onchain_hex, artifact_hex, immutable_references=None, link_
         extra['masking_skipped'] = problems
     if not live:
         return {'status': 'mismatch', 'reason': 'no runtime code at the address'}
+    if not local:
+        return {'status': 'mismatch', 'reason': 'the artifact carries no runtime code - an '
+                'interface or abstract contract build; pass the deployable contract\'s artifact'}
     tail = len(live) - len(local)
     # Vyper's runtime carries no solc metadata; with a solc tail stripped this is not Vyper.
     vyper_shaped = tail > 0 and not live_meta and not local_meta and live[:len(local)] == local
@@ -8837,7 +9157,7 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
     run = _deployment_run(run)
     details = read_artifact_details(artifact) if artifact else None
     chain_id, pinned = pin_block(rpc, block, opener)
-    code = rpc_call(rpc, 'eth_getCode', [address, pinned], opener) or '0x'
+    code = rpc_hex(rpc, 'eth_getCode', [address, pinned], opener)
     result = {'address': address, 'chain_id': int(chain_id, 16),
               'block': int(pinned, 16) if isinstance(pinned, str) and pinned.startswith('0x')
                        else pinned,
@@ -8876,18 +9196,25 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
         return finish()
 
     def code_at(target):
-        return rpc_call(rpc, 'eth_getCode', [target, pinned], opener) or '0x'
+        return rpc_hex(rpc, 'eth_getCode', [target, pinned], opener)
+
+    probe_failures = []
 
     def probe(signature):
         try:
             return rpc_call(rpc, 'eth_call', [{'to': address, 'data': keccak.selector(signature)},
                                               pinned], opener)
-        except (OSError, ValueError, urllib.error.URLError):
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            if not is_revert(exc):
+                # A rate limit or a dropped connection says nothing about the getter. Read as a
+                # revert, it made a diamond or a Safe read as not-a-proxy and compare exact.
+                probe_failures.append(f'{signature} could not be probed: '
+                                      + _scrub_endpoint(str(exc), rpc)[:200])
             return None   # a revert is the normal answer from a contract without the getter
 
     slots = proxy_slots()
     for label, slot in slots.items():
-        word = rpc_call(rpc, 'eth_getStorageAt', [address, slot, pinned], opener) or '0x'
+        word = rpc_hex(rpc, 'eth_getStorageAt', [address, slot, pinned], opener)
         packed = word[-40:] if len(word) >= 42 else ''
         if packed and int(packed, 16) != 0:
             result['proxy'][label] = '0x' + packed
@@ -8938,7 +9265,7 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
                                      'the getter returned no address holding code')
     if not result['proxy'] and delegates and len(body) < SMALL_RUNTIME_BYTES:
         # Older Safe proxies keep the singleton in slot 0 and expose no getter.
-        word = rpc_call(rpc, 'eth_getStorageAt', [address, '0x0', pinned], opener) or '0x'
+        word = rpc_hex(rpc, 'eth_getStorageAt', [address, '0x0', pinned], opener)
         target = _word_address(word if len(word) == 66 else None)
         if target and len(code_at(target)) > 2:
             result['proxy']['slot0-singleton'] = target
@@ -8975,8 +9302,10 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
             result['proxy']['beacon-implementation'] = beacon_implementation
         except (OSError, ValueError, urllib.error.URLError) as exc:
             resolution_errors.append(f'could not resolve EIP-1967 beacon implementation: {exc}')
+    resolution_errors.extend(probe_failures)
     result['proxy_resolution'] = ('resolved' if implementation and not resolution_errors
-                                  else ('unresolved' if result['proxy'] else 'not-a-proxy'))
+                                  else ('unresolved' if result['proxy'] or probe_failures
+                                        else 'not-a-proxy'))
     if resolution_errors:
         result['proxy_resolution_errors'] = resolution_errors
     if implementation:
@@ -9033,6 +9362,12 @@ def verify_deployment(rpc, address, artifact=None, block='latest', opener=None, 
                 result['comparison'] = dict(comparison, status='partial', reason=(
                     'the runtime matches, but it is a small runtime with DELEGATECALL; possibly an '
                     'unrecognized proxy, so the code that executes may not be this artifact'))
+            elif probe_failures and comparison['status'] == 'exact':
+                result['deployment_status'] = 'partial'
+                result['comparison'] = dict(comparison, status='partial', reason=(
+                    'the runtime matches, but a proxy probe failed for a reason other than a '
+                    'revert, so whether this address forwards elsewhere is unknown: '
+                    + '; '.join(probe_failures) + '. Rerun when the endpoint answers'))
         _check_linked_libraries(result, code_at)
         if result['proxy'] and result['deployment_status'] == 'exact':
             result['note'] = ('implementation bytecode matches at this block. A proxy can be '
@@ -9492,7 +9827,7 @@ def selectors_report(rpc=None, address=None, code=None, abi=None, signatures=Non
         if not re.fullmatch(r'0x[0-9a-fA-F]{40}', address):
             raise ValueError('--address must be 0x followed by 40 hex characters')
         chain_id, pinned = pin_block(rpc, block, opener)
-        runtime = rpc_call(rpc, 'eth_getCode', [address, pinned], opener) or '0x'
+        runtime = rpc_hex(rpc, 'eth_getCode', [address, pinned], opener)
         source = {'read_from': 'eth_getCode', 'address': address, 'chain_id': int(chain_id, 16),
                   'block': int(pinned, 16) if isinstance(pinned, str)
                            and pinned.startswith('0x') else pinned}
@@ -9544,7 +9879,7 @@ def value_at_risk(rpc, addresses, tokens=None, block='latest', opener=None):
     token_meta, token_errors = {}, {}
     for token in tokens or []:
         try:
-            code = rpc_call(rpc, 'eth_getCode', [token, pinned], opener) or '0x'
+            code = rpc_hex(rpc, 'eth_getCode', [token, pinned], opener)
         except rpc_errors as exc:
             token_errors[token] = f'could not read code: {exc}'
             continue
@@ -9563,7 +9898,7 @@ def value_at_risk(rpc, addresses, tokens=None, block='latest', opener=None):
             token_errors[token] = f'decimals() failed: {exc}; raw balances only'
     rows = []
     for address in addresses:
-        native = rpc_call(rpc, 'eth_getBalance', [address, pinned], opener) or '0x0'
+        native = rpc_hex(rpc, 'eth_getBalance', [address, pinned], opener)
         holdings = []
         for token in tokens or []:
             if token not in token_meta:
@@ -9810,9 +10145,20 @@ def backtest_seal(case, run):
     if truth:
         raise ValueError('truth.json already has entries, so this hunt was not blind. '
                          'This case cannot produce a measurement; start a new one.')
+    if (case / 'matches.json').exists():
+        raise ValueError('matches.json already exists, so match decisions predate the seal. '
+                         'This case cannot produce a measurement; start a new one.')
     findings = read_json(run / 'findings.json')
     if not isinstance(findings, list):
         raise ValueError('findings.json must be an array')
+    ids = [row.get('id') if isinstance(row, dict) else None for row in findings]
+    if any(not has_text(ident) for ident in ids):
+        # A finding without a string id can never be matched: its decision would be dropped on
+        # every score and the case would wait for it forever.
+        raise ValueError('every sealed finding needs a non-empty string id; fix findings.json '
+                         'before sealing')
+    if len(set(ids)) != len(ids):
+        raise ValueError('findings.json repeats an id; every sealed finding needs its own')
     dump(case / 'sealed-findings.json', findings)
     for name in ('coverage.md', 'known-hypotheses.md', 'scope.md'):
         source = run / name
@@ -9822,6 +10168,9 @@ def backtest_seal(case, run):
     run_meta = read_json(run / 'run.json') if (run / 'run.json').is_file() else {}
     seal = {'sealed_at': datetime.now(timezone.utc).isoformat(),
             'sealed_findings_sha256': _sha256_file(case / 'sealed-findings.json'),
+            # Every sealed file, so an edit to any of them voids the case, not only findings.
+            'sealed_files_sha256': {path.name: _sha256_file(path)
+                                    for path in sorted(case.glob('sealed-*'))},
             'finding_count': len(findings), 'run': str(run),
             'run_commit': run_meta.get('commit'), 'pinned_commit': meta.get('pinned_commit')}
     if run_meta.get('commit') and run_meta['commit'] != meta.get('pinned_commit'):
@@ -9842,6 +10191,13 @@ def backtest_score(case):
     actual = _sha256_file(case / 'sealed-findings.json')
     if actual != seal['sealed_findings_sha256']:
         raise ValueError('sealed-findings.json changed after it was sealed; this case is void')
+    hashed = seal.get('sealed_files_sha256')
+    if isinstance(hashed, dict):
+        present = {path.name for path in case.glob('sealed-*')}
+        for name in sorted(present | set(hashed)):
+            if name not in hashed or name not in present or \
+                    _sha256_file(case / name) != hashed[name]:
+                raise ValueError(f'{name} changed after the case was sealed; this case is void')
     truth = read_json(case / 'truth.json')
     if not truth:
         return {'state': 'awaiting-truth', 'case': meta.get('name'),
@@ -9890,12 +10246,21 @@ def backtest_score(case):
                 'finding_lens': finding.get('lens'), 'finding_status': finding.get('status'),
                 'overlap_score': round(score, 2), 'overlap_reasons': why,
                 'decision': decision, 'decision_reason': row.get('decision_reason', '')})
-    # keep any decided pair the heuristic no longer proposes, so a judgment is never lost
+    # keep any decided pair the heuristic no longer proposes, so a judgment is never lost - but
+    # only for a finding that was sealed. A row naming any other id is a finding written after
+    # the truth was seen, which is what the seal exists to refuse; and its lens and status come
+    # from the sealed record, never from the editable matches file.
+    sealed_by_id = {row['id']: row for row in sealed if isinstance(row.get('id'), str)}
     seen = {(p['truth_id'], p['finding_id']) for p in proposals}
     for key, row in existing.items():
-        if key not in seen and row.get('decision') not in (None, 'undecided'):
-            proposals.append(row)
-    proposals.sort(key=lambda r: (-r['overlap_score'], str(r['truth_id'])))
+        if key in seen or row.get('decision') in (None, 'undecided'):
+            continue
+        if row.get('finding_id') not in sealed_by_id:
+            continue
+        finding = sealed_by_id[row['finding_id']]
+        proposals.append(dict(row, finding_lens=finding.get('lens'),
+                              finding_status=finding.get('status')))
+    proposals.sort(key=lambda r: (-r.get('overlap_score', 0), str(r['truth_id'])))
     dump(decisions_path, proposals)
 
     if undecided:

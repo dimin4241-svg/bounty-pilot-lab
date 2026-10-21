@@ -222,9 +222,10 @@ class ConvergeKeyTests(SearchFixture):
         # ...but a record naming another function does not carry this one.
         self.write_records([self.record(affected_paths=['./src/v2/Vault.sol:Vault.deposit'])])
         self.assertEqual(len(self.converge()['saturated_unrecorded']), 1)
-        # A record naming only the file carries every function in it.
+        # A record naming only the file carries no function in it: coverage is credited by
+        # name, and a file-only record once hid every sibling function's singleton (review B4).
         self.write_records([self.record(affected_paths=['src/v2/Vault.sol'])])
-        self.assertEqual(self.converge()['saturated_unrecorded'], [])
+        self.assertEqual(len(self.converge()['saturated_unrecorded']), 1)
 
     def test_generic_surfaces_are_reports_and_whole_templates_are_examples(self):
         self.reading('a.md', 'CANDIDATE | lens: seam | surface: src/Pool.move:Pool<T>::swap | '
@@ -471,7 +472,7 @@ class ImportFindingsTests(SearchFixture):
         self.assertEqual(vault['affected_paths'], ['src/Vault.sol:Vault.withdraw'])
         self.assertEqual(vault['evidence'], {})
         self.assertEqual(vault['origin']['tool'], 'solidity-auditor')
-        self.assertEqual(vault['origin']['key'], 'vault|withdraw|reentrancy')
+        self.assertEqual(vault['origin']['key'], 'src/vault.sol|vault|withdraw|reentrancy')
         self.assertEqual(vault['origin']['upstream_kind'], 'FINDING')
         self.assertEqual(vault['origin']['triage'], 'untriaged')
         self.assertEqual(vault['origin']['path_resolution'], 'resolved-from-contract')

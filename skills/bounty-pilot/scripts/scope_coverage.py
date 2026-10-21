@@ -11,6 +11,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+# The target checkout is untrusted: its .git/config can name an fsmonitor or hooks program
+# that git would run even for a read-only `ls-files` or `status`.
+GIT_HARDENING = ("--no-optional-locks", "-c", "core.fsmonitor=false",
+                 "-c", "core.hooksPath=/dev/null")
+
 # Every suffix here must also be in bounty.py's SOURCE_SUFFIXES: a stack the bundle can never
 # include is reported missing whatever --scope says, and the gate can then never pass.
 EXT_STACK = {
@@ -45,7 +50,7 @@ def _sources(paths):
 
 def audit(repo, run, scope=None):
     repo, run = Path(repo).resolve(), Path(run).resolve()
-    out = subprocess.check_output(["git", "-C", str(repo), "ls-files", "-z"])
+    out = subprocess.check_output(["git", *GIT_HARDENING, "-C", str(repo), "ls-files", "-z"])
     all_sources = _sources(x for x in out.decode("utf-8").split("\0") if x)
     bundle = run / "bundles" / "source.md"
     included = set(BUNDLE_PATH.findall(bundle.read_text(encoding="utf-8"))) if bundle.is_file() else set()

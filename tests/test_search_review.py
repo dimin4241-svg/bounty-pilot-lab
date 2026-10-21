@@ -429,7 +429,7 @@ class AuditorLocationTests(Fixture):
                              name)
             self.assertEqual(rows[name]['origin']['path_resolution'] in
                              ('reported', 'resolved-from-contract'), True)
-            self.assertEqual(rows[name]['origin']['key'], f'vault|{function}|{name}')
+            self.assertEqual(rows[name]['origin']['key'], f'src/vault.sol|vault|{function}|{name}')
 
     def test_a_spaced_surface_keeps_its_function(self):
         parsed = bounty._parse_reading(
@@ -437,7 +437,7 @@ class AuditorLocationTests(Fixture):
             'a.md', bounty._TargetIndex(self.repo))
         block = parsed['blocks'][0]
         self.assertEqual((block['surface'], block['key']),
-                         ('src/Vault.sol:Vault.WITHDRAW', 'src/vault.sol|withdraw|reentrancy'))
+                         ('src/Vault.sol:Vault.WITHDRAW', 'src/vault.sol|vault.withdraw|reentrancy'))
 
     def test_split_surface_reads_a_file_name_with_a_glued_symbol(self):
         self.assertEqual(bounty._split_surface('src/Vault.sol.withdraw')[:2],

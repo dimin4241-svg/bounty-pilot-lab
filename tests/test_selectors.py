@@ -108,8 +108,10 @@ class WalkerTests(unittest.TestCase):
         self.assertEqual(selectors.strip_metadata(code)[1], 0)
 
     def test_a_selector_inside_the_metadata_is_not_dispatched(self):
-        # The metadata is data: a leaf shape appearing in it must not reach the list.
-        blob = b'\xa1dsolc' + bytes.fromhex(leaf('cafebabe')) + b'\x00' * 20
+        # The metadata is data: a leaf shape appearing in it must not reach the list. The leaf
+        # sits inside the 34-byte ipfs hash of a well-formed solc map {ipfs, solc}.
+        ipfs_hash = (bytes.fromhex(leaf('cafebabe')) + b'\x00' * 34)[:34]
+        blob = b'\xa2' + b'dipfs' + b'\x58\x22' + ipfs_hash + b'dsolc' + b'\x43\x00\x08\x18'
         code = runtime(leaf('a9059cbb'))[2:] + blob.hex() + format(len(blob), '04x')
         found = selectors.extract_selectors('0x' + code)
         self.assertEqual(found['selectors'], ['0xa9059cbb'])

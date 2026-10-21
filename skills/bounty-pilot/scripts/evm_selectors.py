@@ -56,6 +56,58 @@ def code_bytes(code):
 # CBOR major-type-5 header (0xa1..0xaf for 1..15 pairs) and names its hash algorithm.
 METADATA_MARKERS = (b'solc', b'ipfs', b'bzzr0', b'bzzr1')
 METADATA_MIN_BYTES = 0x20
+# solc's own map is about 0x35 bytes; nothing it emits comes near this, and a tail longer than
+# it is code, never metadata.
+METADATA_MAX_BYTES = 0x100
+# The keys solc writes, and the shape of each value. A tail is metadata only when it parses as
+# exactly such a map: matching on a marker byte anywhere let executable code be cut away.
+METADATA_KEYS = {'ipfs': (bytes, 34), 'bzzr0': (bytes, 32), 'bzzr1': (bytes, 32),
+                 'solc': ((bytes, str), None), 'experimental': (bool, None)}
+
+
+def _cbor_value(blob, pos):
+    """One scalar CBOR item (unsigned int, byte or text string, true/false) at pos."""
+    if pos >= len(blob):
+        raise ValueError('cbor item out of range')
+    major, info = blob[pos] >> 5, blob[pos] & 0x1f
+    pos += 1
+    if major == 7 and info in (20, 21):
+        return info == 21, pos
+    if info < 24:
+        arg = info
+    elif info in (24, 25):
+        width = 1 << (info - 24)
+        if pos + width > len(blob):
+            raise ValueError('cbor length out of range')
+        arg, pos = int.from_bytes(blob[pos:pos + width], 'big'), pos + width
+    else:
+        raise ValueError('unsupported cbor length')
+    if major == 0:
+        return arg, pos
+    if major in (2, 3) and pos + arg <= len(blob):
+        data = bytes(blob[pos:pos + arg])
+        return (data if major == 2 else data.decode('utf-8')), pos + arg
+    raise ValueError('unsupported cbor item')
+
+
+def is_solc_metadata(blob):
+    """Whether blob is exactly one CBOR map holding only solc's metadata keys."""
+    if not blob or not 0xa1 <= blob[0] <= 0xaf or len(blob) > METADATA_MAX_BYTES:
+        return False
+    pos, seen = 1, set()
+    try:
+        for _ in range(blob[0] & 0x1f):
+            key, pos = _cbor_value(blob, pos)
+            value, pos = _cbor_value(blob, pos)
+            if key not in METADATA_KEYS or key in seen:
+                return False
+            kind, size = METADATA_KEYS[key]
+            if not isinstance(value, kind) or (size is not None and len(value) != size):
+                return False
+            seen.add(key)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return pos == len(blob) and bool(seen - {'experimental'})
 
 
 def strip_metadata(code_hex):
@@ -72,9 +124,7 @@ def strip_metadata(code_hex):
     if not METADATA_MIN_BYTES <= length <= len(raw) - 2:
         return raw, 0
     blob = raw[-(length + 2):-2]
-    if not blob or not 0xa1 <= blob[0] <= 0xaf:
-        return raw, 0
-    if not any(marker in blob for marker in METADATA_MARKERS):
+    if not is_solc_metadata(blob):
         return raw, 0
     return raw[:-(length + 2)], length + 2
 

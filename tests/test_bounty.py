@@ -1962,6 +1962,7 @@ class RunTests(unittest.TestCase):
         """Record an audit-inventory result without walking a checkout."""
         bounty.dump(self.run / 'audit-inventory.json',
                     {'repo': str(self.repo), 'artifact_count': len(artifacts),
+                     'run_id': bounty.read_json(self.run / 'run.json')['run_id'],
                      'artifacts': list(artifacts)})
 
     def artifact(self, path='audits/report.pdf', triage='unreviewed', note=''):
@@ -3146,9 +3147,14 @@ class ConvergeTests(unittest.TestCase):
         result = bounty.converge([str(self.readings)], self.run)
         self.assertEqual(result['readings_parsed'], 1)       # the .json file is not a reading
         # A lower-case kind word is the same header: it used to be dropped without a trace.
-        self.assertEqual(result['blocks_parsed'], 3)
-        self.assertEqual(result['distinct_groups'], 3)
+        # A bug class with no surface has no place to group on: skipped, with its reason
+        # (it once grouped with every other placeless block of its class).
+        self.assertEqual(result['blocks_parsed'], 2)
+        self.assertEqual(result['distinct_groups'], 2)
         self.assertEqual(result['saturated_groups'], 0)
+        self.assertTrue(any('no surface' in row.get('reason', '')
+                            for row in bounty.read_json(self.run / 'convergence.json')
+                            ['skipped_blocks']))
 
     def test_converge_refuses_a_directory_that_init_did_not_create(self):
         self.reading('pass1.md', 'CANDIDATE | surface: src/Vault.sol | bug_class: x-y')
