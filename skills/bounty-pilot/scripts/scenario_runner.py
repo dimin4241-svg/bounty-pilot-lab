@@ -13,6 +13,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The target checkout is untrusted: its .git/config can name an fsmonitor or hooks program
+# that git would run even for a read-only `ls-files` or `status`.
+GIT_HARDENING = ("--no-optional-locks", "-c", "core.fsmonitor=false",
+                 "-c", "core.hooksPath=/dev/null")
+
 MAX_OUTPUT_BYTES = 40000
 MAX_TIMEOUT_SEC = 1800
 # Toolchains need a working home/cache or go/cargo refuse to run; keep this list
@@ -585,9 +590,9 @@ def _run_case(command, cwd, timeout, env):
 def _checkout_identity(root):
     """Observed local checkout SHA and status; untracked PoC files make it dirty."""
     try:
-        rev = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+        rev = subprocess.run(["git", *GIT_HARDENING, "-C", str(root), "rev-parse", "HEAD"],
                              capture_output=True, text=True, timeout=5, check=True).stdout.strip()
-        status = subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+        status = subprocess.run(["git", *GIT_HARDENING, "-C", str(root), "status", "--porcelain"],
                                 capture_output=True, text=True, timeout=5, check=True).stdout
         return rev, "dirty" if status.strip() else "clean"
     except (OSError, subprocess.SubprocessError):

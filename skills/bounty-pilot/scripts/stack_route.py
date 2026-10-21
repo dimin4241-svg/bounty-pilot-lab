@@ -6,6 +6,11 @@ import re
 import subprocess
 from pathlib import Path
 
+# The target checkout is untrusted: its .git/config can name an fsmonitor or hooks program
+# that git would run even for a read-only `ls-files` or `status`.
+GIT_HARDENING = ("--no-optional-locks", "-c", "core.fsmonitor=false",
+                 "-c", "core.hooksPath=/dev/null")
+
 ADAPTERS = {
     "solidity-evm": "lenses.md",
     "rust-native": "adapters/rust-native.md",
@@ -130,7 +135,7 @@ def _messaging_signals(root, files):
 
 def route(repo):
     root = Path(repo).resolve()
-    raw = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
+    raw = subprocess.run(["git", *GIT_HARDENING, "-C", str(root), "ls-files", "-z"],
                          check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     files = sorted(x for x in raw.stdout.decode("utf-8", "replace").split("\0") if x)
     lower = {x.lower() for x in files}

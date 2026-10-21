@@ -14,6 +14,11 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
+# The target checkout is untrusted: its .git/config can name an fsmonitor or hooks program
+# that git would run even for a read-only `ls-files` or `status`.
+GIT_HARDENING = ("--no-optional-locks", "-c", "core.fsmonitor=false",
+                 "-c", "core.hooksPath=/dev/null")
+
 SINK_TERMS = {
     "asset-movement": ("transfer", "transferfrom", "safetransfer", "withdraw",
                        "redeem", "release", "burn", "mint", "sweep"),
@@ -1031,7 +1036,7 @@ def attr_name(node):
 
 def py_symbols(root):
     root = Path(root).resolve()
-    raw = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
+    raw = subprocess.run(["git", *GIT_HARDENING, "-C", str(root), "ls-files", "-z"],
                          check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     tracked = raw.stdout.decode("utf-8", "replace").split("\0")
     defs = []

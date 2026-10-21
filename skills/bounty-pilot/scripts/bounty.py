@@ -15,6 +15,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import traceback
 import uuid
 import urllib.error
@@ -1344,13 +1345,14 @@ def _scrub_endpoint(text, url):
     return _redact_context_secrets(text)
 
 
-def _probe_command(argv, cwd=None, timeout=PROBE_TIMEOUT):
+def _probe_command(argv, cwd=None, timeout=PROBE_TIMEOUT, extra_env=None):
     """Run one command with no shell and a hard timeout, and report what happened.
 
     A missing tool, a timeout and a failure are three different facts and are recorded as
     three different reasons; none of them is an error for the probe itself.
     """
-    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_PAGER='cat', NO_COLOR='1')
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_PAGER='cat', NO_COLOR='1',
+               **(extra_env or {}))
     try:
         done = subprocess.run(list(argv), cwd=str(cwd) if cwd else None, check=False,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1366,10 +1368,20 @@ def _probe_command(argv, cwd=None, timeout=PROBE_TIMEOUT):
             'output_excerpt': _probe_excerpt(done.stdout.decode('utf-8', 'replace'))}
 
 
+# A version probe must never pick up the target's own toolchain config: a committed `.yarnrc`
+# `yarn-path` runs a script from the checkout, and `rust-toolchain.toml` or a `go.mod`
+# toolchain line starts a download. Both are found by searching up from the working directory,
+# so the probes run in a fresh empty directory with the per-tool switches off as well.
+TOOLCHAIN_PROBE_ENV = {'YARN_IGNORE_PATH': '1', 'GOTOOLCHAIN': 'local'}
+
+
 def _probe_toolchains(timeout):
     found = {}
-    for name, argv in TOOLCHAIN_PROBES:
-        result = _probe_command(argv, timeout=timeout)
+    with tempfile.TemporaryDirectory(prefix='bp-probe-') as neutral:
+        probed = [(name, _probe_command(argv, cwd=neutral, timeout=timeout,
+                                        extra_env=TOOLCHAIN_PROBE_ENV))
+                  for name, argv in TOOLCHAIN_PROBES]
+    for name, result in probed:
         if not result['ran']:
             found[name] = {'present': False, 'reason': result['reason']}
         elif result['exit_code'] != 0:
@@ -1645,6 +1657,9 @@ def capability_probe(repo, run, rpc=None, deep=False, timeout=PROBE_TIMEOUT, ope
             if not command or not command['toolchain_present']:
                 continue
             result = _probe_command(command['argv'], cwd=root, timeout=timeout)
+            if rpc and 'output_excerpt' in result:
+                # A forked test that fails prints the endpoint it was given; never store it.
+                result['output_excerpt'] = _scrub_endpoint(result['output_excerpt'], rpc)
             if slot == 'build':
                 build_run = result
             else:
@@ -4845,7 +4860,17 @@ def secret_kinds(text):
     return sorted(set(kinds), key=kinds.index)
 
 
-def _secret_errors(where, value, errors):
+def _secret_errors(where, value, errors, depth=0):
+    # A key nested one level down - `evidence.commands[0]`, `evidence.runs.fork` - is published
+    # exactly as surely as one at the top, so lists and objects are walked, not skipped.
+    if isinstance(value, dict) and depth < 8:
+        for key, item in sorted(value.items(), key=lambda kv: str(kv[0])):
+            _secret_errors(f'{where}.{key}', item, errors, depth + 1)
+        return
+    if isinstance(value, list) and depth < 8:
+        for index, item in enumerate(value):
+            _secret_errors(f'{where}[{index}]', item, errors, depth + 1)
+        return
     for kind in secret_kinds(value):
         errors.append(where + ' carries ' + kind + '. Replace it with an environment variable '
                       'placeholder such as $ETH_RPC_URL or $PRIVATE_KEY, and rotate the '
@@ -6988,6 +7013,32 @@ QUOTED_HEX_KEY_ASSIGNMENT = re.compile(
     r'[:=]\s*)(["\'])(0x[0-9a-f]{64})(\2)')
 
 
+# A Hardhat/Truffle network's `accounts: ["0x…", "0x…"]` holds raw signing keys with no key-named
+# variable in front of them, so QUOTED_HEX_KEY_ASSIGNMENT never sees them.
+ACCOUNTS_ARRAY = re.compile(r'(?i)\baccounts["\']?\s*[:=]\s*\[[^\]]*\]')
+QUOTED_HEX_KEY = re.compile(r'(?i)(["\'])0x[0-9a-f]{64}\1')
+
+
+def _redact_account_keys(text):
+    """Quoted 32-byte hex values inside an `accounts` array replaced, and how many were."""
+    count = [0]
+
+    def block(match):
+        def key(inner):
+            count[0] += 1
+            return inner.group(1) + '<redacted>' + inner.group(1)
+        return QUOTED_HEX_KEY.sub(key, match.group(0))
+    return ACCOUNTS_ARRAY.sub(block, text), count[0]
+
+
+def _redact_bundled_text(text):
+    """Configuration-strength redaction for text that is not target source - an `--include`d
+    file or the run's own notes - and how many values it withheld, so the bundle can say so."""
+    text, keys = _redact_account_keys(text)
+    redacted = _redact_context_secrets(text)
+    return redacted, keys + max(0, redacted.count('<redacted>') - text.count('<redacted>'))
+
+
 def _redact_source_secrets(text):
     """Credentials in bundled source replaced by `<redacted>`, and how many were.
 
@@ -7031,7 +7082,8 @@ def _redact_source_secrets(text):
                                     if _opaque_secret(m.group(2)) else m.group(0)), text)
     text = QUOTED_HEX_KEY_ASSIGNMENT.sub(counted(lambda m: m.group(1) + m.group(2) + '<redacted>'
                                           + m.group(4)), text)
-    return text, count[0]
+    text, keys = _redact_account_keys(text)
+    return text, count[0] + keys
 
 
 def _collect_project_context(root, paths, skipped=None):
@@ -7042,7 +7094,7 @@ def _collect_project_context(root, paths, skipped=None):
         if body is None:
             missed.extend(notes)
             continue
-        parts.append(_fenced(path, _redact_context_secrets(body)))
+        parts.append(_fenced(path, _redact_account_keys(_redact_context_secrets(body))[0]))
     if skipped is not None:
         skipped.extend(missed)
     return '\n'.join(parts), [item['path'] for item in missed]
@@ -7401,14 +7453,18 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                  'saturated.md'):
         path = run / name
         if path.is_file() and path.stat().st_size > 0:
-            body = path.read_text(encoding='utf-8')
-            context.append(f'## Run context: {name}\n\n```\n{body.rstrip()}\n```\n')
+            body, count = _redact_bundled_text(path.read_text(encoding='utf-8'))
+            if count:
+                redactions.append({'path': f'run:{name}', 'count': count})
+            context.append(f'## Run context: {name}\n\n{_fence(body)}')
     for extra in includes or []:
         path = Path(extra)
         if not path.is_file():
             raise ValueError(f'--include {extra!r} is not a file')
-        body = path.read_text(encoding='utf-8', errors='replace')
-        context.append(f'## Included: {path.name}\n\n```\n{body.rstrip()}\n```\n')
+        body, count = _redact_bundled_text(path.read_text(encoding='utf-8', errors='replace'))
+        if count:
+            redactions.append({'path': f'--include:{extra}', 'count': count})
+        context.append(f'## Included: {path.name}\n\n{_fence(body)}')
     context_doc = '\n'.join(context)
     explicit = {Path(extra).resolve() for extra in includes or []}
     analysis = {}
@@ -7565,7 +7621,7 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
     redacted = [{'path': path, 'count': count} for path, count in sorted(redacted.items())]
     if redacted:
         notes.append(f"{sum(r['count'] for r in redacted)} credential-shaped value(s) in "
-                     f"{len(redacted)} source file(s) were replaced by <redacted> in the bundles "
+                     f"{len(redacted)} file(s) were replaced by <redacted> in the bundles "
                      '(see redacted_secrets); the checkout still holds them, and a committed '
                      'live credential can itself be worth reporting')
     if classic_records and classic_records['included'] < classic_records['records']:
