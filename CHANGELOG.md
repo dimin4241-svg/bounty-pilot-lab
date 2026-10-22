@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.28.0
+
+### Make parallel dispatch recoverable and evidence reviews session-bound
+
+- **Concurrent dispatch state is process-safe.** `agent_dispatch.py` serializes state transactions
+  with an OS lock and atomic JSON replacement. Four or more worker processes can record updates
+  without losing one another's results. `recover` marks a dead local runner failed and retryable;
+  a surviving provider child blocks retry.
+- **Only completed readings reach convergence.** Nonzero, timed-out, interrupted and malformed
+  attempts remain drafts under their attempt folders. Successful readings are staged and published
+  after the completion record is committed, with crash recovery for the publish step.
+- **Independence is explicit.** Missing provider session IDs yield `independence_unverified`,
+  duplicate IDs yield `independence_conflict`, and submission checks block every non-complete
+  dispatch plan. Strict evidence reviews bind producer and reviewer outputs to separate completed
+  dispatch invocations, provider session IDs and the saved reviewer JSON digest.
+- **Lab identity is distinct.** The installed skill and Claude plugin are named `bounty-pilot-lab`.
+- **ZCode app bundle compatibility.** When the macOS CLI's expected provider-config path differs
+  from the app bundle layout, the runner stages the CLI and bundled config inside the private
+  attempt directory without changing the installed app.
+- **GitHub Actions now pins Ubuntu 24.04**, exposes manual dispatch, and limits workflow permissions.
+  GitHub did not start the previous workflow because the account billing/spending limit blocked
+  runner allocation; resolve that account setting before remote Actions can run.
+- Added race, process-crash, recovery, session-binding, failed-output and submission-gate tests.
+
 ## 0.27.0
 
 ### Optional blind-spot lab and independent evidence stages

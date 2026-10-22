@@ -115,6 +115,101 @@ def _decision(review, key, accepted):
     return isinstance(obj, dict) and obj.get("decision") in accepted
 
 
+def _dispatch_reading(run, job_id, invocation_id):
+    """Resolve a reading to the completed provider session recorded by the dispatcher."""
+    path = run / "agents" / "dispatch.json"
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, "dispatch state is missing or unreadable"
+    meta = bounty.read_json(run / "run.json")
+    if not isinstance(state, dict) or state.get("run_id") != meta.get("run_id"):
+        return None, "dispatch state belongs to another run"
+    jobs = state.get("jobs")
+    job = jobs.get(job_id) if isinstance(jobs, dict) else None
+    if not isinstance(job, dict) or job.get("status") != "completed":
+        return None, "bound dispatch job is not completed"
+    result = job.get("latest_result")
+    if not isinstance(result, dict) or result.get("invocation_id") != invocation_id:
+        return None, "bound invocation is not the job's saved result"
+    attempts = job.get("attempts") if isinstance(job.get("attempts"), list) else []
+    attempt = next((row for row in attempts if isinstance(row, dict) and
+                    row.get("invocation_id") == invocation_id), None)
+    if (not isinstance(attempt, dict) or attempt.get("status") != "completed" or
+            not attempt.get("fresh_process") or attempt.get("resume_requested")):
+        return None, "bound invocation lacks a completed fresh-process record"
+    session_id = attempt.get("provider_session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        return None, "provider did not report a session ID"
+    output = _dispatch_output_file(run, result.get("reading_file"))
+    if output is None or _digest(output) != result.get("reading_sha256"):
+        return None, "bound reading is missing or differs from its dispatch digest"
+    text = output.read_text(encoding="utf-8", errors="replace")
+    marker = re.match(r"^<!-- BP_AGENT_RESULT v[0-9]+ job=[^ ]+ attempt=[0-9]+ "
+                      r"invocation=[^ ]+ bundle_sha256=[0-9a-f]+ -->\n", text)
+    if not marker:
+        return None, "bound reading is missing its dispatcher provenance header"
+    return {"job_id": job_id, "invocation_id": invocation_id,
+            "provider": attempt.get("provider"), "provider_session_id": session_id,
+            "payload": text[marker.end():]}, None
+
+
+def _dispatch_output_file(run, value):
+    """Dispatch state stores absolute paths; constrain them back to this run before reading."""
+    if not isinstance(value, str) or not value:
+        return None
+    raw = Path(value)
+    candidate = raw if raw.is_absolute() else run / raw
+    try:
+        resolved = candidate.resolve()
+        root = run.resolve()
+        resolved.relative_to(root)
+        cursor = candidate
+        while cursor != root:
+            if cursor.is_symlink():
+                return None
+            cursor = cursor.parent
+        if candidate.is_symlink():
+            return None
+        if not resolved.is_file() or resolved.stat().st_size > MAX_TEXT:
+            return None
+        return resolved
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _check_dispatch_sessions(run, review, review_text):
+    bindings = review.get("session_bindings")
+    if not isinstance(bindings, dict):
+        return False, [], ["session_bindings must identify the actual producer and reviewer dispatch jobs"]
+    resolved, errors = {}, []
+    for role in ("producer", "reviewer"):
+        binding = bindings.get(role)
+        job_id = binding.get("job_id") if isinstance(binding, dict) else None
+        invocation_id = binding.get("invocation_id") if isinstance(binding, dict) else None
+        if not isinstance(job_id, str) or not isinstance(invocation_id, str):
+            errors.append(role + " session binding needs job_id and invocation_id")
+            continue
+        actual, error = _dispatch_reading(run, job_id, invocation_id)
+        if error:
+            errors.append(role + " session binding: " + error)
+            continue
+        if review.get(role + "_id") != job_id:
+            errors.append(role + "_id must equal the bound dispatch job id")
+        resolved[role] = actual
+    if set(resolved) == {"producer", "reviewer"}:
+        producer, reviewer = resolved["producer"], resolved["reviewer"]
+        if producer["job_id"] == reviewer["job_id"] or \
+                producer["invocation_id"] == reviewer["invocation_id"]:
+            errors.append("producer and reviewer must be different dispatched invocations")
+        if (producer["provider"], producer["provider_session_id"]) == \
+                (reviewer["provider"], reviewer["provider_session_id"]):
+            errors.append("producer and reviewer reused the same provider session")
+        if reviewer["payload"] != review_text:
+            errors.append("review JSON must be the exact output saved for the bound reviewer session")
+    return not errors, list(resolved.values()), errors
+
+
 def _check_review_anchors(root, review, key):
     obj = review.get(key)
     anchors = obj.get("anchors") if isinstance(obj, dict) else None
@@ -147,10 +242,21 @@ def verify(run_dir, finding_id, review_path):
     if len(matches) != 1:
         raise ValueError("finding id must resolve to exactly one findings.json row")
     finding = matches[0]
-    review_file = Path(review_path).expanduser().resolve()
-    if review_file.is_symlink() or not review_file.is_file() or review_file.stat().st_size > MAX_TEXT:
-        raise ValueError("--review must be a regular non-symlink JSON file under the size limit")
-    review = json.loads(review_file.read_text(encoding="utf-8"))
+    raw_review_file = Path(review_path).expanduser()
+    if raw_review_file.is_symlink():
+        raise ValueError("--review must not be a symlink")
+    review_file = raw_review_file.resolve()
+    try:
+        review_file.relative_to(run)
+    except ValueError as exc:
+        raise ValueError("--review must be inside the private run") from exc
+    if not review_file.is_file() or review_file.stat().st_size > MAX_TEXT:
+        raise ValueError("--review must be a regular JSON file under the size limit")
+    review_raw = review_file.read_text(encoding="utf-8")
+    marker = re.match(r"^<!-- BP_AGENT_RESULT v[0-9]+ job=[^ ]+ attempt=[0-9]+ "
+                      r"invocation=[^ ]+ bundle_sha256=[0-9a-f]+ -->\n", review_raw)
+    review_text = review_raw[marker.end():] if marker else review_raw
+    review = json.loads(review_text)
     if not isinstance(review, dict) or review.get("schema") != 1:
         raise ValueError("review record requires schema=1")
 
@@ -188,12 +294,17 @@ def verify(run_dir, finding_id, review_path):
 
     producer = review.get("producer_id")
     reviewer = review.get("reviewer_id")
+    dispatch_independent, dispatch_sessions, dispatch_errors = _check_dispatch_sessions(
+        run, review, review_text)
     independent = (isinstance(producer, str) and producer.strip() and isinstance(reviewer, str)
-                   and reviewer.strip() and producer != reviewer and review.get("independent") is True)
+                   and reviewer.strip() and producer != reviewer and review.get("independent") is True
+                   and dispatch_independent)
     if not independent:
-        errors.append("reviewer_id must be distinct from producer_id and explicitly independent")
+        errors.extend(dispatch_errors or ["review must bind distinct producer and reviewer CLI sessions"])
     checks["independence"] = {"status": "confirmed" if independent else "unconfirmed",
-                              "producer_id": producer, "reviewer_id": reviewer}
+                              "producer_id": producer, "reviewer_id": reviewer,
+                              "dispatch_sessions": dispatch_sessions,
+                              "dispatch_binding_errors": dispatch_errors}
 
     gate = _load_helper("experiment_gate")
     try:

@@ -51,22 +51,22 @@ Rust-релея при проверке только Solidity). Это конт�
 Три способа, от простого к надёжному:
 
 **Плагином в Claude Code** — работает, если твой `git` уже умеет клонировать этот репозиторий
-(проверка: `git ls-remote https://github.com/dimin4241-svg/bounty-pilot`; если спрашивает пароль,
+(проверка: `git ls-remote https://github.com/dimin4241-svg/bounty-pilot-lab`; если спрашивает пароль,
 сначала `gh auth login`):
 
 ```text
-/plugin marketplace add dimin4241-svg/bounty-pilot
-/plugin install bounty-pilot@bounty-pilot
+/plugin marketplace add dimin4241-svg/bounty-pilot-lab
+/plugin install bounty-pilot-lab@bounty-pilot-lab
 ```
 
 **Копированием каталога навыка** — самый переносимый способ и единственный, если команда плагина не
 достаёт до приватного репозитория:
 
 ```sh
-git clone https://github.com/dimin4241-svg/bounty-pilot.git
+git clone https://github.com/dimin4241-svg/bounty-pilot-lab.git
 mkdir -p ~/.claude/skills
-rm -rf ~/.claude/skills/bounty-pilot
-cp -r bounty-pilot/skills/bounty-pilot ~/.claude/skills/
+rm -rf ~/.claude/skills/bounty-pilot-lab
+cp -r bounty-pilot-lab/skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
 ```
 
 Навык самодостаточен (около 2 МБ: `SKILL.md`, `references/`, `scripts/`, `templates/`) и требует
@@ -76,7 +76,7 @@ cp -r bounty-pilot/skills/bounty-pilot ~/.claude/skills/
 **Без установки вообще** — просто дай агенту путь к файлу:
 
 ```text
-Прочитай /полный/путь/bounty-pilot/skills/bounty-pilot/SKILL.md
+Прочитай /полный/путь/bounty-pilot-lab/skills/bounty-pilot/SKILL.md
 и используй этот навык для аудита моего проекта.
 ```
 
@@ -84,7 +84,7 @@ cp -r bounty-pilot/skills/bounty-pilot ~/.claude/skills/
 придётся делать каждый раз: подключи этот репозиторий к сессии рядом с целевым или ставь навык из
 хука `SessionStart`.
 
-Проверка, что установка прошла: `cat ~/.claude/skills/bounty-pilot/VERSION` должен совпадать с
+Проверка, что установка прошла: `cat ~/.claude/skills/bounty-pilot-lab/VERSION` должен совпадать с
 `VERSION` в репозитории, а `python3 -m unittest discover -s tests` в клоне — быть зелёным.
 
 ### 2. Запуск
@@ -237,7 +237,7 @@ python3 skills/bounty-pilot/scripts/bounty.py bundle \
 | [report.md](skills/bounty-pilot/references/report.md) | Шаблон английского репорта |
 | [templates/](skills/bounty-pilot/templates) | Харнессы PoC: форк, локальный, инвариантный, Solana |
 | [bounty.py](skills/bounty-pilot/scripts/bounty.py) | Каталог аудита, дельта, отбор цели, ончейн-проверки, гейты |
-| [agent_dispatch.py](skills/bounty-pilot/scripts/agent_dispatch.py) | Отдельные запуски CLI-агентов и сохранение чтений, логов и метрик |
+| [agent_dispatch.py](skills/bounty-pilot/scripts/agent_dispatch.py) | Параллельные CLI-задачи с блокировками, восстановлением, проверкой сессий и привязанным критиком |
 | [experimenter.py](skills/bounty-pilot/scripts/experimenter.py) | Неполные native PoC-заготовки и безопасные планы candidate/control |
 | [evidence_verifier.py](skills/bounty-pilot/scripts/evidence_verifier.py) | Раздельный гейт исходника, PoC и ущерба; не меняет статус находки |
 | [blindspot_engine.py](skills/bounty-pilot/scripts/blindspot_engine.py) | Опциональные очереди проверки legacy, состояния, ветвей, конфигурации и доверия |

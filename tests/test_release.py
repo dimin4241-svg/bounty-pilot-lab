@@ -22,6 +22,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(root, skill)
         self.assertEqual(root, plugin)
 
+    def test_lab_skill_and_plugin_names_do_not_collide_with_original(self):
+        skill_text = (SKILL / 'SKILL.md').read_text(encoding='utf-8')
+        skill_name = re.search(r'^name: (\S+)$', skill_text, re.M).group(1)
+        plugin = json.loads((ROOT / '.claude-plugin/plugin.json').read_text(encoding='utf-8'))
+        self.assertEqual(skill_name, 'bounty-pilot-lab')
+        self.assertEqual(plugin['name'], skill_name)
+        self.assertTrue(plugin['homepage'].endswith('/bounty-pilot-lab'))
+
     def test_changelog_leads_with_the_current_version(self):
         version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
         first = re.search(r'^## (\S+)', (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M)

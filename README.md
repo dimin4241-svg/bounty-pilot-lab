@@ -2,11 +2,11 @@
   <img src="docs/assets/banner.svg" alt="Bounty Pilot — Web3 security, backed by evidence" width="100%">
 </p>
 
-<h1 align="center">Bounty Pilot</h1>
+<h1 align="center">Bounty Pilot Lab</h1>
 <p align="center"><strong>An AI agent skill for smart contract security audits and Web3 bug bounty research.</strong><br>Start with a repository. Investigate hypotheses. Build local evidence. Draft a private report.</p>
 
 <p align="center">
-  <a href=".github/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/dimin4241-svg/bounty-pilot/tests.yml?branch=main&style=flat-square&label=tests" alt="Test status"></a>
+  <a href=".github/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/dimin4241-svg/bounty-pilot-lab/tests.yml?branch=main&style=flat-square&label=tests" alt="Test status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6ee7b7?style=flat-square" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/focus-Solidity%20%2F%20EVM-67e8f9?style=flat-square" alt="Focus: Solidity / EVM">
   <img src="https://img.shields.io/badge/helpers-Python%203.9%2B-a5b4fc?style=flat-square" alt="Helpers: Python 3.9 or later">
@@ -63,22 +63,22 @@ A passed gate is not proof of an exploit or a payout. See
 GitHub access. Three routes, in order of convenience:
 
 **As a Claude Code plugin** (works when your own `git` can already clone this repository — check with
-`git ls-remote https://github.com/dimin4241-svg/bounty-pilot`; if that asks for credentials, run
+`git ls-remote https://github.com/dimin4241-svg/bounty-pilot-lab`; if that asks for credentials, run
 `gh auth login` first):
 
 ```text
-/plugin marketplace add dimin4241-svg/bounty-pilot
-/plugin install bounty-pilot@bounty-pilot
+/plugin marketplace add dimin4241-svg/bounty-pilot-lab
+/plugin install bounty-pilot-lab@bounty-pilot-lab
 ```
 
 **By copying the skill** into the agent's skills directory — the most portable route, and the one to
 use when the plugin command cannot reach a private repository:
 
 ```sh
-git clone https://github.com/dimin4241-svg/bounty-pilot.git
+git clone https://github.com/dimin4241-svg/bounty-pilot-lab.git
 mkdir -p ~/.claude/skills
-rm -rf ~/.claude/skills/bounty-pilot
-cp -r bounty-pilot/skills/bounty-pilot ~/.claude/skills/
+rm -rf ~/.claude/skills/bounty-pilot-lab
+cp -r bounty-pilot-lab/skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
 ```
 
 The skill is self-contained (about 2 MB: `SKILL.md`, `references/`, `scripts/`, `templates/`) and
@@ -88,7 +88,7 @@ copy** — it is a build artifact that no reinstall preserves and every session 
 **Without installing anything**, point the agent at the file:
 
 ```text
-Read /absolute/path/to/bounty-pilot/skills/bounty-pilot/SKILL.md
+Read /absolute/path/to/bounty-pilot-lab/skills/bounty-pilot/SKILL.md
 and use it to review my target repository.
 ```
 
@@ -96,7 +96,7 @@ In a cloud or container session the filesystem is discarded when the session end
 has to happen per session: attach this repository to the session alongside the target, or install it
 from a `SessionStart` hook.
 
-Check the install took: `cat ~/.claude/skills/bounty-pilot/VERSION` should match this repository's
+Check the install took: `cat ~/.claude/skills/bounty-pilot-lab/VERSION` should match this repository's
 `VERSION`, and `python3 -m unittest discover -s tests` in the clone should be green.
 
 ### 2. Run it
@@ -325,7 +325,7 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [Report template](skills/bounty-pilot/references/report.md) | English report structure |
 | [PoC templates](skills/bounty-pilot/templates) | Fork, local, invariant and Solana harnesses |
 | [bounty.py](skills/bounty-pilot/scripts/bounty.py) | Run scaffolding, delta, triage, on-chain checks, gates |
-| [agent_dispatch.py](skills/bounty-pilot/scripts/agent_dispatch.py) | Optional isolated CLI agent jobs, saved readings, process accounting and unique-mechanism counts |
+| [agent_dispatch.py](skills/bounty-pilot/scripts/agent_dispatch.py) | Concurrent-safe CLI jobs, failed-attempt isolation, recovery, session checks and bound evidence review |
 | [experimenter.py](skills/bounty-pilot/scripts/experimenter.py) | Incomplete native PoC drafts and safe candidate/control test plans |
 | [evidence_verifier.py](skills/bounty-pilot/scripts/evidence_verifier.py) | Separate source, PoC and impact evidence gate; never promotes findings |
 | [blindspot_engine.py](skills/bounty-pilot/scripts/blindspot_engine.py) | Opt-in legacy, invalidation, branch, patch, live-config, capacity and trust review queues |

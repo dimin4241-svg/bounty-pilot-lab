@@ -4461,18 +4461,32 @@ def _dispatch_state(run):
 
 
 def _check_dispatch(run, errors):
-    """No submission out of a run whose lenses were assembled and never read."""
+    """No completed-audit claim while a bundle or agent dispatch remains unresolved."""
     state = _dispatch_state(run)
-    if not state['present'] or not state['unread']:
-        return
-    names = [entry['lens'] for entry in state['unread']]
-    shown = ', '.join(names[:8])
-    more = '' if len(names) <= 8 else f' and {len(names) - 8} more'
-    errors.append(BUNDLE_MANIFEST + f': {len(names)} bundled lens(es) have no reading recorded: '
-                  + shown + more + '. A bundle nobody read is a pass that did not happen. '
-                  'Dispatch each one to its own agent, or - if the readings exist already - '
-                  'rerun converge --readings over them so the evidence is recorded (a '
-                  'coverage.md row naming the lens, or a record carrying it, counts too)')
+    if state['present'] and state['unread']:
+        names = [entry['lens'] for entry in state['unread']]
+        shown = ', '.join(names[:8])
+        more = '' if len(names) <= 8 else f' and {len(names) - 8} more'
+        errors.append(BUNDLE_MANIFEST + f': {len(names)} bundled lens(es) have no reading recorded: '
+                      + shown + more + '. A bundle nobody read is a pass that did not happen. '
+                      'Dispatch each one to its own agent, or - if the readings exist already - '
+                      'rerun converge --readings over them so the evidence is recorded (a '
+                      'coverage.md row naming the lens, or a record carrying it, counts too)')
+
+    dispatch_file = Path(run) / 'agents' / 'dispatch.json'
+    if dispatch_file.is_file():
+        try:
+            report = load_impact_helper('agent_dispatch').review(run)
+            if report.get('state') != 'complete':
+                errors.append('agents/dispatch.json: agent plan is not complete and independent '
+                              f"(state={report.get('state')!r}, pending={len(report.get('queued', []))}, "
+                              f"running={len(report.get('running', []))}, failed={len(report.get('failed', []))}, "
+                              f"missing-session-ids={len(report.get('independence_unverified_jobs', []))}, "
+                              f"reused-session-ids={len(report.get('independence_conflicts', []))}); "
+                              'finish or recover every job and require unique provider session IDs')
+        except (OSError, ValueError, KeyError, json.JSONDecodeError, TimeoutError) as exc:
+            errors.append('agents/dispatch.json: dispatch completion could not be verified: '
+                          + str(exc)[:240])
 
 
 # --------------------------------------------------------------------------- #

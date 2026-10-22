@@ -1,8 +1,8 @@
 ---
-name: bounty-pilot
+name: bounty-pilot-lab
 description: Run an evidence-driven Web3 bug bounty hunt (Immunefi, Cantina, HackenProof, Sherlock or a project's own program) from a repository URL or local checkout, including mixed on-chain and off-chain projects. Use for choosing a bounty target, program scope and duplicate mapping, checking deployed bytecode against the source, Solidity/EVM, Rust/Solana, Substrate/FRAME, Move, Cairo or CosmWasm bounty hunting, in-scope dApp web frontends and backends (XSS that leads to a malicious signature, DOM sinks, postMessage), post-audit delta review, validating or refuting a bounty candidate, severity and impact-class placement, and preparing a private bounty report. Not for reviewing your own contracts during development (use solidity-auditor) or a pre-audit readiness report (use x-ray).
 ---
-# Bounty Pilot
+# Bounty Pilot Lab
 
 ## What this is
 
@@ -264,12 +264,22 @@ spend cap and a bounded number of explicitly started jobs. One plan is capped at
 bounds job count, not money. Parsed unique-mechanism counts are unvalidated reading text, not
 confirmed findings.
 
+The dispatcher locks every state transaction across processes. It publishes to `readings/` only
+after a parsed zero-exit response; partial or failed output stays under the attempt directory.
+`agent_dispatch.py recover --run <run>` repairs attempts whose local runner process died; retry is
+blocked while a recorded provider child remains alive. `status` uses `independence_unverified` for
+missing provider session IDs, and `check --submission` blocks unless every job is complete with a
+unique reported session ID. Session IDs establish separate recorded CLI sessions, not real-world
+operator identity.
+
 The opt-in P1–P4 data collection tools are documented in `references/blindspot-engine.md` and
 `references/experimenter.md`. `experimenter.py draft` prepares a deliberately failing native-test
 skeleton from an open lead; it does not generate an exploit. `scenario_runner.py` still requires
 explicit `--allow-exec`. `evidence_verifier.py --gate` checks separate
 `SOURCE_CONFIRMED`, `POC_REPRODUCED`, and `IMPACT_VERIFIED` artifacts from a distinct reviewer; it
-never changes `findings.json`. `blindspot_engine.py` consumes git, LCOV, mutation, live-state and
+never changes `findings.json`. Strict evidence review must bind the producer and reviewer to distinct
+completed dispatch jobs and invocation IDs, use their provider-reported session IDs, and match the
+review JSON to the exact saved reviewer output. `blindspot_engine.py` consumes git, LCOV, mutation, live-state and
 capacity artifacts to create review queues; it never runs target code. The live-config subcommand
 queries only when explicitly passed `--query-live`; it is restricted to `eth_chainId`,
 `eth_blockNumber`, and configured `eth_call` reads. All queues remain heuristic until a native test

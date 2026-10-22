@@ -45,6 +45,52 @@ provider-side spend cap, and keep the timeout bounded before starting them. Each
 24 jobs, and each `run` starts exactly one job; this is a count limit, not a monetary cap. The
 result records the replica count and wall time for comparing runs.
 
+## Parallel safety, recovery and independence
+
+All `dispatch.json` read/modify/write transactions use the OS advisory lock at
+`agents/dispatch.lock`, then atomically replace the JSON file. The lock is held only while reserving
+or recording a job, not while a model runs, so four or more `run` processes can progress
+concurrently without overwriting one another's state.
+
+Only a zero-exit, parsed provider response is promoted to `readings/`. A successful response is
+staged under its attempt directory and published after completion is committed. A parsed response
+from a failed or interrupted attempt stays as `draft-reading.md` under that attempt and is never
+registered as `latest_result` or placed in `readings/`.
+
+If the dispatcher process dies, use:
+
+```sh
+python3 <skill-dir>/scripts/agent_dispatch.py recover --run <run>
+python3 <skill-dir>/scripts/agent_dispatch.py retry --run <run> --job-id <job-id>
+```
+
+`recover` marks a local attempt failed only when its recorded runner PID is gone. If the provider
+child is still alive, the job records that orphan PID and refuses a retry until the process exits.
+Attempts from another host remain explicitly unverified and require recovery on that host. Recovery
+never promotes an incomplete result.
+
+`status` reports `independence_unverified` when a completed provider did not report a session ID;
+duplicate IDs are reported as `independence_conflict`. Only `state: complete` means every planned
+job succeeded and every provider reported a unique session ID. `bounty.py check --submission` blocks
+while a dispatch plan is queued, running, failed, session-unverified or conflicting. A provider
+session ID confirms separate recorded CLI sessions, not the real-world identity of the operator.
+
+For a machine-checkable independent evidence review, start the producer first and dispatch a
+separate review job from an independent-blind plan. Pass test-log and impact artifacts as a file
+inside the private run:
+
+```sh
+python3 <skill-dir>/scripts/agent_dispatch.py run --run <run> \\
+  --job-id <review-job> --provider codex --evidence-review \\
+  --producer-job-id <producer-job> --evidence-context <run>/review-evidence.md
+```
+
+The reviewer output must be the JSON review record itself. Its `session_bindings` include the exact
+producer and reviewer `job_id`/`invocation_id`; the verifier reads provider session IDs from the
+dispatch ledger and checks the JSON against the exact saved reviewer output digest. Use that
+`review-output.json` path as `evidence.independent_review_path`. Different names typed into a
+hand-written JSON file no longer satisfy the gate.
+
 The runner uses these documented non-interactive interfaces:
 
 | Provider | Invocation and isolation |
@@ -66,11 +112,11 @@ unsupported CLI version exits as a failed attempt, saves its error output, and r
 
 ## Saved evidence and convergence
 
-- `agents/dispatch.json` is an atomically updated, run-bound ledger of plans, jobs, attempts,
+- `agents/dispatch.json` is a locked, atomically updated, run-bound ledger of plans, jobs, attempts,
   environment-safe CLI fingerprints, outputs, costs and per-agent mechanism counts.
 - `agents/<job-id>/attempt-NN/` holds the read-only bundle copy, complete stdout/stderr and attempt
   metadata. Previous attempts are preserved when a job is retried.
-- `readings/` holds the normalized text outputs that can be passed to `converge`.
+- `readings/` holds only successful normalized discovery outputs that can be passed to `converge`.
 - `status --run <run>` reports queued, running and failed jobs; provider-session reuse conflicts;
   unique mechanisms per job and pass; reported-cost totals; and how many runs reported a cost.
   Mechanism counts are exact parsed-reading deduplications, not source-confirmed or validated bug

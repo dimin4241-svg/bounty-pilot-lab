@@ -31,16 +31,23 @@ twice for the strict evidence review.
 
 ## Independent evidence review
 
-`evidence_verifier.py` consumes an independent review JSON and recomputes the local evidence gate:
+`evidence_verifier.py` consumes reviewer JSON emitted by a separate completed
+`agent_dispatch.py` CLI session and recomputes the local evidence gate. Create a second fresh job in
+an `independent-blind` plan, run the producer first, then start the reviewer with
+`--evidence-review --producer-job-id <producer-job>`. The optional `--evidence-context` must be a
+file inside the private run with the candidate/control logs, impact measurement and scope or
+deployment references the reviewer should inspect. The runner attaches the source bundle, producer
+reading and context to the reviewer workspace and provides both invocation receipts.
 
 ```sh
-python3 <skill-dir>/scripts/evidence_verifier.py --run <run> --finding BP-001 \
-  --review <private>/independent-review.json --out <run>/evidence-review/BP-001.json --gate
+python3 <skill-dir>/scripts/agent_dispatch.py run --run <run> --job-id <reviewer-job> --provider codex --evidence-review --producer-job-id <producer-job> --evidence-context <run>/review-evidence.md
+python3 <skill-dir>/scripts/evidence_verifier.py --run <run> --finding BP-001 --review <run>/agents/<reviewer-job>/attempt-01/review-output.json --out <run>/evidence-review/BP-001.json --gate
 ```
 
 The reviewer record uses `schema: 1` and includes:
 
-- `producer_id`, a distinct `reviewer_id`, and `independent: true`;
+- `producer_id` and `reviewer_id` equal to the distinct bound dispatch job IDs, `independent: true`,
+  and `session_bindings` with exact producer and reviewer `job_id`/`invocation_id` receipts;
 - `source_review` with `decision: confirmed` and exact `{path, line, quote}` source anchors;
 - `reachability` with the same kind of source anchors and `ordered_steps`;
 - `assertions.candidate` and `assertions.negative-control`, each naming a run-local `poc_path`,
@@ -53,7 +60,8 @@ The reviewer record uses `schema: 1` and includes:
 
 The verifier checks the target HEAD against the finding and paired run revisions, affected source
 integrity, exact source and PoC quotes, saved runner logs, two identical passing candidate/control
-pairs, and the separate reviewer metadata. It reports three separate levels:
+pairs, distinct provider-reported session IDs, and reviewer JSON matching the exact output saved for
+that reviewer job. It reports three separate levels:
 `SOURCE_CONFIRMED`, `POC_REPRODUCED`, and `IMPACT_VERIFIED`. It never edits `findings.json` or turns
 the finding into `verified`.
 
@@ -72,8 +80,10 @@ is unconfirmed. Existing runs remain compatible unless this option was selected 
 This is a machine-checkable artifact gate, not a semantic proof. A reviewer still has to determine
 that the test assertion expresses the protocol invariant, that its setup is reachable, that the
 measured loss belongs to a real victim, and that the deployment artifact is authoritative. The
-review record is not cryptographically signed; use a human or a distinct reviewer process and keep
-the review file private.
+review record is not cryptographically signed and cannot establish the real-world identity of the
+operator. The dispatch ledger does establish that the bound producer and reviewer outputs came from
+different recorded CLI invocations with different provider-reported session IDs. Keep the review
+file private.
 
 ## State models and native execution remain separate
 

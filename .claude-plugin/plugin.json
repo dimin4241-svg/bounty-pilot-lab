@@ -1,11 +1,11 @@
 {
-  "name": "bounty-pilot",
+  "name": "bounty-pilot-lab",
   "description": "Evidence-driven Web3 bug bounty workflow for on-chain and mixed off-chain projects: target triage, stack-aware context, deployment verification, bundled hunt passes, next-experiment leads, adversarial triage and reproducible PoCs.",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "author": {
     "name": "dimin4241-svg"
   },
-  "homepage": "https://github.com/dimin4241-svg/bounty-pilot",
+  "homepage": "https://github.com/dimin4241-svg/bounty-pilot-lab",
   "license": "MIT",
   "keywords": [
     "security",

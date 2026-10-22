@@ -50,6 +50,49 @@ class EvidenceVerifierTests(unittest.TestCase):
         self.assertFalse(invalid)
         self.assertIn("not present", reason)
 
+    def test_independent_review_must_match_two_real_dispatch_sessions_and_saved_output(self):
+        run = self.base / "dispatch-run"
+        (run / "agents").mkdir(parents=True)
+        (run / "readings").mkdir()
+        (run / "run.json").write_text(json.dumps({"run_id": "run-1"}), encoding="utf-8")
+
+        def saved_job(job_id, payload, session_id):
+            invocation = job_id + "-invocation"
+            output = run / "readings" / (job_id + ".md")
+            header = ("<!-- BP_AGENT_RESULT v1 job=" + job_id + " attempt=1 invocation="
+                      + invocation + " bundle_sha256=" + "a" * 64 + " -->\n")
+            output.write_text(header + payload, encoding="utf-8")
+            attempt = {"number": 1, "invocation_id": invocation, "provider": "codex",
+                       "provider_session_id": session_id, "status": "completed",
+                       "fresh_process": True, "resume_requested": False}
+            job = {"job_id": job_id, "status": "completed", "attempts": [attempt],
+                   "latest_result": {"invocation_id": invocation,
+                                     "reading_file": str(output),
+                                     "reading_sha256": verifier._digest(output)}}
+            return job, {"job_id": job_id, "invocation_id": invocation}, output
+
+        producer, producer_binding, _ = saved_job("producer-job", "CANDIDATE: verified by source", "sid-1")
+        # The reviewer payload includes the exact invocation receipts supplied by dispatch.
+        reviewer_payload = json.dumps({"schema": 1, "producer_id": "producer-job",
+                                       "reviewer_id": "reviewer-job", "independent": True,
+                                       "session_bindings": {"producer": producer_binding,
+                                                            "reviewer": {"job_id": "reviewer-job",
+                                                                         "invocation_id": "reviewer-job-invocation"}}})
+        reviewer, reviewer_binding, reviewer_path = saved_job("reviewer-job", reviewer_payload, "sid-2")
+        review = json.loads(reviewer_payload)
+        state = {"run_id": "run-1", "jobs": {"producer-job": producer,
+                                                   "reviewer-job": reviewer}}
+        (run / "agents" / "dispatch.json").write_text(json.dumps(state), encoding="utf-8")
+        valid, sessions, errors = verifier._check_dispatch_sessions(run, review, reviewer_payload)
+        self.assertTrue(valid, errors)
+        self.assertEqual({session["provider_session_id"] for session in sessions}, {"sid-1", "sid-2"})
+        self.assertEqual(reviewer_binding["job_id"], review["session_bindings"]["reviewer"]["job_id"])
+
+        reviewer_path.write_text(reviewer_path.read_text(encoding="utf-8") + "tampered", encoding="utf-8")
+        valid, _, errors = verifier._check_dispatch_sessions(run, review, reviewer_payload)
+        self.assertFalse(valid)
+        self.assertTrue(any("digest" in error for error in errors))
+
     def test_machine_result_keeps_three_stages_separate_and_does_not_promote(self):
         repo = self.base / "repo"
         (repo / "src").mkdir(parents=True)
@@ -67,7 +110,7 @@ class EvidenceVerifierTests(unittest.TestCase):
         (run / "findings.json").write_text(json.dumps(rows))
         (run / "candidate.sol").write_text("assert(balancesAfter < balancesBefore);\n")
         (run / "control.sol").write_text("assert(balancesAfter == balancesBefore);\n")
-        review = self.base / "independent-review.json"
+        review = run / "independent-review.json"
         review.write_text(json.dumps({
             "schema": 1, "producer_id": "agent-a", "reviewer_id": "reviewer-b", "independent": True,
             "source_review": {"decision": "confirmed", "anchors": [
