@@ -247,12 +247,33 @@ python3 $S bundle --repo <checkout> --run <run> --lens attack --include <run>/de
 Bundles automatically carry the run's mechanical outputs when they exist — `impact-paths.json`,
 `odd-one-out.json`, the unexamined entry points from `function-coverage.json` — to the lenses that
 use them, with any truncation stated (`passes.md` lists which lens gets what). Credentials in bundled
-source are redacted.
-
 **Assembling a bundle and then reading it yourself is not a pass.** Independent contexts are the
 mechanism: one orchestrator reading eight bundles is one reading. `queue` lists bundles assembled and
 never dispatched as `unread_bundles`, and the submission gate refuses the run. With no agent tool in
 the runtime, read the bundles in separate turns and record the degraded mode in `coverage.md`.
+
+For a local CLI runtime, the optional `scripts/agent_dispatch.py` runner supports fresh isolated
+processes in OpenCode, ZCode, Claude Code and Codex. Keep both research modes available: an
+`independent-blind` plan repeats the same exact bundle in separate workspaces; a `diverse-strategy`
+plan dispatches different lens bundles. They answer different questions and neither replaces the
+other. The runner saves per-attempt output and logs, records provider usage/cost when exposed, and
+counts unique mechanisms; see `references/agent-dispatch.md`. A plan alone makes no provider call.
+Start each model job explicitly. Unknown provider cost remains unknown; this runner enforces a
+Claude Code client-side estimate cap when supplied, while other providers need a provider-side
+spend cap and a bounded number of explicitly started jobs. One plan is capped at 24 jobs; the cap
+bounds job count, not money. Parsed unique-mechanism counts are unvalidated reading text, not
+confirmed findings.
+
+The opt-in P1–P4 data collection tools are documented in `references/blindspot-engine.md` and
+`references/experimenter.md`. `experimenter.py draft` prepares a deliberately failing native-test
+skeleton from an open lead; it does not generate an exploit. `scenario_runner.py` still requires
+explicit `--allow-exec`. `evidence_verifier.py --gate` checks separate
+`SOURCE_CONFIRMED`, `POC_REPRODUCED`, and `IMPACT_VERIFIED` artifacts from a distinct reviewer; it
+never changes `findings.json`. `blindspot_engine.py` consumes git, LCOV, mutation, live-state and
+capacity artifacts to create review queues; it never runs target code. The live-config subcommand
+queries only when explicitly passed `--query-live`; it is restricted to `eth_chainId`,
+`eth_blockNumber`, and configured `eth_call` reads. All queues remain heuristic until a native test
+and source review establish the path.
 
 Every `CANDIDATE` and `LEAD` carries `next_experiment` (`question`, `method`, `expected_evidence`,
 and `blocker` when it cannot run yet). Hunt agents never refute themselves; that is Stage 4.

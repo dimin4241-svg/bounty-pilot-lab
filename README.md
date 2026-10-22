@@ -26,6 +26,8 @@ Its parts each decide whether a hunt finds anything:
 
 - A **funnel** that settles where to look and what counts as evidence — which target is worth the week, which code the last audit never saw, which surfaces are already burned by published known issues, and whether the bytecode on chain is the code you are reading.
 - A **hunt** of more than twenty aimed lenses, chosen by protocol shape and dispatched from assembled bundles over differentiated passes, where generation and refutation are deliberately separate steps: an agent that refutes itself while hunting finds less, and an agent that never refutes itself files reports that triage kills.
+- **Independent CLI dispatch** for OpenCode, ZCode, Claude Code and Codex: an independent blind pass repeats the same bundle in clean contexts, while a diverse strategy pass gives different lenses separate jobs. Results, logs, provider usage/cost, CLI fingerprints and unique mechanisms are saved per attempt; these are distinct modes and stay opt-in.
+- **Optional blind-spot experiments** for legacy code, state invalidation, LCOV branch gaps, mutation survivors, fix propagation, live configuration differences, capacity measurements, trust-boundary inventories and rejected-lead review. They consume local artifacts and generate review queues; they are not default scanners or exploit claims. A separate experiment drafter and evidence verifier preserve `SOURCE_CONFIRMED`, `POC_REPRODUCED` and `IMPACT_VERIFIED` as distinct stages.
 - A **coverage floor computed from the code**: every external entry point from the compiler AST, credited only when a reading names it, plus a mechanical "odd one out" report — the writer missing a guard its siblings carry, the function that updates one of two variables always updated together.
 - A **two-round objection exchange** after the hunt, in which a triage agent is told to reject each finding and must anchor every objection in quoted code, quoted specification, a named test or a live chain read — and the answers must be anchored too. Both sides carry the same burden, because a one-round review rejects almost everything and you never learn which rejection was wrong.
 
@@ -308,6 +310,7 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [Target selection](skills/bounty-pilot/references/targets.md) | What makes a target worth a week, and the program facts file |
 | [Hunt agents](skills/bounty-pilot/references/hunt-agents) | The hunt lenses and their shared stance and output contract |
 | [Pass protocol](skills/bounty-pilot/references/passes.md) | What each pass aims at, dispatch, the known-hypotheses floor, stop rules |
+| [Isolated agent dispatch](skills/bounty-pilot/references/agent-dispatch.md) | Separate blind and diverse-strategy jobs across four agent CLIs, with persisted results and cost coverage |
 | [Reading SOP](skills/bounty-pilot/references/sop.md) | How to read code: plain restatement, obligation tracing, backward reads, escalation |
 | [Adjudication](skills/bounty-pilot/references/adjudicate.md) | The two-round exchange, the five gates, outcomes and promotions |
 | [Triage agent](skills/bounty-pilot/references/triage.md) | The agent paid to reject, and the anchors it must produce |
@@ -322,9 +325,15 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [Report template](skills/bounty-pilot/references/report.md) | English report structure |
 | [PoC templates](skills/bounty-pilot/templates) | Fork, local, invariant and Solana harnesses |
 | [bounty.py](skills/bounty-pilot/scripts/bounty.py) | Run scaffolding, delta, triage, on-chain checks, gates |
+| [agent_dispatch.py](skills/bounty-pilot/scripts/agent_dispatch.py) | Optional isolated CLI agent jobs, saved readings, process accounting and unique-mechanism counts |
+| [experimenter.py](skills/bounty-pilot/scripts/experimenter.py) | Incomplete native PoC drafts and safe candidate/control test plans |
+| [evidence_verifier.py](skills/bounty-pilot/scripts/evidence_verifier.py) | Separate source, PoC and impact evidence gate; never promotes findings |
+| [blindspot_engine.py](skills/bounty-pilot/scripts/blindspot_engine.py) | Opt-in legacy, invalidation, branch, patch, live-config, capacity and trust review queues |
+| [blindspot-engine.md](skills/bounty-pilot/references/blindspot-engine.md) | Inputs, commands and confidence limits for P2–P4 modules |
+| [experimenter.md](skills/bounty-pilot/references/experimenter.md) | Native experiment drafting and independent evidence review |
 | [keccak.py](skills/bounty-pilot/scripts/keccak.py) | Dependency-free Keccak-256, so proxy slots are derived, not pasted |
 | [evm_selectors.py](skills/bounty-pilot/scripts/evm_selectors.py) | The functions a deployed contract accepts, read out of its dispatcher |
-| [Tests](tests) | 748 helper regression and workflow checks |
+| [Tests](tests) | 923 helper regression and workflow checks |
 
 ```sh
 S=skills/bounty-pilot/scripts/bounty.py

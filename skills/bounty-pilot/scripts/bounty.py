@@ -514,7 +514,7 @@ def template():
                 objections=[], concessions=[], rejection_reason='')
 
 
-def initialize(repo, out):
+def initialize(repo, out, strict_evidence_review=False):
     repo, out = Path(repo).resolve(), Path(out).resolve()
     root = Path(git(repo, 'rev-parse', '--show-toplevel').strip()).resolve()
     if out == root or root in out.parents or out == SKILL_ROOT or SKILL_ROOT in out.parents:
@@ -534,6 +534,7 @@ def initialize(repo, out):
         'target_root': str(root), 'project_key': project_for_repo(root),
         'commit': commit, 'dirty': dirty,
         'scope_status': 'unknown', 'deployment_status': 'unknown', 'max_passes': 3,
+        'strict_evidence_review': bool(strict_evidence_review),
         'audited_revision': None,
         'inventory_kind': 'tracked-source-candidates-not-authorized-scope',
         'source_candidates': source})
@@ -5108,6 +5109,26 @@ def _check_verified_evidence(row, prefix, run, errors):
         meta = read_json(meta_path) if meta_path.is_file() else {}
     except (OSError, ValueError):
         meta = {}
+    if isinstance(meta, dict) and meta.get('strict_evidence_review') is True:
+        review_rel = evidence.get('independent_review_path')
+        if not has_text(review_rel) or Path(review_rel).is_absolute() or '..' in Path(review_rel).parts:
+            errors.append(prefix + ': strict evidence review requires evidence.independent_review_path '
+                          'inside the private run')
+        else:
+            review_path = run / review_rel
+            try:
+                resolved_review = review_path.resolve()
+                if (review_path.is_symlink() or run.resolve() not in resolved_review.parents or
+                        not resolved_review.is_file()):
+                    raise ValueError('review path is missing, symlinked, or outside the private run')
+                verifier = load_impact_helper('evidence_verifier')
+                review_result = verifier.verify(run, row.get('id'), resolved_review)
+                if not review_result.get('can_mark_verified'):
+                    errors.append(prefix + ': strict evidence verifier did not confirm all stages: '
+                                  + ', '.join(key for key, value in review_result.get('status', {}).items()
+                                              if value != 'passed'))
+            except (OSError, ValueError, KeyError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+                errors.append(prefix + ': strict evidence review failed: ' + str(exc)[:240])
     commit = meta.get('commit') if isinstance(meta, dict) else None
     ident = row['id'] if isinstance(row['id'], str) else ''
     entry, result = _experiment_entry(run, ident)
@@ -11361,6 +11382,8 @@ def build_parser():
     init = sub.add_parser('init', help='create private run metadata; audits nothing')
     init.add_argument('--repo', required=True)
     init.add_argument('--out', required=True)
+    init.add_argument('--strict-evidence-review', action='store_true',
+                      help='require the independent three-stage evidence verifier before a finding may be verified')
 
     check = sub.add_parser('check', help='record structure and artifact presence')
     check.add_argument('--run', required=True)
@@ -11683,7 +11706,7 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         if args.action == 'init':
-            print(json.dumps(initialize(args.repo, args.out), indent=2))
+            print(json.dumps(initialize(args.repo, args.out, args.strict_evidence_review), indent=2))
             return 0
         if args.action == 'check':
             errors = validate(args.run, submission=args.submission)

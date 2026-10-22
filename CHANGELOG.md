@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.27.0
+
+### Optional blind-spot lab and independent evidence stages
+
+- **`agent_dispatch.py` (new).** Starts fresh isolated OpenCode, ZCode, Claude Code and Codex CLI
+  jobs from checksum-pinned bundles. Independent blind replicas and diverse-strategy passes remain
+  separate. Each plan is capped at 24 jobs; costs the provider does not report remain unknown.
+  Results, scrubbed logs, token/cost metadata and retry attempts are saved to the private run. Tests
+  use fake CLIs; no model calls were made for this release. The OpenCode CLI was not installed in
+  the development environment, so its adapter follows the official documented CLI interface.
+- **`experimenter.py` and `evidence_verifier.py` (new).** Drafts deliberately failing native test
+  skeletons from open findings and binds existing test names to safe argv. The separate verifier
+  keeps `SOURCE_CONFIRMED`, `POC_REPRODUCED` and `IMPACT_VERIFIED` distinct, checks commit/source
+  identity, repeated candidate/control runs, saved logs, exact anchors and a distinct reviewer
+  record, and never edits finding status. `init --strict-evidence-review` opts a run into this gate;
+  existing runs retain their prior behavior.
+- **`blindspot_engine.py` (new).** Adds opt-in source and artifact review queues for stale legacy
+  functions, invalidation-shaped writer/reader edges, instrumented LCOV branch gaps, mutation
+  survivors, patch propagation, collected live config, measured capacity cliffs, cross-component
+  trust inventories and rejected leads. Missing live reads remain `LIVE_STATE_UNVERIFIED`. These
+  are evidence-labelled leads and do not run target code or change finding status. Only
+  `live-config --query-live` queries the explicitly configured read-only methods `eth_chainId`,
+  `eth_blockNumber` and `eth_call`; no transaction method is available.
+- **Blind benchmark accounting.** `bench_compare.py` can compare provider-reported spend, model and
+  budget metadata, plus reviewer-adjudicated unique mechanisms. It stays inconclusive without five
+  matched cases and comparable reported spend. No held-out blind benchmark has yet been run, so this
+  release makes no measured rediscovery or efficiency claim.
+- Added detailed workflows in `references/agent-dispatch.md`,
+  `references/experimenter.md` and `references/blindspot-engine.md`.
+
 ## 0.26.0
 
 ### Hand over a PoC the team can rerun, and write the report like a person

@@ -217,6 +217,25 @@ class BlindBenchmarkTests(unittest.TestCase):
         self.assertEqual(out["high_critical_truth"], 1)
         self.assertFalse(out["payout_prediction"])
 
+    def test_controlled_mode_choice_requires_five_cases_and_reported_cost(self):
+        baseline = [dict(self.scored(False), case=f"case-{index}") for index in range(5)]
+        candidate = [dict(self.scored(True), case=f"case-{index}") for index in range(5)]
+        before = {"model": "same-model", "budget_limit_usd": 5, "actual_cost_usd": 4.5,
+                  "unique_mechanisms": ["a"]}
+        after = {"model": "same-model", "budget_limit_usd": 5, "actual_cost_usd": 4.6,
+                 "unique_mechanisms": ["a", "b"]}
+        out = bench.compare(baseline, candidate, before, after)
+        self.assertEqual(out["efficiency_metadata"]["cost_efficiency"], "measured-provider-reported-cost")
+        self.assertEqual(out["efficiency_metadata"]["mechanism_counts"]["candidate"], 2)
+        self.assertIn("another-held-out-round", out["strategy_recommendation"])
+
+    def test_missing_cost_keeps_strategy_choice_inconclusive(self):
+        out = bench.compare([self.scored(False)], [self.scored(True)],
+                            {"model": "same", "budget_limit_usd": 1},
+                            {"model": "same", "budget_limit_usd": 1})
+        self.assertEqual(out["efficiency_metadata"]["cost_efficiency"], "unknown-provider-cost-not-reported")
+        self.assertIn("inconclusive", out["strategy_recommendation"])
+
     def test_mismatched_truth_or_unscored_refused(self):
         bad = self.scored(True)
         bad["rediscovered"][0]["severity"] = "medium"

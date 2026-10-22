@@ -88,12 +88,20 @@ and truth. Then run:
 ```sh
 python3 <skill-dir>/scripts/bench_compare.py \
   --baseline <private>/baseline-scored.json \
-  --candidate <private>/candidate-scored.json
+  --candidate <private>/candidate-scored.json \
+  --baseline-metadata <private>/baseline-arm.json \
+  --candidate-metadata <private>/candidate-arm.json
 ```
 
 The helper compares critical/high rediscovered counts and rejects mismatched
-ground truth. It does not establish that sealing was genuinely blind or
-measure cost; you must preserve held-out cases and actual model/time budgets.
+ground truth. Optional arm metadata has `model`, `budget_limit_usd`, `actual_cost_usd`,
+`elapsed_seconds`, token counts, `cost_coverage`, and a reviewer-adjudicated `unique_mechanisms`
+array. A missing provider cost stays unknown. The report exposes raw rediscovered counts and a
+strategy recommendation only after at least five matched cases, identical model and budget cap,
+and provider-reported cost totals within 10%; otherwise it says the comparison is inconclusive.
+Even when the candidate gains, it only earns another held-out round and remains opt-in. It does not
+prove the experiment was blind, that unmatched findings are false positives, or that efficiency
+will generalize. Preserve the case seals, decisions, model, prompts and per-arm budgets.
 
 ## The first measurement worth making: three arms
 
