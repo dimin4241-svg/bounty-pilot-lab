@@ -11745,6 +11745,10 @@ def build_parser():
                       help='candidate/control plan for scenario-runner dry-run only')
     avre.add_argument('--baseline', default=None, help='prior JSON report for structural comparison')
     avre.add_argument('--archive-index', default=None, help='local index of saved in-scope archives')
+    avre.add_argument('--runtime-trace', default=None,
+                      help='pinned caller-supplied local trace JSON; imported as unverified graph edges')
+    avre.add_argument('--pilot-run', default=None,
+                      help='existing Bounty Pilot run to receive untriaged AVRE LEAD records')
     return parser
 
 
@@ -11916,7 +11920,8 @@ def main(argv=None):
                 args.repo, args.scope, args.out, selected, args.budget,
                 args.max_sequence_length, args.beam_width, args.resume,
                 args.trust_model, args.measurements, args.known_issues,
-                args.local_plan, args.baseline, args.archive_index)
+                args.local_plan, args.baseline, args.archive_index,
+                args.runtime_trace, args.pilot_run)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         return 2

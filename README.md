@@ -26,7 +26,8 @@
   identity-context checks, historical leads and a hypothesis graph. It requires an explicit
   in-scope local repository and passive methods, makes no network calls and never executes target
   code. JSON, Markdown, Mermaid and a skeptical-review handoff are written to a private output
-  directory. Candidates remain unverified. See
+  directory. Optional local trace import keeps edges unverified, and `--pilot-run` transfers
+  candidates only as untriaged hypotheses. Candidates remain unverified. See
   [AVRE architecture, options and limits](skills/bounty-pilot/references/avre.md).
 
 ## What changed in 0.29

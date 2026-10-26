@@ -190,7 +190,10 @@ For sequence-dependent or cross-component leads, AVRE is an additional opt-in lo
 `references/avre.md` before running it. It reuses the state graph, ecosystem inventory, trust review,
 and scenario runner; its budget is a bounded candidate/sequence count, not an LLM token allowance.
 AVRE does not execute target tests, query live services, or independently review its candidates.
-Use the separate dispatch and evidence-verifier workflow for reviewer-bound adjudication.
+An optional `--runtime-trace` imports exact-revision, source-anchored local observations as
+unverified graph edges; it does not authenticate trace execution. An optional `--pilot-run` imports
+leads into the existing run as untriaged hypotheses. Use the separate dispatch and
+evidence-verifier workflow for reviewer-bound adjudication.
 
 ```sh
 python3 $S delta --repo <checkout> --since <audited-commit> > <run>/delta.json

@@ -34,6 +34,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import avre_economics
+import avre_runtime
 import avre_sequence
 
 SCHEMA_VERSION = 1
@@ -138,6 +139,23 @@ def _write_json(path, value):
             os.chmod(tmp_name, 0o600)
             json.dump(value, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+        os.chmod(path, 0o600)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+
+
+def _write_private_text(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp_name = tempfile.mkstemp(prefix="." + path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.chmod(tmp_name, 0o600)
+            handle.write(value)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_name, path)
@@ -493,6 +511,79 @@ def _attack_graph(state_graph, ecosystem_report, hypotheses, sequences):
             "notice": "Graph edges are evidence-carrying but lexical or investigator-supplied. No chain is a finding."}
 
 
+def _pilot_leads_markdown(hypotheses):
+    """Render candidates in Pilot's existing LEAD format; importer keeps them untriaged."""
+    lines = ["# AVRE candidate handoff", "",
+             "These are unverified research leads. No confidence, severity, evidence, or impact is asserted.", ""]
+    def clean(value, limit=1000):
+        return re.sub(r"[\r\n|]+", " ", str(value or "")).strip()[:limit]
+    for row in hypotheses:
+        paths = row.get("affected_paths") if isinstance(row.get("affected_paths"), list) else []
+        surface = next((value for value in paths if isinstance(value, str) and value.strip()), "")
+        if not surface or Path(surface.split(":", 1)[0]).is_absolute() or ".." in Path(surface.split(":", 1)[0]).parts:
+            continue
+        module = re.sub(r"[^a-z0-9-]+", "-", str(row.get("module", "research")).lower()).strip("-")
+        bug_class = re.sub(r"[^a-z0-9-]+", "-", str(row.get("bug_class", "candidate")).lower()).strip("-")
+        label = "avre-" + (module or "research") + "-" + (bug_class or "candidate")
+        title = clean(row.get("title", "AVRE candidate"), 200)
+        description = "AVRE hypothesis " + str(row.get("id", "unknown")) + "; classification=" + \
+            str(row.get("classification", "NEEDS_EVIDENCE")) + "; no vulnerability is established. " + \
+            "Root-cause lead: " + str(row.get("root_cause", "not supplied")) + " Invariant: " + \
+            str(row.get("invariant", "not supplied")) + " Possible impact: " + \
+            str(row.get("possible_impact", "not established")) + " Assumptions: " + \
+            "; ".join(str(item) for item in row.get("assumptions", []))
+        description = clean(description, 1200)
+        lines.extend(["LEAD | surface: " + surface + " | bug_class: " + label,
+                      "title: " + title, "description: " + description,
+                      "capability: " + clean(row.get("attacker_capabilities", "not established"), 500),
+                      "question: Can a low-privilege actor reach this state transition on the exact target revision?",
+                      "method: Review source anchors and reproduce only in a permitted isolated local test environment.",
+                      "expected_evidence: A candidate/control test, exact source anchors, and independently verified impact.", ""])
+    return "\n".join(lines) + "\n"
+
+
+def _import_into_pilot(run_path, root, output, hypotheses):
+    """Use Bounty Pilot's idempotent importer and preserve its untriaged-hypothesis status."""
+    run = Path(run_path).expanduser()
+    if run.is_symlink() or not run.is_dir():
+        raise ValueError("--pilot-run must name an existing Bounty Pilot run directory")
+    run = run.resolve()
+    if run == root or root in run.parents or run in root.parents:
+        raise ValueError("--pilot-run must be a separate directory from the target checkout")
+    meta_path = run / "run.json"
+    meta = _json(meta_path)
+    if not isinstance(meta.get("target_root"), str) or Path(meta["target_root"]).resolve() != root:
+        raise ValueError("--pilot-run belongs to a different target checkout")
+    importer = _load("bounty")
+    importer.require_private_output(run, root, what="--pilot-run")
+    findings_path = run / "findings.json"
+    if findings_path.is_symlink() or not findings_path.is_file():
+        raise ValueError("--pilot-run findings.json must be a regular, non-symlink file")
+    if not isinstance(_json(findings_path), list):
+        raise ValueError("--pilot-run findings.json must contain an array")
+    sources = []
+    for index, offset in enumerate(range(0, max(1, len(hypotheses)), 100), 1):
+        leads = output / ("avre-leads.md" if index == 1 else "avre-leads-%03d.md" % index)
+        _write_private_text(leads, _pilot_leads_markdown(hypotheses[offset:offset + 100]))
+        sources.append(leads)
+    result = importer.import_findings(run, sources, repo=root, source="bounty-pilot")
+    return {"artifacts": [path.name for path in sources], "imported": result["imported"],
+            "skipped_duplicate": result["skipped_duplicate"],
+            "record_ids": [row["id"] for row in result["records"]],
+            "triage_status": "untriaged", "notice": result["notice"]}
+
+
+def _append_runtime_graph(graph, runtime_trace):
+    if not runtime_trace:
+        return graph
+    graph = dict(graph)
+    graph["nodes"] = list(graph.get("nodes", [])) + list(runtime_trace["nodes"])
+    graph["edges"] = list(graph.get("edges", [])) + list(runtime_trace["edges"])
+    graph["notice"] = (str(graph.get("notice", "")) + " Runtime observations are caller-supplied, "
+                       "pinned to source anchors, and still unverified until a reviewer validates the artifact.")
+    return graph
+
+
 def _mermaid(graph):
     aliases = {node["id"]: "n" + hashlib.sha256(node["id"].encode()).hexdigest()[:16]
                for node in graph["nodes"]}
@@ -549,6 +640,21 @@ def _markdown(report):
                   "- Historical public services and on-chain state are not fetched. Local-only archives and explicit trust models are optional inputs.",
                   "- No historical benchmark corpus was supplied; effectiveness and uplift are unmeasured.",
                   "- Review queue is a handoff packet; it is not an independent review or verdict."])
+    trace = report.get("runtime_trace")
+    if isinstance(trace, dict):
+        lines.extend(["", "## Imported runtime observations", "",
+                      "- Status: `%s`; environment: `%s`; actions: %s; source commit: `%s`." %
+                      (trace.get("status"), trace.get("provenance", {}).get("environment"),
+                       trace.get("provenance", {}).get("actions"),
+                       trace.get("provenance", {}).get("source_revision")),
+                      "- Artifact SHA-256: `%s`; observations remain unverified." %
+                      trace.get("provenance", {}).get("artifact_sha256"),
+                      "- " + trace.get("notice", "Trace producer and execution are not attested."), ""])
+    imported = report.get("pilot_import")
+    if isinstance(imported, dict):
+        lines.extend(["", "## Pilot handoff", "",
+                      "- Imported %s lead(s) into the named run as untriaged hypotheses; duplicates: %s." %
+                      (imported.get("imported", 0), imported.get("skipped_duplicate", 0)), ""])
     return "\n".join(lines) + "\n"
 
 
@@ -615,7 +721,7 @@ def _safe_plan(repo, plan_path, runner):
 def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length=5,
             beam_width=16, resume=False, trust_model_path=None, measurements_path=None,
             known_issues_path=None, local_plan_path=None, baseline_path=None,
-            archive_index_path=None):
+            archive_index_path=None, runtime_trace_path=None, pilot_run_path=None):
     wall_started, cpu_started = time.perf_counter(), time.process_time()
     root = Path(repo).expanduser().resolve()
     if not root.is_dir():
@@ -647,17 +753,22 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
         raise ValueError("--max-sequence-length must be between 2 and 8")
     if type(beam_width) is not int or not 1 <= beam_width <= 100:
         raise ValueError("--beam-width must be between 1 and 100")
+    if runtime_trace_path and "attack-graph" not in selected:
+        raise ValueError("--runtime-trace requires the attack-graph module")
     options = {"modules": selected, "budget": budget,
                "max_sequence_length": max_sequence_length, "beam_width": beam_width}
     extras = {"trust_model": trust_model_path, "measurements": measurements_path,
               "known_issues": known_issues_path, "local_plan": local_plan_path,
-              "baseline": baseline_path, "archive_index": archive_index_path}
+              "baseline": baseline_path, "archive_index": archive_index_path,
+              "runtime_trace": runtime_trace_path}
     extras = {key: _local_input(path, "--" + key.replace("_", "-")) if path else None
               for key, path in extras.items()}
     trust_model_path, measurements_path = extras["trust_model"], extras["measurements"]
     known_issues_path, local_plan_path = extras["known_issues"], extras["local_plan"]
     baseline_path, archive_index_path = extras["baseline"], extras["archive_index"]
     fingerprint, safe_file_rows, file_stats = _input_fingerprint(root, scope_file, options, extras)
+    runtime_trace = (avre_runtime.load_trace(runtime_trace_path, root, _head(root))
+                     if runtime_trace_path else None)
     output, lock_fd = _prepare_out(root, out, resume)
     try:
         checkpoint_path = output / "checkpoint.json"
@@ -797,6 +908,7 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
             sequences = results.get("sequence-mutation") or {"sequences": []}
             results["attack-graph"] = _attack_graph(state_graph or {"symbols": [], "edges": []},
                                                       eco_report or {}, ranked, sequences)
+            results["attack-graph"] = _append_runtime_graph(results["attack-graph"], runtime_trace)
         if "hypothesis-ranking" in selected:
             _write_json(checkpoint_path, {"schema_version": 1, "fingerprint": fingerprint,
                                           "completed_modules": sorted(set(selected) | {"hypothesis-ranking"}),
@@ -846,6 +958,8 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                           "avre_candidate_count": len(current_keys),
                           "overlap_count": len(baseline_keys & current_keys),
                           "notice": "Structural overlap only; no true/false-positive labels or efficiency uplift are inferred."}
+        pilot_import = (_import_into_pilot(pilot_run_path, root, output, _sanitize(ranked, eco))
+                        if pilot_run_path else None)
         results = _sanitize(results, eco)
         ranked = results["hypothesis-ranking"]["hypotheses"]
         graph = results.get("attack-graph") or {"schema_version": 1, "nodes": [], "edges": [],
@@ -878,7 +992,11 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                         "dimensions": ["scope_confidence", "attacker_control", "reachability",
                                       "evidence_strength", "financial_impact", "novelty",
                                       "duplicate_risk", "verification_cost", "assumption_burden"]},
-            "attack_graph": graph, "benchmark_comparison": comparison,
+            "attack_graph": graph,
+            "runtime_trace": (_sanitize({key: value for key, value in runtime_trace.items()
+                                          if key not in ("nodes", "edges")}, eco)
+                              if runtime_trace else None),
+            "pilot_import": pilot_import, "benchmark_comparison": comparison,
             "review": {"status": "NOT_INDEPENDENTLY_REVIEWED",
                        "integration": "Use existing Bounty Pilot dispatch + evidence_verifier for a bound independent review; AVRE never self-confirms.",
                        "queue_artifact": "skeptical-review-queue.json"},
@@ -888,18 +1006,19 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
         }
         _write_json(output / "avre-report.json", report)
         _write_json(output / "skeptical-review-queue.json", _sanitize(review_queue, eco))
-        (output / "avre-report.md").write_text(_markdown(report), encoding="utf-8")
-        os.chmod(output / "avre-report.md", 0o600)
-        (output / "attack-graph.mmd").write_text(_mermaid(graph), encoding="utf-8")
-        os.chmod(output / "attack-graph.mmd", 0o600)
+        _write_private_text(output / "avre-report.md", _markdown(report))
+        _write_private_text(output / "attack-graph.mmd", _mermaid(graph))
         audit("analysis_completed", hypotheses=len(ranked), chains=len(graph.get("candidate_chains", [])),
               network_requests=0, target_execution=False,
+              runtime_trace_sha256=(runtime_trace or {}).get("provenance", {}).get("artifact_sha256"),
+              pilot_imported=pilot_import["imported"] if pilot_import else 0,
               wall_seconds=round(time.perf_counter() - wall_started, 4),
               process_cpu_seconds=round(time.process_time() - cpu_started, 4))
         return {"status": "completed", "report": str(output / "avre-report.json"),
                 "markdown": str(output / "avre-report.md"), "graph": str(output / "attack-graph.mmd"),
                 "audit": str(output / "audit.jsonl"), "commit": report["analysis"]["head_commit"],
                 "modules": selected, "hypotheses": len(ranked), "network_requests": 0,
+                "pilot_imported": pilot_import["imported"] if pilot_import else 0,
                 "target_execution": False}
     finally:
         try:
@@ -931,13 +1050,16 @@ def main(argv=None):
     parser.add_argument("--local-plan", help="local candidate/control plan to validate in scenario-runner dry-run")
     parser.add_argument("--baseline", help="prior Pilot/AVRE JSON report for structural overlap comparison")
     parser.add_argument("--archive-index", help="local index of previously saved in-scope archives")
+    parser.add_argument("--runtime-trace", help="pinned caller-supplied local trace JSON; imported as unverified graph edges")
+    parser.add_argument("--pilot-run", help="existing Bounty Pilot run to receive untriaged AVRE LEAD records")
     args = parser.parse_args(argv)
     modules = [name.strip() for name in args.modules.split(",") if name.strip()]
     try:
         result = analyze(args.repo, args.scope, args.out, modules, args.budget,
                          args.max_sequence_length, args.beam_width, args.resume,
                          args.trust_model, args.measurements, args.known_issues,
-                         args.local_plan, args.baseline, args.archive_index)
+                         args.local_plan, args.baseline, args.archive_index,
+                         args.runtime_trace, args.pilot_run)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError,

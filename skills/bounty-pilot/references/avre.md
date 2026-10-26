@@ -47,6 +47,19 @@ local Git metadata and explicitly supplied local artifacts. It makes zero networ
 validate credentials, does not contact `UNKNOWN` or out-of-scope entities and cannot submit
 transactions. Execution is sequential, with at most one AVRE process per output directory.
 
+To pass generated leads into an existing Pilot run without promoting them, add `--pilot-run`:
+
+```sh
+python3 skills/bounty-pilot/scripts/bounty.py avre \
+  --repo /path/to/in-scope/checkout --scope /path/to/private/scope.json \
+  --out /path/to/private/avre-run --pilot-run /path/to/private/pilot-run
+```
+
+The run must belong to the same checkout. AVRE writes `avre-leads.md` and uses the existing
+`import-findings` parser; imported rows remain `hypothesis`, `severity: unassessed`, and
+`origin.triage: untriaged`. Import is idempotent. Continue with the normal Pilot queue and reviewer
+workflow. This does not create producer/reviewer session receipts or satisfy `evidence_verifier`.
+
 `--modules` selects any nonempty set of:
 
 - `impossible-state`: pairs lexical state writers/readers with invariant prompts.
@@ -75,6 +88,15 @@ Other optional local inputs:
   public advisories.
 - `--archive-index FILE` passes a previously saved, scope-classified archive index to Ecosystem
   Intelligence. Archive contents are not fetched.
+- `--runtime-trace FILE` imports a local trace into `attack-graph`. Its JSON must use
+  `schema_version: 1`, `environment: "anvil-local"` or `"mock-local"`, the exact full
+  `source_revision`, `execution_id`, `seed`, `tool_versions`, and ordered `actions`. Anvil traces
+  also require `chain_id` and `block_number`; mock traces must set both to `null`. Each action names
+  `caller`, `callee`, `effect`, `outcome`, and exact `caller_anchor` / `callee_anchor` objects with
+  repository-relative `path`, `line`, and `quote`. The importer checks the revision and source
+  anchors and records the artifact SHA-256. It does not authenticate the producer or prove the
+  named command actually ran; edges are labeled `unverified_artifact`. Do not use hand-authored
+  traces as proof.
 - `--local-plan FILE` validates a candidate/control plan through `scenario_runner` in dry-run mode.
   No command in the plan is launched.
 - `--baseline REPORT.json` compares candidate keys, counts and overlap only. It does not calculate
@@ -118,8 +140,9 @@ classification into a confirmed finding field.
 - The impossible-state, identity and failure modules are heuristic plan generators, not symbolic
   execution or native test generators. Cross-component reachability requires a human-authored flow
   model.
-- The attack graph lacks verified runtime call edges, deployment identities, role/asset edges and
-  causal composition. No chain is treated as a finding.
+- Runtime trace import can add source-anchored, caller-supplied edges, but cannot attest to their
+  producer or execution; deployment identities, role/asset edges and causal composition remain
+  incomplete. No chain is treated as a finding.
 - Safe POC execution is not implemented in AVRE. Use native, isolated project tests through the
   existing experiment/evidence workflow; public targets and live funds are never used here.
 - No broad positive/negative corpus of historical fixed defects was supplied. AVRE has synthetic
@@ -129,3 +152,5 @@ classification into a confirmed finding field.
 - Git history and archive indexes must already be local. No remote PR, advisory, public archive,
   chain, role or allowance query is performed.
 - Independent reviewer verdicts and target-impact proof remain distinct external pipeline stages.
+  `--pilot-run` only hands candidates to Pilot as untriaged hypotheses; it does not run a reviewer
+  or the evidence verifier.

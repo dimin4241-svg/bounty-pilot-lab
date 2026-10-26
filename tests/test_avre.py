@@ -255,6 +255,87 @@ class AVRETests(unittest.TestCase):
         self.assertEqual(json.loads(cli.stdout)["network_requests"], 0)
         self.assertTrue((cli_out / "avre-report.json").is_file())
 
+    def test_local_runtime_trace_is_pinned_anchored_and_remains_unverified(self):
+        head = avre._head(self.repo)
+        trace = self.root / "local-trace.json"
+        trace.write_text(json.dumps({
+            "schema_version": 1, "environment": "anvil-local", "source_revision": head,
+            "execution_id": "fixture-run-001", "chain_id": 31337, "block_number": 7,
+            "tool_versions": {"anvil": "fixture"}, "seed": "fixture-seed",
+            "actions": [{"step": 1, "caller": "Pool.deposit", "callee": "Pool.withdraw",
+                         "effect": "call", "outcome": "success",
+                         "caller_anchor": {"path": "src/Pool.sol", "line": 10,
+                                            "quote": "function deposit(uint256 amount) external"},
+                         "callee_anchor": {"path": "src/Pool.sol", "line": 15,
+                                            "quote": "function withdraw(uint256 amount) external"}}]}))
+        parsed = avre.avre_runtime.load_trace(trace, self.repo.resolve(), head)
+        self.assertEqual(parsed["status"], "IMPORTED_UNVERIFIED")
+        self.assertEqual(parsed["provenance"]["actions"], 1)
+        self.assertEqual(parsed["edges"][0]["confidence"], "unverified_artifact")
+
+        output = self.root / "runtime-out"
+        result = avre.analyze(self.repo, self.scope_path, output,
+                              modules=["sequence-mutation", "attack-graph"], budget=5,
+                              runtime_trace_path=trace)
+        report = json.loads(Path(result["report"]).read_text())
+        self.assertEqual(report["runtime_trace"]["status"], "IMPORTED_UNVERIFIED")
+        self.assertTrue(any(edge["kind"] == "reported_runtime_edge"
+                            for edge in report["attack_graph"]["edges"]))
+        self.assertIn("did not execute the target", report["runtime_trace"]["notice"])
+
+        cli_out = self.root / "runtime-cli-out"
+        cli = subprocess.run([
+            "python3", str(SCRIPTS / "bounty.py"), "avre", "--repo", str(self.repo),
+            "--scope", str(self.scope_path), "--out", str(cli_out),
+            "--modules", "sequence-mutation,attack-graph", "--budget", "5",
+            "--runtime-trace", str(trace),
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        self.assertEqual(json.loads(cli.stdout)["network_requests"], 0)
+        cli_report = json.loads((cli_out / "avre-report.json").read_text())
+        self.assertEqual(cli_report["runtime_trace"]["status"], "IMPORTED_UNVERIFIED")
+
+        wrong_revision = json.loads(trace.read_text())
+        wrong_revision["source_revision"] = "0" * 40
+        trace.write_text(json.dumps(wrong_revision))
+        with self.assertRaisesRegex(ValueError, "does not match the current checkout"):
+            avre.avre_runtime.load_trace(trace, self.repo.resolve(), head)
+
+    def test_avre_leads_enter_existing_pilot_as_untriaged_hypotheses(self):
+        pilot = avre._load("bounty")
+        run = self.root / "pilot-run"
+        pilot.initialize(self.repo, run)
+        output = self.root / "pilot-avre"
+        result = avre.analyze(self.repo, self.scope_path, output,
+                              modules=["identity-context"], budget=20,
+                              pilot_run_path=run)
+        self.assertGreater(result["pilot_imported"], 0)
+        rows = pilot.read_json(run / "findings.json")
+        self.assertTrue(rows)
+        self.assertTrue(all(row["status"] == "hypothesis" and
+                            row["severity"] == "unassessed" and
+                            row["origin"]["triage"] == "untriaged" for row in rows))
+        report = json.loads(Path(result["report"]).read_text())
+        self.assertEqual(report["pilot_import"]["triage_status"], "untriaged")
+        self.assertTrue((output / "avre-leads.md").is_file())
+
+        repeated_cli = subprocess.run([
+            "python3", str(SCRIPTS / "bounty.py"), "avre", "--repo", str(self.repo),
+            "--scope", str(self.scope_path), "--out", str(self.root / "pilot-avre-repeat"),
+            "--modules", "identity-context", "--budget", "20", "--pilot-run", str(run),
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        repeated = json.loads(repeated_cli.stdout)
+        self.assertEqual(repeated["pilot_imported"], 0)
+
+    def test_private_text_artifacts_replace_symlinks_without_following_them(self):
+        victim = self.root / "outside.txt"
+        victim.write_text("leave unchanged")
+        artifact = self.root / "artifact.md"
+        artifact.symlink_to(victim)
+        avre._write_private_text(artifact, "AVRE output")
+        self.assertFalse(artifact.is_symlink())
+        self.assertEqual(artifact.read_text(), "AVRE output")
+        self.assertEqual(victim.read_text(), "leave unchanged")
+
     def test_output_lock_is_exclusive_and_released_without_deleting_its_inode(self):
         out = self.root / "lock-test"
         path, fd = avre._prepare_out(self.repo.resolve(), out, False)
