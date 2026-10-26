@@ -1,0 +1,3 @@
+service: https://relay.example.org/v1
+component: relayer
+retry_policy: bounded

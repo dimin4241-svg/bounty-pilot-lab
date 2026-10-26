@@ -179,6 +179,19 @@ projects map contracts, relayers, keepers, APIs, signers and recovery jobs as on
 `model.md`: state transitions, external assumptions, operational dependencies and invariants with
 the source that evidences each (label inferred ones as inferred).
 
+Optional, before or alongside the source model, run the isolated passive ecosystem inventory in
+`references/ecosystem-intelligence.md`. It requires an explicit scope file and writes separate JSON,
+Markdown, Mermaid, and audit-log artifacts. It reads local tracked files and Git history only;
+already-saved public archives can be imported from disk. It makes no network request and emits
+hypotheses only. Its lexical graph supplements the source model and never replaces `bundle`,
+`impact-plan`, deployment verification, or adjudication.
+
+For sequence-dependent or cross-component leads, AVRE is an additional opt-in local pipeline. Read
+`references/avre.md` before running it. It reuses the state graph, ecosystem inventory, trust review,
+and scenario runner; its budget is a bounded candidate/sequence count, not an LLM token allowance.
+AVRE does not execute target tests, query live services, or independently review its candidates.
+Use the separate dispatch and evidence-verifier workflow for reviewer-bound adjudication.
+
 ```sh
 python3 $S delta --repo <checkout> --since <audited-commit> > <run>/delta.json
 python3 <skill-dir>/scripts/stack_route.py --repo <checkout> --out <run>/stack-route.json

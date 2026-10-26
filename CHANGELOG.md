@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.30.0
+
+### Advanced Vulnerability Research Engine MVP
+
+- Added the opt-in `bounty.py avre` workflow with explicit repository scope, passive-method
+  enforcement, bounded candidate budgets, sequential module activation, a local-input fingerprint,
+  resumable checkpoints and an OS-released output lock. It writes private JSON/Markdown/Mermaid
+  outputs, an audit log and a skeptical-review handoff packet. No target code or network is run.
+- Added dependency-aware beam sequence planning and a replay-predicate sequence shrinker; exact
+  integer candidate/control economics comparison bound to the analyzed commit; impossible-state,
+  failure/recovery, cross-reality, identity/context and historical patch leads; attack graph and
+  separate heuristic ranking dimensions. These are research leads and test plans, not findings.
+- Reused `state_graph.py`, `ecosystem_intelligence.py`, `blindspot_engine.py` and
+  `scenario_runner.py`. Independent review remains a separate dispatch/evidence-verifier stage.
+  Resource output records local wall/CPU time, source counts and zero model/network calls.
+- Added synthetic positive/negative fixtures and AVRE integration/unit tests. No historical
+  held-out benchmark corpus was supplied, so recall, false-positive rate and uplift remain
+  unmeasured. AVRE does not fetch remote history, inspect live chain roles, execute native tests,
+  or produce an independent reviewer verdict.
+
+## 0.29.0
+
+### Passive Ecosystem Intelligence MVP
+
+- Added the isolated `ecosystem_intelligence.py` module and `ecosystem-intel` CLI command. The
+  explicit scope file classifies repositories, domains, URLs, contracts, networks, and check
+  methods. Active methods are rejected; the analysis itself performs zero network requests.
+- Inventories tracked manifests, source, deployment configuration, endpoint references, component
+  boundaries, local Git history/tags, migration paths, and security-shaped patch-token changes.
+  Locally supplied public archive snapshots are accepted only when their URLs classify in scope.
+- Emits JSON provenance, Markdown report, Mermaid dependency/data-flow candidates, and a
+  timestamped redacted audit log. Ranked records include prerequisites, attacker control,
+  invariant, possible impact, reachable-path status, supporting and disconfirming evidence, and
+  separate heuristic dimensions. Historical patch-token changes are compared with current lexical
+  function chunks as low-confidence patch-variant candidates.
+- Each hypothesis receives an unexecuted local verification plan and a skeptical-review checklist.
+  These are not tests, an independent reviewer, exploit proof, or a verdict. Added synthetic
+  fixtures and regression tests. Remote PR/advisory/archive retrieval and a measured benchmark are
+  not implemented.
+
 ## 0.28.0
 
 ### Make parallel dispatch recoverable and evidence reviews session-bound

@@ -18,6 +18,26 @@
 
 ---
 
+## What changed in 0.30
+
+- **Opt-in Advanced Vulnerability Research Engine (AVRE).** `bounty.py avre` combines the existing
+  lexical state graph, passive Ecosystem Intelligence, blind-spot trust review and dry-run scenario
+  planner with bounded sequence mutations, economic differential plans, failure/recovery leads,
+  identity-context checks, historical leads and a hypothesis graph. It requires an explicit
+  in-scope local repository and passive methods, makes no network calls and never executes target
+  code. JSON, Markdown, Mermaid and a skeptical-review handoff are written to a private output
+  directory. Candidates remain unverified. See
+  [AVRE architecture, options and limits](skills/bounty-pilot/references/avre.md).
+
+## What changed in 0.29
+
+- **Optional passive Ecosystem Intelligence.** The separate `ecosystem-intel` command classifies
+  repository, domain, URL, contract, network, and method scope; inventories integrations and local
+  Git history; draws low-confidence component boundaries; and ranks evidence-backed hypotheses.
+  It reads tracked local files and imported archive snapshots only. It makes zero network requests,
+  never validates credentials, and never calls a hypothesis a finding. See
+  [the scope format and limitations](skills/bounty-pilot/references/ecosystem-intelligence.md).
+
 ## What is Bounty Pilot?
 
 Bounty Pilot gives a coding agent a repeatable workflow for **Solidity/EVM audits, Rust/Solana review, local proof-of-concept validation, and bug bounty report preparation**. It keeps technical validity, severity, program eligibility, and known-issue checks separate.
@@ -128,6 +148,7 @@ A bounty program URL is useful, but optional for starting source review. Without
 | **Live-constant checks** | Reads a hardcoded index, address, decimal or feed id against live chain state, because a constant is a claim about the outside world |
 | **Twenty-plus aimed lenses** | Hunts time, lineage, observability, aggregates, parameter authorization, persistence, live truth and the Solana account model |
 | **Separated generation and refutation** | Hunt passes state claims at full strength; a later pass attacks each one against five triage gates plus a separate evidence check |
+| **Passive ecosystem intelligence** | Explicit scope classification, local dependency/history inventory, low-confidence cross-component graph, and ranked hypotheses; zero network requests |
 | **Evidence requirements** | Verified findings need a reproducible PoC, negative control, impact numbers and source-integrity evidence; every open lead needs a decisive next experiment |
 | **Submission gate** | Checks deployment, scope, severity, novelty, impact, objections and a fresh personal-history comparison before a report is ready |
 | **Resumable findings** | Preserves hypotheses and rejection reasons; reopens a candidate when the protection that refuted it is edited |
@@ -311,6 +332,8 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [Hunt agents](skills/bounty-pilot/references/hunt-agents) | The hunt lenses and their shared stance and output contract |
 | [Pass protocol](skills/bounty-pilot/references/passes.md) | What each pass aims at, dispatch, the known-hypotheses floor, stop rules |
 | [Isolated agent dispatch](skills/bounty-pilot/references/agent-dispatch.md) | Separate blind and diverse-strategy jobs across four agent CLIs, with persisted results and cost coverage |
+| [Ecosystem Intelligence](skills/bounty-pilot/references/ecosystem-intelligence.md) | Passive scope file, provenance outputs, and analysis limits |
+| [Advanced Vulnerability Research Engine](skills/bounty-pilot/references/avre.md) | Bounded sequence/economic research, safe scope, artifacts, checkpoints, and limits |
 | [Reading SOP](skills/bounty-pilot/references/sop.md) | How to read code: plain restatement, obligation tracing, backward reads, escalation |
 | [Adjudication](skills/bounty-pilot/references/adjudicate.md) | The two-round exchange, the five gates, outcomes and promotions |
 | [Triage agent](skills/bounty-pilot/references/triage.md) | The agent paid to reject, and the anchors it must produce |
