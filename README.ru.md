@@ -6,6 +6,14 @@
 
 ---
 
+## Что нового в 0.31
+
+- **У Lab единый идентификатор для Codex и Claude Code.** Имена marketplace и plugin Claude Code
+  теперь совпадают с уникальным именем `bounty-pilot-lab`, поэтому команда установки разрешается
+  правильно. Добавлена установка навыка в пользовательские каталоги Codex
+  `~/.codex/skills/bounty-pilot-lab` и Claude Code `~/.claude/skills/bounty-pilot-lab`. Оригинальный
+  навык `bounty-pilot` остаётся отдельно.
+
 ## Что нового в 0.30
 
 - **Опциональный Advanced Vulnerability Research Engine (AVRE).** `bounty.py avre` связывает
@@ -80,14 +88,16 @@ Rust-релея при проверке только Solidity). Это конт�
 /plugin install bounty-pilot-lab@bounty-pilot-lab
 ```
 
-**Копированием каталога навыка** — самый переносимый способ и единственный, если команда плагина не
-достаёт до приватного репозитория:
+**Копированием навыка** в пользовательский каталог — используй этот способ, если команда плагина не
+достаёт до приватного репозитория, или чтобы установить одинаковый навык для Codex и Claude Code:
 
 ```sh
 git clone https://github.com/dimin4241-svg/bounty-pilot-lab.git
-mkdir -p ~/.claude/skills
-rm -rf ~/.claude/skills/bounty-pilot-lab
-cp -r bounty-pilot-lab/skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
+cd bounty-pilot-lab
+mkdir -p ~/.codex/skills ~/.claude/skills
+rm -rf ~/.codex/skills/bounty-pilot-lab ~/.claude/skills/bounty-pilot-lab
+cp -R skills/bounty-pilot ~/.codex/skills/bounty-pilot-lab
+cp -R skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
 ```
 
 Навык самодостаточен (около 2 МБ: `SKILL.md`, `references/`, `scripts/`, `templates/`) и требует
@@ -105,8 +115,11 @@ cp -r bounty-pilot-lab/skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
 придётся делать каждый раз: подключи этот репозиторий к сессии рядом с целевым или ставь навык из
 хука `SessionStart`.
 
-Проверка, что установка прошла: `cat ~/.claude/skills/bounty-pilot-lab/VERSION` должен совпадать с
-`VERSION` в репозитории, а `python3 -m unittest discover -s tests` в клоне — быть зелёным.
+Для обновления выполни `git pull --ff-only origin main` в клоне и повтори копирование. Проверь обе
+установки командами `cat ~/.codex/skills/bounty-pilot-lab/VERSION` и
+`cat ~/.claude/skills/bounty-pilot-lab/VERSION`: версии должны совпадать с `VERSION` в репозитории.
+После установки запусти новую сессию агента, чтобы он обнаружил обновлённый навык. Проверка
+репозитория: `python3 -m unittest discover -s tests`.
 
 ### 2. Запуск
 

@@ -18,6 +18,13 @@
 
 ---
 
+## What changed in 0.31
+
+- **The Lab install has one identity across Codex and Claude Code.** The Claude Code marketplace
+  and plugin IDs now match `bounty-pilot-lab`; the install command resolves to the Lab plugin.
+  Copy-install instructions cover both `~/.codex/skills/bounty-pilot-lab` and
+  `~/.claude/skills/bounty-pilot-lab`. The original `bounty-pilot` skill remains separate.
+
 ## What changed in 0.30
 
 - **Opt-in Advanced Vulnerability Research Engine (AVRE).** `bounty.py avre` combines the existing
@@ -92,14 +99,16 @@ GitHub access. Three routes, in order of convenience:
 /plugin install bounty-pilot-lab@bounty-pilot-lab
 ```
 
-**By copying the skill** into the agent's skills directory — the most portable route, and the one to
-use when the plugin command cannot reach a private repository:
+**By copying the skill** into the agent's user skills directory — use this when the plugin command
+cannot reach the private repository, or to install the same skill for Codex and Claude Code:
 
 ```sh
 git clone https://github.com/dimin4241-svg/bounty-pilot-lab.git
-mkdir -p ~/.claude/skills
-rm -rf ~/.claude/skills/bounty-pilot-lab
-cp -r bounty-pilot-lab/skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
+cd bounty-pilot-lab
+mkdir -p ~/.codex/skills ~/.claude/skills
+rm -rf ~/.codex/skills/bounty-pilot-lab ~/.claude/skills/bounty-pilot-lab
+cp -R skills/bounty-pilot ~/.codex/skills/bounty-pilot-lab
+cp -R skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
 ```
 
 The skill is self-contained (about 2 MB: `SKILL.md`, `references/`, `scripts/`, `templates/`) and
@@ -117,8 +126,11 @@ In a cloud or container session the filesystem is discarded when the session end
 has to happen per session: attach this repository to the session alongside the target, or install it
 from a `SessionStart` hook.
 
-Check the install took: `cat ~/.claude/skills/bounty-pilot-lab/VERSION` should match this repository's
-`VERSION`, and `python3 -m unittest discover -s tests` in the clone should be green.
+For future updates, run `git pull --ff-only origin main` in the clone and repeat the copy commands.
+Check both installs with `cat ~/.codex/skills/bounty-pilot-lab/VERSION` and
+`cat ~/.claude/skills/bounty-pilot-lab/VERSION`; they should match this repository's `VERSION`.
+Start a new agent session after installing so it discovers the updated skill. Run
+`python3 -m unittest discover -s tests` in the clone to check the repository.
 
 ### 2. Run it
 

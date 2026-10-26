@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.31.0
+
+### Fix plugin identity and install the Lab skill for both local agents
+
+- Aligned the Claude Code marketplace and plugin entry IDs with the unique `bounty-pilot-lab`
+  skill name, so the documented `bounty-pilot-lab@bounty-pilot-lab` install command resolves.
+- Documented user-scope skill installation for Codex at `~/.codex/skills/bounty-pilot-lab` and
+  Claude Code at `~/.claude/skills/bounty-pilot-lab`. The original `bounty-pilot` paths remain
+  separate.
+- Added release checks that catch marketplace/plugin/skill identity drift.
+
 ## 0.30.0
 
 ### Advanced Vulnerability Research Engine MVP
