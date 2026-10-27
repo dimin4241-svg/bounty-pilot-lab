@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.32.0
+
+### Add a prioritized ecosystem attack-chain review playbook
+
+- Added twelve evidence-driven research patterns for stale control-plane agents, data retained
+  after deletion, incomplete permission migrations, updater trust, legacy CI workflows, restored
+  stale authorization, orphaned OAuth callbacks, cloned machine identities, support consoles,
+  stale domains, controller/worker authorization gaps, and security-version drift.
+- Each pattern names where to inspect, the invariant to prove, disconfirming evidence, and a safe
+  local candidate/control test. The user's Very High/High labels order investigation effort; they
+  are not exploit likelihood or payout estimates.
+- Wired the playbook into the mixed-stack workflow and added a private-run coverage ledger template.
+  Missing source or external control-plane evidence stays `UNAVAILABLE`/`UNASSESSED`; no signal is
+  never reported as proof of safety.
+- Added release tests that check all twelve patterns and required evidence fields are present.
+
 ## 0.31.0
 
 ### Fix plugin identity and install the Lab skill for both local agents

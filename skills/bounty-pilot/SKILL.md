@@ -186,6 +186,14 @@ already-saved public archives can be imported from disk. It makes no network req
 hypotheses only. Its lexical graph supplements the source model and never replaces `bundle`,
 `impact-plan`, deployment verification, or adjudication.
 
+For mixed-stack projects or targets with control planes, storage, CI/CD, identity, support, update,
+or worker services, also read `references/ecosystem-attack-chains.md`. Review all twelve patterns
+against the explicit scope and fill a private copy of `templates/attack-chain-review.md`. Record
+`CHECKED_NO_SIGNAL` only for artifacts actually inspected; use `UNAVAILABLE` when a cloud console,
+identity-provider setting, deployment inventory, or other evidence is inaccessible. A lexical or
+source-only review cannot establish that the external system is absent or safe. Patterns are
+investigation prompts, never finding declarations or payout predictions.
+
 For sequence-dependent or cross-component leads, AVRE is an additional opt-in local pipeline. Read
 `references/avre.md` before running it. It reuses the state graph, ecosystem inventory, trust review,
 and scenario runner; its budget is a bounded candidate/sequence count, not an LLM token allowance.

@@ -18,6 +18,15 @@
 
 ---
 
+## What changed in 0.32
+
+- **Twelve prioritized ecosystem attack-chain patterns.** A new playbook guides mixed-stack
+  research into stale privileged agents, deletion/restore lifecycle, permission migrations,
+  updaters, CI workflows, OAuth, machine cloning, support paths, stale domains, worker boundaries,
+  and version drift. Each direction requires source evidence, a falsifier and a safe local
+  candidate/control test. Priorities guide research effort; they do not predict bugs or payouts.
+  See [the playbook and limits](skills/bounty-pilot/references/ecosystem-attack-chains.md).
+
 ## What changed in 0.31
 
 - **The Lab install has one identity across Codex and Claude Code.** The Claude Code marketplace
@@ -369,7 +378,7 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [experimenter.md](skills/bounty-pilot/references/experimenter.md) | Native experiment drafting and independent evidence review |
 | [keccak.py](skills/bounty-pilot/scripts/keccak.py) | Dependency-free Keccak-256, so proxy slots are derived, not pasted |
 | [evm_selectors.py](skills/bounty-pilot/scripts/evm_selectors.py) | The functions a deployed contract accepts, read out of its dispatcher |
-| [Tests](tests) | 923 helper regression and workflow checks |
+| [Tests](tests) | 962 helper regression and workflow checks |
 
 ```sh
 S=skills/bounty-pilot/scripts/bounty.py

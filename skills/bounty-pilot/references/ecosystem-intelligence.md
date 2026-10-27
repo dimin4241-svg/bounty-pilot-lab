@@ -5,6 +5,12 @@ dependencies, local history, and candidate trust boundaries. It is deliberately 
 existing `delta`, `bundle`, `impact-plan`, `state_graph`, `dup-harvest`, and deployment commands.
 It does not change their inputs, statuses, or gates.
 
+For mixed-stack targets, pair this inventory with
+[`ecosystem-attack-chains.md`](ecosystem-attack-chains.md). That playbook turns ecosystem boundaries
+into twelve scoped research tasks; copy `templates/attack-chain-review.md` into the private run and
+record evidence and gaps. It is an analyst checklist, not an extra scanner or a claim that each
+pattern exists in the target.
+
 ## Run
 
 Create an explicit scope file outside the target checkout and keep generated artifacts in a
