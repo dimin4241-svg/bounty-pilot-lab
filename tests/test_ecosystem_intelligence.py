@@ -80,6 +80,14 @@ class EcosystemIntelligenceTests(unittest.TestCase):
             "classification"], "IN_SCOPE")
         self.assertEqual(eco.classify(self.scope, "contract", address, chain_id=10)[
             "classification"], "UNKNOWN")
+        unapproved_network_address = "0x2222222222222222222222222222222222222222"
+        data = json.loads(self.scope_path.read_text())
+        data["allowed"]["contracts"].append({"address": unapproved_network_address,
+                                               "chain_id": 10})
+        self.scope_path.write_text(json.dumps(data))
+        restricted = eco.load_scope(self.scope_path)
+        self.assertEqual(eco.classify(restricted, "contract", unapproved_network_address,
+                                      chain_id=10)["classification"], "UNKNOWN")
         self.assertEqual(eco.classify(self.scope, "method", "http_probe")[
             "classification"], "RELATED_OUT_OF_SCOPE")
         data = json.loads(self.scope_path.read_text())
@@ -136,6 +144,35 @@ class EcosystemIntelligenceTests(unittest.TestCase):
         self.assertTrue(any("not an acceptable attacker path" in item
                             for item in hypothesis["disconfirming_evidence"]))
 
+    def test_runtime_reality_handoff_does_not_offer_commands_for_unknown_scope(self):
+        nodes = [{"id": "contract:unknown", "label": "0x2222222222222222222222222222222222222222",
+                  "kind": "contract", "chain_id": None}]
+        edges = [{"to": "contract:unknown", "role": "contract_or_deployment_reference",
+                  "scope": {"classification": "UNKNOWN", "basis": "not listed"},
+                  "source": {"path": "deployments/config.json", "line": 4}}]
+        rows = eco._runtime_reality_handoffs(nodes, edges)
+        self.assertEqual(rows[0]["status"], "BLOCKED_BY_SCOPE")
+        self.assertIsNone(rows[0]["recommended_existing_tool"])
+        self.assertIsNone(rows[0]["selector_followup"])
+        self.assertEqual(rows[0]["required_checks"], [])
+
+    def test_contract_in_explicit_scope_is_handed_off_even_when_not_in_source(self):
+        address = "0x3333333333333333333333333333333333333333"
+        scope_data = json.loads(self.scope_path.read_text())
+        scope_data["allowed"]["contracts"] = [{"address": address, "chain_id": 10}]
+        scope_data["allowed"]["networks"].append({"name": "Optimism", "chain_id": 10})
+        self.scope_path.write_text(json.dumps(scope_data))
+        scope = eco.load_scope(self.scope_path)
+        nodes, edges = {}, []
+        count = eco._add_scoped_contract_targets(scope, "github.com/example/protocol",
+                                                  "2026-10-27T00:00:00Z", nodes, edges)
+        rows = eco._runtime_reality_handoffs(list(nodes.values()), edges)
+        self.assertEqual(count, 1)
+        self.assertEqual(rows[0]["address"], address)
+        self.assertEqual(rows[0]["chain_id"], 10)
+        self.assertEqual(rows[0]["status"], "PENDING_EXPLICIT_READ_ONLY_CHECK")
+        self.assertIn("verify-deployment", rows[0]["recommended_existing_tool"])
+
     def test_analysis_writes_provenance_graph_hypotheses_and_no_live_calls(self):
         out = self.root / "out"
         result = eco.analyze(self.repo, self.scope_path, out)
@@ -167,6 +204,23 @@ class EcosystemIntelligenceTests(unittest.TestCase):
                          "NOT_INDEPENDENTLY_REVIEWED")
         self.assertIn("CONFIRMED", report["independent_review_plans"][0]["allowed_verdicts"])
         self.assertIn("patch_variant_analysis", report["historical_intelligence"])
+        transition = report["state_transition_research"]
+        self.assertTrue(transition["alternative_path_discovery"]["candidates"])
+        self.assertTrue(transition["revocation_resurrection"]["candidates"])
+        self.assertTrue(transition["deleted_object_lifecycle"]["candidates"])
+        self.assertTrue(transition["security_policy_drift"]["candidates"])
+        self.assertTrue(transition["ci_release_provenance"]["observations"])
+        self.assertTrue(transition["agentic_trust"]["candidates"])
+        self.assertTrue(transition["architecture_divergence"]["candidates"])
+        self.assertTrue(transition["lower_layer_surfaces"]["surfaces"])
+        runtime_handoff = next(row for row in transition["runtime_reality_handoffs"]
+                               if row["address"].lower() ==
+                               "0x1111111111111111111111111111111111111111")
+        self.assertEqual(runtime_handoff["chain_id"], "1")
+        self.assertEqual(runtime_handoff["scope"]["classification"], "IN_SCOPE")
+        self.assertEqual(runtime_handoff["status"], "PENDING_EXPLICIT_READ_ONLY_CHECK")
+        self.assertIn("verify-deployment", runtime_handoff["recommended_existing_tool"])
+        self.assertFalse(report["analysis"]["network_policy"]["live_state_reads"])
         audit = [json.loads(line) for line in (out / "audit.jsonl").read_text().splitlines()]
         self.assertTrue(any(row["event"] == "analysis_completed" for row in audit))
         bundle = "\n".join(path.read_text(errors="replace") for path in out.iterdir())

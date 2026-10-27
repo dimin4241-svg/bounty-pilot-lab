@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.33.0
+
+### Add state-transition, agentic, CI, and runtime handoff research
+
+- Extended passive `ecosystem-intel` with same-file alternative-path and revoke/restore comparisons,
+  delete-to-worker lifecycle leads, and cross-file policy-guard drift observations.
+- Added source-anchored static triage for untrusted data reaching privileged CI/artifact/release
+  steps or AI-agent tools, explicit 32/64-bit codec branches, and lower-layer dependency surfaces.
+- Connected in-scope source contract references to the existing `verify-deployment` and
+  `selectors` read-only workflow as pending handoffs. The analyzer makes no chain/RPC calls.
+- Added synthetic fixtures and regression tests. Outputs remain low-confidence hypotheses; the
+  20-case historical before/after benchmark has not been curated or run.
+
 ## 0.32.0
 
 ### Add a prioritized ecosystem attack-chain review playbook

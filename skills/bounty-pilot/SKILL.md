@@ -183,8 +183,18 @@ Optional, before or alongside the source model, run the isolated passive ecosyst
 `references/ecosystem-intelligence.md`. It requires an explicit scope file and writes separate JSON,
 Markdown, Mermaid, and audit-log artifacts. It reads local tracked files and Git history only;
 already-saved public archives can be imported from disk. It makes no network request and emits
-hypotheses only. Its lexical graph supplements the source model and never replaces `bundle`,
-`impact-plan`, deployment verification, or adjudication.
+hypotheses only. It also compares alternate same-state operations, revoke/restore paths, workflow
+artifact chains, AI-tool boundaries, policy replicas, architecture branches, and delete/worker
+lifecycle cues. These are low-confidence source leads, not call-graph or runtime findings. Its
+lexical graph supplements the source model and never replaces `bundle`, `impact-plan`, deployment
+verification, or adjudication.
+
+Review `state_transition_research.runtime_reality_handoffs` for contract references and explicit
+scope-only addresses that have no source in the checkout. The analyzer does not query them. Use the
+existing `verify-deployment` and `selectors` commands only for exact `IN_SCOPE` addresses with a
+known chain ID and only when program rules permit pinned, read-only RPC. Treat unknown addresses
+or networks as blocked. The report does not assert that an explorer's source is the live
+implementation or that code equality proves the active roles and permissions.
 
 For mixed-stack projects or targets with control planes, storage, CI/CD, identity, support, update,
 or worker services, also read `references/ecosystem-attack-chains.md`. Review all twelve patterns

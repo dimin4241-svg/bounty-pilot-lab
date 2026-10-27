@@ -11716,7 +11716,7 @@ def build_parser():
 
     ecosystem = sub.add_parser(
         'ecosystem-intel',
-        help='passively map scoped dependencies, history, trust boundaries and hypotheses')
+        help='passively map scoped dependencies, state transitions, trust boundaries and hypotheses')
     ecosystem.add_argument('--repo', required=True, help='local target checkout')
     ecosystem.add_argument('--scope', required=True, help='explicit ecosystem scope JSON')
     ecosystem.add_argument('--out', required=True, help='private output directory outside the checkout')

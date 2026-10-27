@@ -6,6 +6,7 @@ requests, probes services, validates credentials, executes target code, or prove
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -86,6 +87,21 @@ SECURITY_COMMIT = re.compile(r"(?i)\b(security|vuln|exploit|fix|patch|auth|repla
 ACTIVE_METHODS = {"http_probe", "api_probe", "port_scan", "fuzz_live", "transaction",
                   "write_rpc", "credential_validation", "exploit", "bruteforce", "active_scan"}
 PASSIVE_METHODS = {"local_static", "git_history", "provided_archive"}
+_TRANSITION_RESEARCH = None
+
+
+def load_transition_research():
+    """Load the isolated standard-library transition research helper."""
+    global _TRANSITION_RESEARCH
+    if _TRANSITION_RESEARCH is None:
+        helper = Path(__file__).resolve().with_name("transition_research.py")
+        spec = importlib.util.spec_from_file_location("bp_transition_research", helper)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("could not load transition research helper")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _TRANSITION_RESEARCH = module
+    return _TRANSITION_RESEARCH
 
 
 def now_utc():
@@ -235,6 +251,14 @@ def classify(scope, kind, value, network=None, chain_id=None):
                     continue
                 if cid is not None and (chain_id is None or str(cid) != str(chain_id)):
                     continue
+                if label == "IN_SCOPE" and scope["allowed"]["networks"]:
+                    network_value = network if network is not None else chain_id
+                    network_decision = classify(scope, "network", network_value,
+                                                chain_id=chain_id)
+                    if network_decision["classification"] != "IN_SCOPE":
+                        return {"classification": network_decision["classification"],
+                                "basis": "contract address is listed but its network is not explicitly in scope",
+                                "value": address}
                 return {"classification": label, "basis": "explicit contract/network rule", "value": address}
         return {"classification": "UNKNOWN", "basis": "no explicit contract/network match", "value": address}
     if kind in ("network", "chain"):
@@ -374,7 +398,7 @@ def _dependency_graph(files, path_times, observed, repo_key, scope):
             nearby = text[max(0, match.start() - 250):match.end() + 250]
             if not re.search(r"(?i)(address|contract|proxy|implementation|deploy)", path + nearby):
                 continue
-            chain = re.search(r"(?i)(?:chainid|chain_id|chain-id)\s*[:=]\s*[\"']?(\d+)", nearby)
+            chain = re.search(r"(?i)(?:chainid|chain_id|chain-id)[\"']?\s*[:=]\s*[\"']?(\d+)", nearby)
             chain_id = chain.group(1) if chain else None
             decision = classify(scope, "contract", match.group(0), network=chain_id, chain_id=chain_id)
             nid = _id("contract", match.group(0).lower() + ":" + str(chain_id))
@@ -841,18 +865,46 @@ def _hypothesis(title, bug_class, prereq, attacker, invariant, impact, path, sup
 
 def _verification_plan(hypothesis, commit):
     kind = hypothesis["bug_class"]
-    if kind == "signed_message_replay_or_cross_domain":
+    if kind in {"signed_message_replay_or_cross_domain", "cross_chain_trust_boundary"}:
         backend = "Foundry/Anvil local fork pinned to a reviewed block, or a fully local EVM test"
-        candidate = "Submit one valid signed payload, then replay it or change one domain field; record each state and balance delta."
-        control = "Submit a fresh valid payload once, then replay it; compare against documented nonce/domain behavior."
-        assertions = ["Record unauthorized state transitions and token/native balance deltas.",
-                      "Compare the same verifier path against a fresh-nonce/domain negative control."]
-    elif kind == "cross_chain_trust_boundary":
-        backend = "Foundry/Anvil local fork with local verifier mock, or a fully local EVM test"
-        candidate = "Deliver a duplicate message or mismatched source identity through the local harness."
-        control = "Deliver one valid, unique message with the expected source and verifier proof."
-        assertions = ["Record accepted/rejected transitions, replay state, and asset balance deltas.",
-                      "Do not use a public exploit transaction or live bridge/relayer."]
+        if kind == "signed_message_replay_or_cross_domain":
+            candidate = "Submit one valid signed payload, then replay it or change one domain field; record each state and balance delta."
+            control = "Submit a fresh valid payload once, then replay it; compare against documented nonce/domain behavior."
+            assertions = ["Record unauthorized state transitions and token/native balance deltas.",
+                          "Compare the same verifier path against a fresh-nonce/domain negative control."]
+        else:
+            candidate = "Deliver a duplicate message or mismatched source identity through the local harness."
+            control = "Deliver one valid, unique message with the expected source and verifier proof."
+            assertions = ["Record accepted/rejected transitions, replay state, and asset balance deltas.",
+                          "Do not use a public exploit transaction or live bridge/relayer."]
+    elif kind in {"alternative_path_auth_parity", "revocation_resurrection",
+                  "deleted_object_residual_path", "agentic_trust_boundary",
+                  "ci_release_provenance", "architecture_semantics_divergence",
+                  "security_policy_replica_drift"}:
+        backend = "Local native test harness or investigator-owned mock services with synthetic identities and artifacts"
+        if kind == "agentic_trust_boundary":
+            candidate = "Submit a synthetic untrusted issue/comment payload containing inert instruction-like text to a local agent mock; observe only which mock tools and synthetic files it can access."
+            control = "Use a trusted synthetic request with the same tools disabled or least-privilege permissions; confirm no secret-shaped test value is exposed."
+        elif kind == "ci_release_provenance":
+            candidate = "Run a local policy fixture where untrusted build input and a synthetic artifact reach a privileged publish step."
+            control = "Bind the publish step to a trusted commit and verified artifact digest; confirm the untrusted fixture is rejected."
+        elif kind == "architecture_semantics_divergence":
+            candidate = "Run the same synthetic decoder/state-transition corpus under local 32-bit and 64-bit builds and compare exact outputs."
+            control = "Use a canonical, architecture-independent encoding with identical accepted/rejected cases on both builds."
+        elif kind == "revocation_resurrection":
+            candidate = "Revoke a synthetic identity, restore or reconnect from pre-revocation mock state, then attempt the protected transition."
+            control = "Restore the same fixture after applying a monotonic revocation epoch and verify that the identity remains rejected."
+        elif kind == "deleted_object_residual_path":
+            candidate = "Delete a synthetic tenant/object while local queue/cache/snapshot workers are paused, resume them, and attempt a second synthetic tenant read."
+            control = "Run the same sequence with ownership-bound cleanup and assert no residual data or job is accepted."
+        elif kind == "security_policy_replica_drift":
+            candidate = "Send the same synthetic low-privilege operation to each local replica/version and compare the authorization decision and policy epoch."
+            control = "Run with a shared current policy epoch and assert every replica rejects the unauthorized operation consistently."
+        else:
+            candidate = "Exercise the lower-guard path and the protected primary path against the same synthetic object and low-privilege identity."
+            control = "Exercise the path with the expected authorization guard and assert the invariant holds for both entry points."
+        assertions = ["Record exact candidate/control command, pinned revision, output, and the before/after synthetic state.",
+                      "Do not contact production services, use real identities/secrets, or publish transactions."]
     else:
         backend = "Local API test with mock provider, mock service, and investigator-owned test data"
         candidate = "Send an invalidly authenticated webhook and repeated event to the local mock handler."
@@ -871,6 +923,192 @@ def _verification_plan(hypothesis, commit):
                                 "logs": "preserve candidate and control output"},
         "notice": "Plan only. It is not a PoC, test result, or impact proof.",
     }
+
+
+def _transition_hypotheses(transition, repo_scope, known):
+    """Turn the helper's source-anchored leads into the common, still-unverified record shape."""
+    categories = (
+        ("alternative_path_discovery", "candidates", "alternative_path_auth_parity",
+         "Compare alternate operations that mutate the same lexical state symbol"),
+        ("revocation_resurrection", "candidates", "revocation_resurrection",
+         "Check whether a restore or reconnect path revives locally revoked state"),
+        ("deleted_object_lifecycle", "candidates", "deleted_object_residual_path",
+         "Trace a deleted object into a local asynchronous or cache path"),
+        ("security_policy_drift", "candidates", "security_policy_replica_drift",
+         "Compare authorization policy replicas across components"),
+        ("agentic_trust", "candidates", "agentic_trust_boundary",
+         "Check whether untrusted event content can reach an agent with elevated tools"),
+        ("architecture_divergence", "candidates", "architecture_semantics_divergence",
+         "Compare architecture-specific decoding or state semantics"),
+    )
+    rows, linked = [], 0
+    for section, field, bug_class, title_prefix in categories:
+        for candidate in transition[section][field][:100]:
+            if len(rows) >= 200:
+                return rows, linked
+            candidate.setdefault("id", "TRANS-" + hashlib.sha256(
+                (section + "\0" + candidate.get("path", "") + "\0" +
+                 str(candidate.get("type", ""))).encode()).hexdigest()[:10].upper())
+            left, right = candidate.get("operation_paths", [{}, {}])[:2]
+            operation_names = [x.get("name", "unknown") for x in (left, right)]
+            if bug_class == "alternative_path_auth_parity":
+                title = "%s: %s vs %s in %s" % (title_prefix, operation_names[0],
+                                                 operation_names[1], candidate["path"])
+                invariant = "Every entry point that mutates the same protected state enforces equivalent current authorization and object binding."
+                impact = "Possible unauthorized state transition affecting a protected object; no asset effect or loss was measured."
+            elif bug_class == "revocation_resurrection":
+                title = "%s: %s to %s in %s" % (title_prefix, operation_names[0],
+                                                 operation_names[1], candidate["path"])
+                invariant = "Revocation remains effective across restore, reconnect, refresh, import, and recovery until explicitly reauthorized."
+                impact = "Possible reactivation of an old identity or permission; no account access or impact was demonstrated."
+            elif bug_class == "deleted_object_residual_path":
+                title = "%s in %s" % (title_prefix, candidate["path"])
+                invariant = "Deletion prevents residual jobs, caches, snapshots, or subsequent allocations from exposing or acting on the deleted object's state."
+                impact = "Possible stale authorization or cross-tenant data/state exposure; no other-tenant data was accessed."
+            elif bug_class == "agentic_trust_boundary":
+                title = "%s in %s" % (title_prefix, candidate["path"])
+                invariant = "Untrusted external content cannot grant itself authority or reach tools and data beyond the agent's intended least-privilege boundary."
+                impact = "Possible unauthorized repository or synthetic-data action through an automated agent; no tool was executed."
+            elif bug_class == "security_policy_replica_drift":
+                title = "%s: %s in %s" % (title_prefix, operation_names[0], candidate["path"])
+                invariant = "Every service or worker that accepts the same protected operation enforces compatible current authorization and policy versions."
+                impact = "Possible policy bypass or inconsistent authorization on one replica; deployment reachability and impact are unmeasured."
+            else:
+                title = "%s in %s" % (title_prefix, candidate["path"])
+                invariant = "Security-sensitive parsing and state validation produce equivalent accept/reject decisions across supported architectures."
+                impact = "Possible integrity or validation divergence between architecture builds; no differing runtime result was measured."
+            evidence = ([x.get("source", {}) for x in candidate.get("operation_paths", [])] +
+                        candidate.get("untrusted_input_evidence", []) +
+                        candidate.get("elevated_capability_evidence", []) +
+                        candidate.get("architecture_evidence", []))
+            evidence = [x for x in evidence if x][:12]
+            names = ", ".join(operation_names)
+            hypothesis = _hypothesis(
+                title, bug_class,
+                ["The lexical paths correspond to the same live state transition and are reachable within the explicit program scope."],
+                ["An unprivileged caller can influence only the inputs accepted by one candidate path; reachability and control are not yet established."],
+                invariant, impact,
+                "Unknown: local static signals in %s (%s); no caller-to-sink or deployed path was resolved." %
+                (candidate["path"], names),
+                evidence or [{"path": candidate.get("path"), "line": None}],
+                candidate.get("disconfirming_evidence", ["The candidate may be an extraction false positive."]),
+                ["Resolve callers, inherited guards, middleware, shared libraries, object identity, and deployment state.",
+                 "Run a native candidate/control pair on synthetic state before asserting impact."],
+                repo_scope, known)
+            candidate["hypothesis_id"] = hypothesis["id"]
+            candidate["reachable_path"] = hypothesis["reachable_path"]
+            candidate["invariant"] = hypothesis["invariant"]
+            candidate["possible_impact"] = hypothesis["possible_impact"]
+            candidate["supporting_evidence"] = evidence
+            candidate["prerequisites"] = hypothesis["prerequisites"]
+            candidate["attacker_control"] = hypothesis["attacker_control"]
+            hypothesis["candidate_id"] = candidate["id"]
+            rows.append(hypothesis)
+            linked += 1
+    for candidate in transition["ci_release_provenance"]["observations"][:100]:
+        if len(rows) >= 200:
+            break
+        if candidate.get("status") != "review_candidate":
+            continue
+        candidate.setdefault("id", "TRANS-" + hashlib.sha256(
+            ("ci_release_provenance\0" + candidate.get("path", "")).encode()).hexdigest()[:10].upper())
+        title = "Trace low-trust workflow data into privileged release steps in " + candidate["path"]
+        evidence = (candidate.get("untrusted_input_evidence", []) +
+                    candidate.get("elevated_capability_evidence", []) +
+                    candidate.get("artifact_or_cache_evidence", []) + candidate.get("release_evidence", []))[:12]
+        hypothesis = _hypothesis(
+            title, "ci_release_provenance",
+            ["The workflow runs for an attacker-influenced event and its effective permissions allow a protected publication action."],
+            ["Only an untrusted issue, pull request, artifact, or cache value; no account or runner compromise assumed."],
+            "Privileged release jobs consume only artifacts bound to a trusted commit and verified provenance.",
+            "Possible unauthorized release or artifact substitution; no real build or publication was performed.",
+            "Unknown: workflow text combines low-trust event, privilege, and artifact/release signals; GitHub effective permissions are not resolved.",
+            evidence, ["Workflow protection, reusable workflow permissions, artifact attestation, or environment approval may close the path."],
+            ["Resolve workflow event reachability, effective permissions, cache/artifact producers and consumers, and provenance verification.",
+             "Exercise only local workflow-policy fixtures with fake artifacts and fake tokens."], repo_scope, known)
+        candidate["hypothesis_id"] = hypothesis["id"]
+        candidate["supporting_evidence"] = evidence
+        hypothesis["candidate_id"] = candidate.get("path")
+        rows.append(hypothesis)
+        linked += 1
+    return rows, linked
+
+
+def _runtime_reality_handoffs(nodes, edges):
+    """Connect static contract references to the existing explicit runtime verification command."""
+    by_id = {row["id"]: row for row in nodes}
+    handoffs, seen = [], set()
+    required_checks = ["Pin chain ID and block number; do not use an unpinned 'latest' for a report.",
+                       "Compare deployed implementation runtime with the build artifact; resolve proxy/beacon/clone implementation first.",
+                       "Record runtime code hash, proxy implementation/admin storage, and selector differences.",
+                       "Separately inspect in-scope roles, allowances, and relevant events at the same block; bytecode equality does not prove current authority."]
+    for edge in edges:
+        if edge.get("role") not in {"contract_or_deployment_reference", "scoped_contract_target"}:
+            continue
+        node = by_id.get(edge.get("to"), {})
+        address = node.get("label")
+        chain_id = node.get("chain_id")
+        if not address:
+            continue
+        key = (address.lower(), str(chain_id or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        in_scope = edge.get("scope", {}).get("classification") == "IN_SCOPE"
+        has_chain = chain_id is not None and str(chain_id).strip() != ""
+        if not in_scope:
+            status = "BLOCKED_BY_SCOPE"
+        elif not has_chain:
+            status = "BLOCKED_MISSING_CHAIN_ID"
+        else:
+            status = "PENDING_EXPLICIT_READ_ONLY_CHECK"
+        handoffs.append({
+            "address": address, "chain_id": chain_id,
+            "scope": edge.get("scope", {"classification": "UNKNOWN"}),
+            "source": edge.get("source", {}),
+            "status": status,
+            "recommended_existing_tool": ("bounty.py verify-deployment --rpc $RPC_URL --address <address> --block <pinned-block> --run <private-run>"
+                                          if in_scope and has_chain else None),
+            "optional_artifact_comparison": ("Add --artifact <build-artifact.json> when a matching build is available; without it, deployment_status remains unknown."
+                                             if in_scope and has_chain else None),
+            "selector_followup": ("bounty.py selectors --rpc $RPC_URL --address <address> --block <pinned-block> --run <private-run>"
+                                  if in_scope and has_chain else None),
+            "required_checks": required_checks if in_scope and has_chain else [],
+            "authorization": "Run only if the program permits read-only chain access, the exact contract/network are IN_SCOPE, and an investigator-approved read-only RPC is supplied; this analysis did not make the call.",
+            "notice": "A source address is a deployment lead, not evidence that a contract exists, is in scope, or is unverified.",
+        })
+    return handoffs[:500]
+
+
+def _add_scoped_contract_targets(scope, repo_key, observed, nodes, edges):
+    """Add explicit in-scope contract addresses even when absent from the Git checkout."""
+    repo_id = _id("repository", repo_key)
+    added = 0
+    for group, role in (("allowed", "scoped_contract_target"),
+                        ("related_out_of_scope", "excluded_scoped_contract")):
+        for index, entry in enumerate(scope[group]["contracts"]):
+            if isinstance(entry, dict):
+                address = str(entry.get("address", "")).strip()
+                chain_id = entry.get("chain_id", entry.get("chainId"))
+                network = entry.get("network")
+            else:
+                address, chain_id, network = str(entry).strip(), None, None
+            if not address:
+                continue
+            chain_key = str(chain_id) if chain_id is not None else ""
+            decision = classify(scope, "contract", address, network=network, chain_id=chain_id)
+            node_id = _id("contract", address.lower() + ":" + chain_key)
+            nodes.setdefault(node_id, {"id": node_id, "kind": "contract", "label": address,
+                                       "chain_id": chain_id, "scope": decision["classification"],
+                                       "inventory_source": "explicit scope; deployment not verified"})
+            edges.append({"from": repo_id, "to": node_id, "kind": "scope_lists_contract",
+                          "role": role, "trust_boundary": "program scope to chain target",
+                          "observed_at": observed, "confidence": "high",
+                          "source": {"path": "<scope-file>", "line": None,
+                                     "field": "%s.contracts[%d]" % (group, index)},
+                          "scope": decision, "interaction": "none; scope declaration only"})
+            added += 1
+    return added
 
 
 def _skeptical_review_plan(hypothesis):
@@ -956,6 +1194,39 @@ def _markdown(report):
                      (edge["from_component"], edge["to_component"], edge["kind"]))
     if not report["trust_boundary_analysis"]["candidate_boundaries"]:
         lines.append("- No multi-component boundary was identified by path heuristics.")
+    transition = report["state_transition_research"]
+    lines.extend(["", "## State-transition and trust-handoff review", "",
+                  "These are local static leads, not confirmed paths:",
+                  "- Alternative state-changing paths: %s." %
+                  len(transition["alternative_path_discovery"]["candidates"]),
+                  "- Revocation/restore pairs: %s; deleted-object lifecycle pairs: %s; policy replica mismatches: %s." %
+                  (len(transition["revocation_resurrection"]["candidates"]),
+                   len(transition["deleted_object_lifecycle"]["candidates"]),
+                   len(transition["security_policy_drift"]["candidates"])),
+                  "- CI workflow observations: %s; agentic trust candidates: %s." %
+                  (len(transition["ci_release_provenance"]["observations"]),
+                   len(transition["agentic_trust"]["candidates"])),
+                  "- Architecture divergence candidates: %s; lower-layer surfaces needing scope review: %s." %
+                  (len(transition["architecture_divergence"]["candidates"]),
+                   len(transition["lower_layer_surfaces"]["surfaces"])),
+                  "- Contract runtime handoffs: %s (not run by this analysis)." %
+                  len(transition["runtime_reality_handoffs"]), ""])
+    for category in ("alternative_path_discovery", "revocation_resurrection",
+                     "deleted_object_lifecycle", "security_policy_drift", "agentic_trust",
+                     "architecture_divergence"):
+        candidates = transition[category].get("candidates", [])
+        for candidate in candidates[:10]:
+            lines.append("- `%s` %s:%s — `%s`; hypothesis `%s`." %
+                         (candidate["id"], candidate.get("path", "unknown"),
+                          candidate.get("operation_paths", [{}])[0].get("line", "?"),
+                          candidate.get("type", category), candidate.get("hypothesis_id", "not-ranked")))
+    for handoff in transition["runtime_reality_handoffs"][:20]:
+        lines.append("- Runtime reference `%s` (chain %s): %s; source `%s:%s`." %
+                     (handoff["address"], handoff.get("chain_id") or "unknown",
+                      handoff["status"], handoff.get("source", {}).get("path", "unknown"),
+                      handoff.get("source", {}).get("line", "?")))
+    lines.extend(["", "Runtime checks require separate explicit read-only authorization and a pinned block.",
+                  "The existing `verify-deployment` and `selectors` commands are the only runtime handoff; they were not invoked here."])
     lines.extend(["", "## Ranked hypotheses", ""])
     hypotheses = report["ranking"]["top_hypotheses"]
     if not hypotheses:
@@ -1059,6 +1330,7 @@ def analyze(repo, scope_path, out, archive_index=None, known_issues=None):
     files, skipped, stats = _safe_files(root)
     times = _path_times(root)
     nodes, edges, dep_evidence = _dependency_graph(files, times, started, key, scope)
+    scoped_contract_count = _add_scoped_contract_targets(scope, key, started, nodes, edges)
     files_by_path = {row["path"]: row["text"] for row in files}
     history = _history(root, files_by_path, times, scope)
     patch_variants = _patch_variant_analysis(history["patch_variant_leads"], files_by_path)
@@ -1073,9 +1345,21 @@ def analyze(repo, scope_path, out, archive_index=None, known_issues=None):
             raise ValueError("known-issues corpus must be a local file under the size cap")
         known = redact_text(path.read_text(encoding="utf-8", errors="replace"))
     trust = _trust(files_by_path, repo_scope, known)
-    hypotheses = trust["hypotheses"]
+    transition = load_transition_research().analyze(files_by_path, redact_text)
+    transition_hypotheses, transition_hypothesis_count = _transition_hypotheses(
+        transition, repo_scope, known)
+    runtime_handoffs = _runtime_reality_handoffs(list(nodes.values()), edges)
+    transition["runtime_reality_handoffs"] = runtime_handoffs
+    transition["analysis_limits"] = [
+        "This module uses local lexical windows; it does not build language ASTs, resolve interprocedural calls, or infer deployed workflow permissions.",
+        "The runtime handoffs reuse verify-deployment and selectors; neither command is invoked by ecosystem-intel.",
+        "An UNKNOWN or RELATED_OUT_OF_SCOPE contract reference receives no runtime-check plan.",
+        "All candidate and control tests are unexecuted and require a local synthetic harness.",
+    ]
+    hypotheses = trust["hypotheses"] + transition_hypotheses
     hypotheses.sort(key=lambda row: (row["privileged_assumption_count"],
                                      -row["scores"]["priority"], row["id"]))
+    hypotheses = hypotheses[:200]
     for index, row in enumerate(hypotheses, 1):
         row["rank"] = index
     report = {
@@ -1088,7 +1372,8 @@ def analyze(repo, scope_path, out, archive_index=None, known_issues=None):
                            "tracked_files_seen": stats["tracked_files_seen"],
                            "files_read": stats["files_read"], "bytes_read": stats["bytes_read"],
                            "file_listing": "git-tracked files only"},
-            "methods": ["local_static", "git_history"] + (["provided_archive"] if archive_index else []),
+        "methods": ["local_static", "git_history"] +
+                   (["provided_archive"] if archive_index else []),
             "network_policy": {"enabled": False, "requests": 0, "rate_limit_per_minute": 0,
                                "credential_validation": False, "live_state_reads": False,
                                "active_or_destructive_checks": False},
@@ -1111,6 +1396,7 @@ def analyze(repo, scope_path, out, archive_index=None, known_issues=None):
                                    "archive_skipped": archive_skipped,
                                    "patch_variant_analysis": patch_variants},
         "trust_boundary_analysis": trust,
+        "state_transition_research": transition,
         "ranking": {"top_hypotheses": hypotheses,
                     "formula": "weighted novelty, scope confidence, exploitability, impact and proof strength minus assumption penalty; privilege assumptions sort first",
                     "benchmark": "not measured; no verified paired corpus supplied"},
@@ -1118,7 +1404,16 @@ def analyze(repo, scope_path, out, archive_index=None, known_issues=None):
                                      for row in hypotheses],
         "independent_review_plans": [_skeptical_review_plan(row) for row in hypotheses],
     }
-    audit("analysis_completed", hypotheses=len(hypotheses), nodes=len(nodes), edges=len(edges),
+    audit("transition_research_completed",
+          alternative_paths=len(transition["alternative_path_discovery"]["candidates"]),
+          revocation_resurrection=len(transition["revocation_resurrection"]["candidates"]),
+          security_policy_drift=len(transition["security_policy_drift"]["candidates"]),
+          workflow_observations=len(transition["ci_release_provenance"]["observations"]),
+          agentic_trust=len(transition["agentic_trust"]["candidates"]),
+          runtime_handoffs=len(runtime_handoffs), scoped_contract_targets=scoped_contract_count,
+          network_requests=0)
+    audit("analysis_completed", hypotheses=len(hypotheses),
+          transition_hypotheses=transition_hypothesis_count, nodes=len(nodes), edges=len(edges),
           network_requests=0, result="hypotheses_only")
     (output / "ecosystem-intelligence.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -18,6 +18,16 @@
 
 ---
 
+## What changed in 0.33
+
+- **State-transition and trust-handoff research.** `ecosystem-intel` now flags source-anchored
+  comparison leads for alternate create/restore paths, revoked-state restoration, delete/worker
+  lifecycle, replicated authorization policies, CI artifact/release flows, AI-agent tool
+  boundaries, architecture-specific codecs, and lower-layer components. Explicitly scoped contract
+  addresses also enter the graph when the repo has no source; in-scope addresses get a pending
+  handoff to existing runtime verification commands, but no chain reads run automatically. These
+  are unmeasured hypotheses, not findings. [Details and limits](skills/bounty-pilot/references/ecosystem-intelligence.md).
+
 ## What changed in 0.32
 
 - **Twelve prioritized ecosystem attack-chain patterns.** A new playbook guides mixed-stack
@@ -378,7 +388,7 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [experimenter.md](skills/bounty-pilot/references/experimenter.md) | Native experiment drafting and independent evidence review |
 | [keccak.py](skills/bounty-pilot/scripts/keccak.py) | Dependency-free Keccak-256, so proxy slots are derived, not pasted |
 | [evm_selectors.py](skills/bounty-pilot/scripts/evm_selectors.py) | The functions a deployed contract accepts, read out of its dispatcher |
-| [Tests](tests) | 962 helper regression and workflow checks |
+| [Tests](tests) | 971 helper regression and workflow checks |
 
 ```sh
 S=skills/bounty-pilot/scripts/bounty.py
