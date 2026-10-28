@@ -1571,7 +1571,29 @@ def _evidence(state, reason):
     return {'state': state, 'reason': reason}
 
 
-def _evidence_kinds(build, tests, build_run, test_run, rpc, deep):
+def _history_evidence(history):
+    """Whether this checkout can answer a lens that reads commits.
+
+    A depth-1 clone answers a history sweep with the same empty result as a clean one. One pass
+    over such a checkout of trezor-firmware closed the target with "0 submittable" while the
+    defect it was closing over was live in `main` - the introducing commit was not in the clone
+    at all. `blind-spots.md` section 4 has the case.
+    """
+    blocker = load_impact_helper('cosmetic_regression').guard_history(history)
+    if blocker:
+        return _evidence(
+            'unavailable', blocker['output_excerpt'] + '. Every lens that reads commits - the '
+            'predecessor-base comparison, the cosmetic-regression sweep, "read the MR, not the '
+            'changelog" - can only answer empty from this checkout, and empty is not a clean '
+            'result: ' + blocker['remedy'])
+    return _evidence(
+        'available', f"{history.get('commits')} commits are readable from HEAD"
+        + (' (blobless partial clone: the history is complete and file contents fetch on '
+           'demand, so a diff sweep is slower)'
+           if history.get('blobless_partial_clone') else ''))
+
+
+def _evidence_kinds(build, tests, build_run, test_run, rpc, deep, history=None):
     """What this run can actually prove, one line per evidence kind.
 
     `unknown` is used only where nothing was measured - no --rpc, or a build nobody executed.
@@ -1624,6 +1646,8 @@ def _evidence_kinds(build, tests, build_run, test_run, rpc, deep):
             + ((f"exited {test_run['exit_code']}: " + test_run.get('output_excerpt', ''))
                if test_run and test_run.get('ran') else
                (test_run or {}).get('reason', 'was not executed')))
+    if history is not None:
+        kinds['commit-history'] = _history_evidence(history)
     on_chain = ('mainnet-fork', 'archive-state', 'historical-logs', 'bytecode-comparison')
     if rpc is None or not rpc['reachable']:
         state, reason = (('unknown', 'no --rpc was given, so no endpoint was probed')
@@ -1710,10 +1734,12 @@ def capability_probe(repo, run, rpc=None, deep=False, timeout=PROBE_TIMEOUT, ope
             else:
                 test_run = result
     probed_rpc = _probe_rpc(rpc, opener, timeout) if rpc else None
-    kinds = _evidence_kinds(build, tests, build_run, test_run, probed_rpc, deep)
+    history = load_impact_helper('cosmetic_regression').history_surface(root)
+    kinds = _evidence_kinds(build, tests, build_run, test_run, probed_rpc, deep, history)
     result = {'schema_version': SCHEMA_VERSION, 'skill_version': skill_version(),
               'probed_at': datetime.now(timezone.utc).isoformat(),
               'target_root': str(root), 'commit': git(root, 'rev-parse', 'HEAD').strip(),
+              'history_surface': history,
               'deep': bool(deep), 'timeout_seconds': timeout,
               'toolchains': toolchains, 'build_surface': build, 'test_surface': tests,
               'deep_build': build_run, 'deep_test': test_run,

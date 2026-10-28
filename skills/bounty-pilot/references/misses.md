@@ -364,3 +364,30 @@ own `/api/v0/reports/<id>` response.
 A button handled in JavaScript says nothing about authorization, and a 401 on one endpoint says
 nothing about the others. Pull every published report in Stage 1 and grep it
 (`references/intake.md`); record a source as unavailable only with the list of endpoints tried.
+
+## 34. Did you read the commits that promised only a cosmetic change — and could you?
+
+Two questions, and the second one first, because it is the one that fails silently.
+
+**Could you?** Run `git rev-list --count HEAD` and `git rev-parse --is-shallow-repository` on the
+checkout you reviewed. A depth-1 or shallow clone has no history to read, so every lens that reads
+commits — the predecessor-base comparison, the cosmetic-regression sweep, item 28's sibling sweep,
+"read the merge request, not the changelog" — returns the same empty answer it would return from a
+clean codebase, and the run writes that silence down as coverage. This is item 24 one level up: not
+a harness that never fired, but a checkout that made firing impossible, and nothing was checking.
+`capability-probe` now measures it as the `commit-history` evidence kind; a history lens may not
+record a clean result while that kind is `unavailable`. Full history costs almost nothing —
+`git clone --filter=blob:none --bare` carried 19,288 commits of trezor-firmware in 23 MB.
+
+A live pass closed a target with "0 submittable" over a depth-1 checkout. The defect it was closing
+over was live in the branch it never fetched, in a file that pass had open and quoted by line
+number, and the commit that introduced it was not in the clone at all.
+
+**Did you?** A security guard is rarely attacked; it is refactored away by someone fixing a
+complaint that a value appears twice on screen, and the commit message says it changes nothing.
+`cosmetic_regression.py` is the sweep: a semantic predicate (a declared path, a type check, an enum
+comparison, a formatter probe) disappearing from the removed lines while a comparison against
+rendered text appears in the added ones. `blind-spots.md` §4 has the worked case, the calibration
+numbers and the caution about what may be written up where. The commit vocabulary alone is not the
+signal — it passed 46% of commits on the calibration target — so do not ship the grep without the
+diff test.
