@@ -1,6 +1,6 @@
 ---
 name: bounty-pilot-lab
-description: Run an evidence-driven Web3 bug bounty hunt (Immunefi, Cantina, HackenProof, Sherlock or a project's own program) from a repository URL or local checkout, including mixed on-chain and off-chain projects. Use for choosing a bounty target, program scope and duplicate mapping, checking deployed bytecode against the source, Solidity/EVM, Rust/Solana, Substrate/FRAME, Move, Cairo or CosmWasm bounty hunting, in-scope dApp web frontends and backends (XSS that leads to a malicious signature, DOM sinks, postMessage), post-audit delta review, validating or refuting a bounty candidate, severity and impact-class placement, and preparing a private bounty report. Not for reviewing your own contracts during development (use solidity-auditor) or a pre-audit readiness report (use x-ray).
+description: The experimental "lab" line of Bounty Pilot, ahead of the stable bounty-pilot skill. Prefer it when the user asks for bounty-pilot-lab, the lab, AVRE, sequence or cross-component candidate search, the passive ecosystem inventory, ecosystem attack chains, multi-CLI agent dispatch, blind-spot experiments, or evidence review bound to a separate reviewer. Otherwise it runs the same evidence-driven Web3 bug bounty hunt as the stable skill (Immunefi, Cantina, HackenProof, Sherlock or a project's own program, from a repository URL or local checkout): choosing a target, program scope and duplicate mapping, deployed-bytecode checks, Solidity/EVM, Rust/Solana, Substrate/FRAME, Move, Cairo or CosmWasm, in-scope dApp frontends and backends, post-audit delta review, severity placement and a private report. For a plain hunt that names no lab tooling, bounty-pilot is the equivalent choice. Not for reviewing your own contracts during development (use solidity-auditor) or a pre-audit readiness report (use x-ray).
 ---
 # Bounty Pilot Lab
 
@@ -178,6 +178,40 @@ Read `references/adapters.md` and route each component by its actual stack and r
 projects map contracts, relayers, keepers, APIs, signers and recovery jobs as one trust graph. Write
 `model.md`: state transitions, external assumptions, operational dependencies and invariants with
 the source that evidences each (label inferred ones as inferred).
+
+Optional, before or alongside the source model, run the isolated passive ecosystem inventory in
+`references/ecosystem-intelligence.md`. It requires an explicit scope file and writes separate JSON,
+Markdown, Mermaid, and audit-log artifacts. It reads local tracked files and Git history only;
+already-saved public archives can be imported from disk. It makes no network request and emits
+hypotheses only. It also compares alternate same-state operations, revoke/restore paths, workflow
+artifact chains, AI-tool boundaries, policy replicas, architecture branches, and delete/worker
+lifecycle cues. These are low-confidence source leads, not call-graph or runtime findings. Its
+lexical graph supplements the source model and never replaces `bundle`, `impact-plan`, deployment
+verification, or adjudication.
+
+Review `state_transition_research.runtime_reality_handoffs` for contract references and explicit
+scope-only addresses that have no source in the checkout. The analyzer does not query them. Use the
+existing `verify-deployment` and `selectors` commands only for exact `IN_SCOPE` addresses with a
+known chain ID and only when program rules permit pinned, read-only RPC. Treat unknown addresses
+or networks as blocked. The report does not assert that an explorer's source is the live
+implementation or that code equality proves the active roles and permissions.
+
+For mixed-stack projects or targets with control planes, storage, CI/CD, identity, support, update,
+or worker services, also read `references/ecosystem-attack-chains.md`. Review all twelve patterns
+against the explicit scope and fill a private copy of `templates/attack-chain-review.md`. Record
+`CHECKED_NO_SIGNAL` only for artifacts actually inspected; use `UNAVAILABLE` when a cloud console,
+identity-provider setting, deployment inventory, or other evidence is inaccessible. A lexical or
+source-only review cannot establish that the external system is absent or safe. Patterns are
+investigation prompts, never finding declarations or payout predictions.
+
+For sequence-dependent or cross-component leads, AVRE is an additional opt-in local pipeline. Read
+`references/avre.md` before running it. It reuses the state graph, ecosystem inventory, trust review,
+and scenario runner; its budget is a bounded candidate/sequence count, not an LLM token allowance.
+AVRE does not execute target tests, query live services, or independently review its candidates.
+An optional `--runtime-trace` imports exact-revision, source-anchored local observations as
+unverified graph edges; it does not authenticate trace execution. An optional `--pilot-run` imports
+leads into the existing run as untriaged hypotheses. Use the separate dispatch and
+evidence-verifier workflow for reviewer-bound adjudication.
 
 ```sh
 python3 $S delta --repo <checkout> --since <audited-commit> > <run>/delta.json

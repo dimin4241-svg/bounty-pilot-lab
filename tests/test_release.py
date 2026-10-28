@@ -30,6 +30,22 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(plugin['name'], skill_name)
         self.assertTrue(plugin['homepage'].endswith('/bounty-pilot-lab'))
 
+    def test_marketplace_agrees_with_the_plugin_manifest(self):
+        """0.28.0 renamed the skill and plugin but left the marketplace declaring bounty-pilot
+        twice, so the README's own /plugin install line could not resolve. Nothing checked it."""
+        plugin = json.loads((ROOT / '.claude-plugin/plugin.json').read_text(encoding='utf-8'))
+        market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text(encoding='utf-8'))
+        self.assertEqual(market['name'], plugin['name'])
+        self.assertEqual([p['name'] for p in market['plugins']], [plugin['name']])
+
+    def test_lab_description_differs_from_the_stable_skill(self):
+        """An agent picks a skill from its description alone. While this line was byte-identical to
+        the stable bounty-pilot skill's, which of the two ran was arbitrary."""
+        head = (SKILL / 'SKILL.md').read_text(encoding='utf-8').split('\n---', 1)[0]
+        description = re.search(r'^description: (.+)$', head, re.M).group(1)
+        self.assertIn('AVRE', description)
+        self.assertIn('bounty-pilot-lab', description)
+
     def test_changelog_leads_with_the_current_version(self):
         version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
         first = re.search(r'^## (\S+)', (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M)

@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.33.0
+
+### Land the work that only existed installed, and stop the two skills colliding
+
+**0.29.0 through 0.32.0 were never released.** AVRE, Ecosystem Intelligence and the attack-chain
+review were written straight into `~/.claude/skills/bounty-pilot-lab` and never committed: 4,160
+lines in six scripts, three references, one template and two `bounty.py` subcommands, with no
+branch, no tag and no backup. The documented install route opens with
+`rm -rf ~/.claude/skills/bounty-pilot-lab`, so one reinstall would have deleted all of it. This
+release is that installed tree, committed as it stood, plus the manifest and documentation fixes
+below. **None of it has a test yet** — the suite is the 0.28.0 suite and mentions none of these
+modules, so treat every claim here as unverified by CI.
+
+- **`ecosystem-intel` (new subcommand, `ecosystem_intelligence.py`).** A passive, local inventory
+  behind an explicit scope file: tracked files and Git history only, with already-saved public
+  archives importable from disk. It makes no network request and emits hypotheses, never findings.
+  An omitted entity inherits no permission and active method names are rejected even when a scope
+  file lists them. Writes JSON, Markdown, Mermaid and an audit log. Unscoped targets come back
+  `UNKNOWN` and it still runs — read the scope field before reading the leads.
+- **`avre` (new subcommand, `avre.py` with `avre_sequence.py`, `avre_economics.py`,
+  `avre_runtime.py`).** An opt-in local pipeline for sequence-dependent and cross-component
+  hypotheses, over nine modules from `impossible-state` to `hypothesis-ranking`. It reuses the
+  state graph, the ecosystem inventory, the blind-spot trust review and the scenario runner in
+  dry-run mode; it always passes `allow_exec=False`, so it executes no target test, and it queries
+  no live service. Its budget is a bounded candidate and sequence count, not a token allowance.
+  Scores order a queue and nothing else. Unlike `ecosystem-intel` it refuses outright without an
+  `IN_SCOPE` repository rule that matches the checkout's `origin`.
+- **`references/ecosystem-attack-chains.md` and `templates/attack-chain-review.md` (new).** Twelve
+  patterns for control planes, storage, CI/CD, identity, support, update and worker services.
+  `CHECKED_NO_SIGNAL` is only for an artifact actually inspected; anything inaccessible is
+  `UNAVAILABLE`, because a source-only review cannot establish that an external system is absent
+  or safe.
+- **`transition_research.py` (new).** Alternate same-state operations, revoke/restore paths,
+  workflow artifact chains, AI-tool boundaries, policy replicas, architecture branches and
+  delete/worker lifecycle cues, as low-confidence source leads. Its
+  `runtime_reality_handoffs` names scope-only addresses with no source in the checkout; the
+  analyzer never queries them.
+
+### The lab and the stable skill no longer compete for the same trigger
+
+- **`description:` rewritten.** It was byte-identical to the stable `bounty-pilot` skill's. An agent
+  picks a skill from that line alone, so with both installed the choice was arbitrary and a hunt
+  could silently run the older copy. The lab's line now leads with its own tooling — AVRE, the
+  ecosystem inventory, attack chains, agent dispatch, blind-spot experiments — and says plainly that
+  a plain hunt naming none of them can take either skill.
+- **`marketplace.json` agreed with `plugin.json` at last.** 0.28.0 claimed "the installed skill and
+  Claude plugin are named `bounty-pilot-lab`" but left the marketplace declaring `bounty-pilot`
+  twice, so the README's own `/plugin install bounty-pilot-lab@bounty-pilot-lab` could not resolve
+  and the plugin route would have registered the skill under a directory name that contradicts its
+  frontmatter. `test_release.py` compared the three `VERSION` files and `plugin.json` but never
+  `marketplace.json`, which is why it passed; it now checks that too.
+- **Both READMEs** carry the pre-reinstall `diff` and the reason for it, and warn against keeping two
+  skills with the same description. The install check they already documented
+  (`cat ~/.claude/skills/bounty-pilot-lab/VERSION` matches `VERSION`) was failing at 0.33.0 against
+  0.28.0 and now holds.
+
 ## 0.28.0
 
 ### Make parallel dispatch recoverable and evidence reviews session-bound
