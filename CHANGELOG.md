@@ -2,41 +2,16 @@
 
 ## 0.33.0
 
-### Land the work that only existed installed, and stop the two skills colliding
+### Add state-transition, agentic, CI, and runtime handoff research
 
-**0.29.0 through 0.32.0 were never released.** AVRE, Ecosystem Intelligence and the attack-chain
-review were written straight into `~/.claude/skills/bounty-pilot-lab` and never committed: 4,160
-lines in six scripts, three references, one template and two `bounty.py` subcommands, with no
-branch, no tag and no backup. The documented install route opens with
-`rm -rf ~/.claude/skills/bounty-pilot-lab`, so one reinstall would have deleted all of it. This
-release is that installed tree, committed as it stood, plus the manifest and documentation fixes
-below. **None of it has a test yet** — the suite is the 0.28.0 suite and mentions none of these
-modules, so treat every claim here as unverified by CI.
-
-- **`ecosystem-intel` (new subcommand, `ecosystem_intelligence.py`).** A passive, local inventory
-  behind an explicit scope file: tracked files and Git history only, with already-saved public
-  archives importable from disk. It makes no network request and emits hypotheses, never findings.
-  An omitted entity inherits no permission and active method names are rejected even when a scope
-  file lists them. Writes JSON, Markdown, Mermaid and an audit log. Unscoped targets come back
-  `UNKNOWN` and it still runs — read the scope field before reading the leads.
-- **`avre` (new subcommand, `avre.py` with `avre_sequence.py`, `avre_economics.py`,
-  `avre_runtime.py`).** An opt-in local pipeline for sequence-dependent and cross-component
-  hypotheses, over nine modules from `impossible-state` to `hypothesis-ranking`. It reuses the
-  state graph, the ecosystem inventory, the blind-spot trust review and the scenario runner in
-  dry-run mode; it always passes `allow_exec=False`, so it executes no target test, and it queries
-  no live service. Its budget is a bounded candidate and sequence count, not a token allowance.
-  Scores order a queue and nothing else. Unlike `ecosystem-intel` it refuses outright without an
-  `IN_SCOPE` repository rule that matches the checkout's `origin`.
-- **`references/ecosystem-attack-chains.md` and `templates/attack-chain-review.md` (new).** Twelve
-  patterns for control planes, storage, CI/CD, identity, support, update and worker services.
-  `CHECKED_NO_SIGNAL` is only for an artifact actually inspected; anything inaccessible is
-  `UNAVAILABLE`, because a source-only review cannot establish that an external system is absent
-  or safe.
-- **`transition_research.py` (new).** Alternate same-state operations, revoke/restore paths,
-  workflow artifact chains, AI-tool boundaries, policy replicas, architecture branches and
-  delete/worker lifecycle cues, as low-confidence source leads. Its
-  `runtime_reality_handoffs` names scope-only addresses with no source in the checkout; the
-  analyzer never queries them.
+- Extended passive `ecosystem-intel` with same-file alternative-path and revoke/restore comparisons,
+  delete-to-worker lifecycle leads, and cross-file policy-guard drift observations.
+- Added source-anchored static triage for untrusted data reaching privileged CI/artifact/release
+  steps or AI-agent tools, explicit 32/64-bit codec branches, and lower-layer dependency surfaces.
+- Connected in-scope source contract references to the existing `verify-deployment` and
+  `selectors` read-only workflow as pending handoffs. The analyzer makes no chain/RPC calls.
+- Added synthetic fixtures and regression tests. Outputs remain low-confidence hypotheses; the
+  20-case historical before/after benchmark has not been curated or run.
 
 ### The lab and the stable skill no longer compete for the same trigger
 
@@ -44,17 +19,79 @@ modules, so treat every claim here as unverified by CI.
   picks a skill from that line alone, so with both installed the choice was arbitrary and a hunt
   could silently run the older copy. The lab's line now leads with its own tooling — AVRE, the
   ecosystem inventory, attack chains, agent dispatch, blind-spot experiments — and says plainly that
-  a plain hunt naming none of them can take either skill.
-- **`marketplace.json` agreed with `plugin.json` at last.** 0.28.0 claimed "the installed skill and
-  Claude plugin are named `bounty-pilot-lab`" but left the marketplace declaring `bounty-pilot`
-  twice, so the README's own `/plugin install bounty-pilot-lab@bounty-pilot-lab` could not resolve
-  and the plugin route would have registered the skill under a directory name that contradicts its
-  frontmatter. `test_release.py` compared the three `VERSION` files and `plugin.json` but never
-  `marketplace.json`, which is why it passed; it now checks that too.
-- **Both READMEs** carry the pre-reinstall `diff` and the reason for it, and warn against keeping two
-  skills with the same description. The install check they already documented
-  (`cat ~/.claude/skills/bounty-pilot-lab/VERSION` matches `VERSION`) was failing at 0.33.0 against
-  0.28.0 and now holds.
+  a plain hunt naming none of them can take either skill. `test_release.py` checks it stays distinct.
+  0.31.0 had already aligned the plugin and marketplace IDs, but a unique *name* does not help an
+  agent that only reads the description.
+- **Both READMEs** carry a `diff` to run before the reinstall `rm -rf`, because the AVRE and
+  ecosystem work sat in `~/.claude/skills/bounty-pilot-lab` ahead of this branch for two days and one
+  reinstall would have deleted it.
+
+## 0.32.0
+
+### Add a prioritized ecosystem attack-chain review playbook
+
+- Added twelve evidence-driven research patterns for stale control-plane agents, data retained
+  after deletion, incomplete permission migrations, updater trust, legacy CI workflows, restored
+  stale authorization, orphaned OAuth callbacks, cloned machine identities, support consoles,
+  stale domains, controller/worker authorization gaps, and security-version drift.
+- Each pattern names where to inspect, the invariant to prove, disconfirming evidence, and a safe
+  local candidate/control test. The user's Very High/High labels order investigation effort; they
+  are not exploit likelihood or payout estimates.
+- Wired the playbook into the mixed-stack workflow and added a private-run coverage ledger template.
+  Missing source or external control-plane evidence stays `UNAVAILABLE`/`UNASSESSED`; no signal is
+  never reported as proof of safety.
+- Added release tests that check all twelve patterns and required evidence fields are present.
+
+## 0.31.0
+
+### Fix plugin identity and install the Lab skill for both local agents
+
+- Aligned the Claude Code marketplace and plugin entry IDs with the unique `bounty-pilot-lab`
+  skill name, so the documented `bounty-pilot-lab@bounty-pilot-lab` install command resolves.
+- Documented user-scope skill installation for Codex at `~/.codex/skills/bounty-pilot-lab` and
+  Claude Code at `~/.claude/skills/bounty-pilot-lab`. The original `bounty-pilot` paths remain
+  separate.
+- Added release checks that catch marketplace/plugin/skill identity drift.
+
+## 0.30.0
+
+### Advanced Vulnerability Research Engine MVP
+
+- Added the opt-in `bounty.py avre` workflow with explicit repository scope, passive-method
+  enforcement, bounded candidate budgets, sequential module activation, a local-input fingerprint,
+  resumable checkpoints and an OS-released output lock. It writes private JSON/Markdown/Mermaid
+  outputs, an audit log and a skeptical-review handoff packet. No target code or network is run.
+- Added dependency-aware beam sequence planning and a replay-predicate sequence shrinker; exact
+  integer candidate/control economics comparison bound to the analyzed commit; impossible-state,
+  failure/recovery, cross-reality, identity/context and historical patch leads; attack graph and
+  separate heuristic ranking dimensions. These are research leads and test plans, not findings.
+- Reused `state_graph.py`, `ecosystem_intelligence.py`, `blindspot_engine.py` and
+  `scenario_runner.py`. Independent review remains a separate dispatch/evidence-verifier stage.
+  Resource output records local wall/CPU time, source counts and zero model/network calls.
+- Added synthetic positive/negative fixtures and AVRE integration/unit tests. No historical
+  held-out benchmark corpus was supplied, so recall, false-positive rate and uplift remain
+  unmeasured. AVRE does not fetch remote history, inspect live chain roles, execute native tests,
+  or produce an independent reviewer verdict.
+
+## 0.29.0
+
+### Passive Ecosystem Intelligence MVP
+
+- Added the isolated `ecosystem_intelligence.py` module and `ecosystem-intel` CLI command. The
+  explicit scope file classifies repositories, domains, URLs, contracts, networks, and check
+  methods. Active methods are rejected; the analysis itself performs zero network requests.
+- Inventories tracked manifests, source, deployment configuration, endpoint references, component
+  boundaries, local Git history/tags, migration paths, and security-shaped patch-token changes.
+  Locally supplied public archive snapshots are accepted only when their URLs classify in scope.
+- Emits JSON provenance, Markdown report, Mermaid dependency/data-flow candidates, and a
+  timestamped redacted audit log. Ranked records include prerequisites, attacker control,
+  invariant, possible impact, reachable-path status, supporting and disconfirming evidence, and
+  separate heuristic dimensions. Historical patch-token changes are compared with current lexical
+  function chunks as low-confidence patch-variant candidates.
+- Each hypothesis receives an unexecuted local verification plan and a skeptical-review checklist.
+  These are not tests, an independent reviewer, exploit proof, or a verdict. Added synthetic
+  fixtures and regression tests. Remote PR/advisory/archive retrieval and a measured benchmark are
+  not implemented.
 
 ## 0.28.0
 

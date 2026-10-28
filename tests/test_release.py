@@ -26,17 +26,12 @@ class ReleaseTests(unittest.TestCase):
         skill_text = (SKILL / 'SKILL.md').read_text(encoding='utf-8')
         skill_name = re.search(r'^name: (\S+)$', skill_text, re.M).group(1)
         plugin = json.loads((ROOT / '.claude-plugin/plugin.json').read_text(encoding='utf-8'))
+        marketplace = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text(encoding='utf-8'))
         self.assertEqual(skill_name, 'bounty-pilot-lab')
         self.assertEqual(plugin['name'], skill_name)
         self.assertTrue(plugin['homepage'].endswith('/bounty-pilot-lab'))
-
-    def test_marketplace_agrees_with_the_plugin_manifest(self):
-        """0.28.0 renamed the skill and plugin but left the marketplace declaring bounty-pilot
-        twice, so the README's own /plugin install line could not resolve. Nothing checked it."""
-        plugin = json.loads((ROOT / '.claude-plugin/plugin.json').read_text(encoding='utf-8'))
-        market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text(encoding='utf-8'))
-        self.assertEqual(market['name'], plugin['name'])
-        self.assertEqual([p['name'] for p in market['plugins']], [plugin['name']])
+        self.assertEqual(marketplace['name'], skill_name)
+        self.assertEqual([entry['name'] for entry in marketplace['plugins']], [skill_name])
 
     def test_lab_description_differs_from_the_stable_skill(self):
         """An agent picks a skill from its description alone. While this line was byte-identical to
