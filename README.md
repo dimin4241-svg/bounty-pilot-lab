@@ -85,6 +85,20 @@ The skill is self-contained (about 2 MB: `SKILL.md`, `references/`, `scripts/`, 
 needs nothing but Python 3.9+ and Git. **Install by copying from git, and never edit the installed
 copy** — it is a build artifact that no reinstall preserves and every session shares.
 
+That `rm -rf` is irreversible, and the rule above has been broken before: 0.29–0.32 never existed,
+because the AVRE and ecosystem work lived only in the installed copy until 0.33.0 landed it here.
+**Diff before you reinstall**, and commit anything the clone is missing first:
+
+```sh
+diff -rq --exclude=__pycache__ bounty-pilot-lab/skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
+```
+
+If you also have the stable [bounty-pilot](https://github.com/dimin4241-svg/bounty-pilot) skill
+installed, keep the two `description:` lines different. An agent picks a skill from that line alone,
+so two identical ones make the choice arbitrary — a hunt can silently run the older copy. This
+skill's description names its lab-only tooling (AVRE, the ecosystem inventory, agent dispatch) for
+exactly that reason.
+
 **Without installing anything**, point the agent at the file:
 
 ```text

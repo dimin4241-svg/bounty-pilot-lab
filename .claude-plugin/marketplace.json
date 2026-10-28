@@ -1,14 +1,14 @@
 {
-  "name": "bounty-pilot",
+  "name": "bounty-pilot-lab",
   "owner": {
     "name": "dimin4241-svg",
     "url": "https://github.com/dimin4241-svg"
   },
   "plugins": [
     {
-      "name": "bounty-pilot",
+      "name": "bounty-pilot-lab",
       "source": "./",
-      "description": "Evidence-driven Web3 bug bounty workflow with funnel tooling and submission gates."
+      "description": "Evidence-driven Web3 bug bounty workflow with funnel tooling, submission gates, AVRE sequence search and the passive ecosystem inventory."
     }
   ]
 }

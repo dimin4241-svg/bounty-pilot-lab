@@ -11713,6 +11713,42 @@ def build_parser():
     call.add_argument('--sig', required=True)
     call.add_argument('--arg', action='append', default=[])
     call.add_argument('--block', default='latest')
+
+    ecosystem = sub.add_parser(
+        'ecosystem-intel',
+        help='passively map scoped dependencies, state transitions, trust boundaries and hypotheses')
+    ecosystem.add_argument('--repo', required=True, help='local target checkout')
+    ecosystem.add_argument('--scope', required=True, help='explicit ecosystem scope JSON')
+    ecosystem.add_argument('--out', required=True, help='private output directory outside the checkout')
+    ecosystem.add_argument('--archive-index', default=None,
+                           help='local index of previously saved, in-scope public archive files')
+    ecosystem.add_argument('--known-issues', default=None,
+                           help='local known-issue corpus for lexical novelty scoring')
+
+    avre = sub.add_parser(
+        'avre', help='run bounded, scope-bound Advanced Vulnerability Research Engine')
+    avre.add_argument('--repo', required=True, help='local target checkout')
+    avre.add_argument('--scope', required=True, help='explicit ecosystem scope JSON')
+    avre.add_argument('--out', required=True, help='private output directory outside target checkout')
+    avre.add_argument('--modules', default=None,
+                      help='comma-separated modules; defaults to all AVRE research modules')
+    avre.add_argument('--budget', type=int, default=200,
+                      help='maximum ranked candidates and sequence exploration budget')
+    avre.add_argument('--max-sequence-length', type=int, default=5)
+    avre.add_argument('--beam-width', type=int, default=16)
+    avre.add_argument('--resume', action='store_true',
+                      help='resume only a checkpoint with a matching input fingerprint')
+    avre.add_argument('--trust-model', default=None, help='local human-built trust-flow JSON')
+    avre.add_argument('--measurements', default=None, help='local paired economic measurement JSON')
+    avre.add_argument('--known-issues', default=None, help='local known-issue corpus')
+    avre.add_argument('--local-plan', default=None,
+                      help='candidate/control plan for scenario-runner dry-run only')
+    avre.add_argument('--baseline', default=None, help='prior JSON report for structural comparison')
+    avre.add_argument('--archive-index', default=None, help='local index of saved in-scope archives')
+    avre.add_argument('--runtime-trace', default=None,
+                      help='pinned caller-supplied local trace JSON; imported as unverified graph edges')
+    avre.add_argument('--pilot-run', default=None,
+                      help='existing Bounty Pilot run to receive untriaged AVRE LEAD records')
     return parser
 
 
@@ -11869,6 +11905,24 @@ def main(argv=None):
             return 0
         if args.action == 'eth-call':
             print(json.dumps(eth_call(args.rpc, args.to, args.sig, args.arg, args.block), indent=2))
+            return 0
+        if args.action == 'ecosystem-intel':
+            helper = load_impact_helper('ecosystem_intelligence')
+            result = helper.analyze(args.repo, args.scope, args.out,
+                                    args.archive_index, args.known_issues)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.action == 'avre':
+            helper = load_impact_helper('avre')
+            selected = ([part.strip() for part in args.modules.split(',') if part.strip()]
+                        if args.modules else None)
+            result = helper.analyze(
+                args.repo, args.scope, args.out, selected, args.budget,
+                args.max_sequence_length, args.beam_width, args.resume,
+                args.trust_model, args.measurements, args.known_issues,
+                args.local_plan, args.baseline, args.archive_index,
+                args.runtime_trace, args.pilot_run)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         return 2
     except (OSError, ValueError, KeyError, subprocess.SubprocessError,
