@@ -1,0 +1,7 @@
+{
+  "name": "ecosystem-fixture",
+  "dependencies": {
+    "@layerzerolabs/oapp-evm": "1.0.0",
+    "stripe": "1.0.0"
+  }
+}

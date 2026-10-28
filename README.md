@@ -18,6 +18,53 @@
 
 ---
 
+## What changed in 0.33
+
+- **State-transition and trust-handoff research.** `ecosystem-intel` now flags source-anchored
+  comparison leads for alternate create/restore paths, revoked-state restoration, delete/worker
+  lifecycle, replicated authorization policies, CI artifact/release flows, AI-agent tool
+  boundaries, architecture-specific codecs, and lower-layer components. Explicitly scoped contract
+  addresses also enter the graph when the repo has no source; in-scope addresses get a pending
+  handoff to existing runtime verification commands, but no chain reads run automatically. These
+  are unmeasured hypotheses, not findings. [Details and limits](skills/bounty-pilot/references/ecosystem-intelligence.md).
+
+## What changed in 0.32
+
+- **Twelve prioritized ecosystem attack-chain patterns.** A new playbook guides mixed-stack
+  research into stale privileged agents, deletion/restore lifecycle, permission migrations,
+  updaters, CI workflows, OAuth, machine cloning, support paths, stale domains, worker boundaries,
+  and version drift. Each direction requires source evidence, a falsifier and a safe local
+  candidate/control test. Priorities guide research effort; they do not predict bugs or payouts.
+  See [the playbook and limits](skills/bounty-pilot/references/ecosystem-attack-chains.md).
+
+## What changed in 0.31
+
+- **The Lab install has one identity across Codex and Claude Code.** The Claude Code marketplace
+  and plugin IDs now match `bounty-pilot-lab`; the install command resolves to the Lab plugin.
+  Copy-install instructions cover both `~/.codex/skills/bounty-pilot-lab` and
+  `~/.claude/skills/bounty-pilot-lab`. The original `bounty-pilot` skill remains separate.
+
+## What changed in 0.30
+
+- **Opt-in Advanced Vulnerability Research Engine (AVRE).** `bounty.py avre` combines the existing
+  lexical state graph, passive Ecosystem Intelligence, blind-spot trust review and dry-run scenario
+  planner with bounded sequence mutations, economic differential plans, failure/recovery leads,
+  identity-context checks, historical leads and a hypothesis graph. It requires an explicit
+  in-scope local repository and passive methods, makes no network calls and never executes target
+  code. JSON, Markdown, Mermaid and a skeptical-review handoff are written to a private output
+  directory. Optional local trace import keeps edges unverified, and `--pilot-run` transfers
+  candidates only as untriaged hypotheses. Candidates remain unverified. See
+  [AVRE architecture, options and limits](skills/bounty-pilot/references/avre.md).
+
+## What changed in 0.29
+
+- **Optional passive Ecosystem Intelligence.** The separate `ecosystem-intel` command classifies
+  repository, domain, URL, contract, network, and method scope; inventories integrations and local
+  Git history; draws low-confidence component boundaries; and ranks evidence-backed hypotheses.
+  It reads tracked local files and imported archive snapshots only. It makes zero network requests,
+  never validates credentials, and never calls a hypothesis a finding. See
+  [the scope format and limitations](skills/bounty-pilot/references/ecosystem-intelligence.md).
+
 ## What is Bounty Pilot?
 
 Bounty Pilot gives a coding agent a repeatable workflow for **Solidity/EVM audits, Rust/Solana review, local proof-of-concept validation, and bug bounty report preparation**. It keeps technical validity, severity, program eligibility, and known-issue checks separate.
@@ -71,22 +118,24 @@ GitHub access. Three routes, in order of convenience:
 /plugin install bounty-pilot-lab@bounty-pilot-lab
 ```
 
-**By copying the skill** into the agent's skills directory — the most portable route, and the one to
-use when the plugin command cannot reach a private repository:
+**By copying the skill** into the agent's user skills directory — use this when the plugin command
+cannot reach the private repository, or to install the same skill for Codex and Claude Code:
 
 ```sh
 git clone https://github.com/dimin4241-svg/bounty-pilot-lab.git
-mkdir -p ~/.claude/skills
-rm -rf ~/.claude/skills/bounty-pilot-lab
-cp -r bounty-pilot-lab/skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
+cd bounty-pilot-lab
+mkdir -p ~/.codex/skills ~/.claude/skills
+rm -rf ~/.codex/skills/bounty-pilot-lab ~/.claude/skills/bounty-pilot-lab
+cp -R skills/bounty-pilot ~/.codex/skills/bounty-pilot-lab
+cp -R skills/bounty-pilot ~/.claude/skills/bounty-pilot-lab
 ```
 
 The skill is self-contained (about 2 MB: `SKILL.md`, `references/`, `scripts/`, `templates/`) and
 needs nothing but Python 3.9+ and Git. **Install by copying from git, and never edit the installed
 copy** — it is a build artifact that no reinstall preserves and every session shares.
 
-That `rm -rf` is irreversible, and the rule above has been broken before: 0.29–0.32 never existed,
-because the AVRE and ecosystem work lived only in the installed copy until 0.33.0 landed it here.
+That `rm -rf` is irreversible, and the rule above has been broken before: the AVRE and ecosystem
+work sat in the installed copy for two days, ahead of every branch, before it was merged.
 **Diff before you reinstall**, and commit anything the clone is missing first:
 
 ```sh
@@ -110,8 +159,11 @@ In a cloud or container session the filesystem is discarded when the session end
 has to happen per session: attach this repository to the session alongside the target, or install it
 from a `SessionStart` hook.
 
-Check the install took: `cat ~/.claude/skills/bounty-pilot-lab/VERSION` should match this repository's
-`VERSION`, and `python3 -m unittest discover -s tests` in the clone should be green.
+For future updates, run `git pull --ff-only origin main` in the clone and repeat the copy commands.
+Check both installs with `cat ~/.codex/skills/bounty-pilot-lab/VERSION` and
+`cat ~/.claude/skills/bounty-pilot-lab/VERSION`; they should match this repository's `VERSION`.
+Start a new agent session after installing so it discovers the updated skill. Run
+`python3 -m unittest discover -s tests` in the clone to check the repository.
 
 ### 2. Run it
 
@@ -142,6 +194,7 @@ A bounty program URL is useful, but optional for starting source review. Without
 | **Live-constant checks** | Reads a hardcoded index, address, decimal or feed id against live chain state, because a constant is a claim about the outside world |
 | **Twenty-plus aimed lenses** | Hunts time, lineage, observability, aggregates, parameter authorization, persistence, live truth and the Solana account model |
 | **Separated generation and refutation** | Hunt passes state claims at full strength; a later pass attacks each one against five triage gates plus a separate evidence check |
+| **Passive ecosystem intelligence** | Explicit scope classification, local dependency/history inventory, low-confidence cross-component graph, and ranked hypotheses; zero network requests |
 | **Evidence requirements** | Verified findings need a reproducible PoC, negative control, impact numbers and source-integrity evidence; every open lead needs a decisive next experiment |
 | **Submission gate** | Checks deployment, scope, severity, novelty, impact, objections and a fresh personal-history comparison before a report is ready |
 | **Resumable findings** | Preserves hypotheses and rejection reasons; reopens a candidate when the protection that refuted it is edited |
@@ -325,6 +378,8 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [Hunt agents](skills/bounty-pilot/references/hunt-agents) | The hunt lenses and their shared stance and output contract |
 | [Pass protocol](skills/bounty-pilot/references/passes.md) | What each pass aims at, dispatch, the known-hypotheses floor, stop rules |
 | [Isolated agent dispatch](skills/bounty-pilot/references/agent-dispatch.md) | Separate blind and diverse-strategy jobs across four agent CLIs, with persisted results and cost coverage |
+| [Ecosystem Intelligence](skills/bounty-pilot/references/ecosystem-intelligence.md) | Passive scope file, provenance outputs, and analysis limits |
+| [Advanced Vulnerability Research Engine](skills/bounty-pilot/references/avre.md) | Bounded sequence/economic research, safe scope, artifacts, checkpoints, and limits |
 | [Reading SOP](skills/bounty-pilot/references/sop.md) | How to read code: plain restatement, obligation tracing, backward reads, escalation |
 | [Adjudication](skills/bounty-pilot/references/adjudicate.md) | The two-round exchange, the five gates, outcomes and promotions |
 | [Triage agent](skills/bounty-pilot/references/triage.md) | The agent paid to reject, and the anchors it must produce |
@@ -347,7 +402,7 @@ Inspect and pin upstream revisions before use. Delegate bounded tasks instead of
 | [experimenter.md](skills/bounty-pilot/references/experimenter.md) | Native experiment drafting and independent evidence review |
 | [keccak.py](skills/bounty-pilot/scripts/keccak.py) | Dependency-free Keccak-256, so proxy slots are derived, not pasted |
 | [evm_selectors.py](skills/bounty-pilot/scripts/evm_selectors.py) | The functions a deployed contract accepts, read out of its dispatcher |
-| [Tests](tests) | 923 helper regression and workflow checks |
+| [Tests](tests) | 971 helper regression and workflow checks |
 
 ```sh
 S=skills/bounty-pilot/scripts/bounty.py
