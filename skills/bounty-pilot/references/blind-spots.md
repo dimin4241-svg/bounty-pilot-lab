@@ -174,6 +174,9 @@ vendor's ladder — the two published payouts closest to this shape were 400 and
 it is the loss route: which deployed contract turns the hidden field into a transfer, and who ends
 up holding what. Build that route, or file the cheap one knowingly.
 
+A sibling generator for the same surface, aimed at the accept-set rather than at a commit, is
+§12 - it covers two more of these bugs and the sweep here covers none of them.
+
 **One caution on writing these up here.** A finding of this shape that is under coordinated
 disclosure belongs in the run directory, not in this file: the public commit, the public issue and
 the public diff are citable, the exploit construction is not.
@@ -408,6 +411,59 @@ The inverse trap is §5's: a guard that *looks* live but is never called. A cont
 — appears to be a dead blacklist on a live bridged token. Resolve the **parent's** import, not the
 project default: in that case a vendored dependency pinned `@openzeppelin/contracts@4.8.3` itself, so
 the hook was live and the finding was nothing. The versioned remapping in `foundry.toml` is the tell.
+
+## 12. A summary flow accepts a case it cannot render
+
+When a device recognises a known transaction shape and draws a curated screen instead of the
+generic field-by-field one, two sets have to match: what the recogniser **accepts** and what the
+curated screen **shows**. Where the accept-set is wider, the host varies a field nobody is shown,
+and it does so behind the screen that looks the most trustworthy - the one that says "Stake" rather
+than listing forty raw parameters.
+
+The tell that this is the defect and not a cosmetic gap: the fix narrows the *recogniser*. Both
+calibration cases were closed by falling back to the generic UI, not by showing more.
+
+```sh
+python3 <skill-dir>/scripts/summary_flow_gap.py \
+    --summary <module with the recogniser and the curated flow> \
+    --instructions <module declaring the accepted types and their fields> \
+    [--guard 'is_address_reference|...']
+```
+
+Two checks, both keyed on the instruction class and field rather than on the local variable, since
+the same instruction is reached as a list, as `xs[0]` and as a loop variable:
+
+- **`unconstrained-unrendered`** - a declared field of an accepted class that the flow never
+  mentions, on an object it does not hand whole to the screen. Nothing reads it, nothing shows it,
+  the host picks it. Calibrated on Trezor's Solana staking flow, which accepted
+  `lockup.epoch` and `lockup.unix_timestamp` and displayed neither: a lockup in the distant future
+  loses access to the funds. Fixed by `5a5305091`.
+- **`reference-used-by-value`** - an address-typed field read as `x.field[0]`, the resolved half of
+  the pair, where no guard on that path names `x.field`. Where an address may be an address-table
+  reference, the first element is the *table's* address. Calibrated on
+  `fix(core): solana transfer showing LUT address`.
+
+Three refinements decide whether this is an instrument or noise, and all three come from the
+calibration:
+
+1. **A `[0]` read that only feeds a comparison is self-limiting** - a table reference makes the
+   comparison fail, so the flow falls back instead of misleading. Only a read that becomes a value
+   the flow carries is a lead; the rest go to `notes`.
+2. **A recogniser that renders nothing is not judged** - which of its accepted fields are invisible
+   is decided at its call site. It gets a note.
+3. **A guard, or a read, inside a predicate the flow calls counts for the flow** - one level,
+   because that is how these flows are written: the recogniser guards, the renderer trusts it.
+
+The run that matters most is the one against a **partial** fix. Trezor's first patch guarded one of
+three identical accounts; the generator still reports the other two, and the second patch
+(`cd6e7596b`, "for more ALT references") is what closed them. A generator that went quiet on the
+first patch would have been worse than nothing. `tests/fixtures/summary-flow-gap/s2-partial.py` is
+that revision, asserted on its own.
+
+Where this came from: of the six confirmation-suppression bugs Trezor fixed in 2.12.5 and 2.13.0,
+the cosmetic-regression sweep in §4 catches **none** - five were never regressions at all, the field
+was never shown from the commit that added the feature. Each needs its own generator; this is the
+first of them, and it covers two of the six.
 
 ## Recording a clean result
 
