@@ -174,9 +174,11 @@ vendor's ladder — the two published payouts closest to this shape were 400 and
 it is the loss route: which deployed contract turns the hidden field into a transfer, and who ends
 up holding what. Build that route, or file the cheap one knowingly.
 
-Sibling generators for the same surface: §12 aims at the accept-set rather than at a commit, and
-§13 at a suppression gate with no witness. Between the three, four of those six bugs are covered;
-this sweep alone covers none of them.
+Sibling generators for the same surface: §12 aims at the accept-set rather than at a commit, §13 at
+a suppression gate with no witness, §14 at a display rule keyed on a meaningful sentinel. Between
+the four, five of those six bugs are covered; this sweep alone covers none of them. The one still
+uncovered is a redesign commit that simply deletes a confirmation field - the inverse of this
+sweep, looking for removed render calls rather than replaced predicates.
 
 **One caution on writing these up here.** A finding of this shape that is under coordinated
 disclosure belongs in the run directory, not in this file: the public commit, the public issue and
@@ -570,13 +572,64 @@ honest way to answer "too noisy": go find out what the noise was made of.
 **What this does not cover, deliberately.** A gate whose witness is real but is *derived from the
 rendered text* rather than from the fact of rendering reads as clean here - the flag is written in
 the loop that builds the screen, which is exactly where a witness belongs. That shape is §4's
-sweep. Between them: §13 catches a gate with no witness at all, §4 catches a witness that is a
-string comparison, and §12 catches a field the curated screen never had. The six suppression bugs
-Trezor fixed across 2.12.5 and 2.13.0 needed all three and are still not fully covered - §13 takes
-one more of them.
+sweep. Between the four: §13 catches a gate with no witness at all, §4 a witness that is a string
+comparison, §12 a field the curated screen never had, and §14 a display rule keyed on a sentinel
+that means something. Five of the six suppression bugs Trezor fixed across 2.12.5 and 2.13.0 are
+covered; the last one is a redesign commit that deletes a field outright.
 
 The triage step in §12 applies to every row here as well, and it is where most of them will die:
 name the benign value, follow the condition out of the module, then price the counterfactual.
+
+## 14. A display rule keyed on a sentinel that carries meaning
+
+A rendering loop drops a field when its value is `None`, zero or empty, and licenses that with a
+*type-level* claim: the schema says this field is optional, so absence cannot matter. Sometimes
+absence **is** the action. `None` can mean *remove the authority*; zero can mean *unset the
+lockup*. The user then confirms a transaction whose most consequential field was the one that
+looked empty.
+
+The calibration case is the whole bug in one line, from Trezor's Solana confirmation loop:
+
+```python
+if property_template.optional and value is None:
+    continue
+```
+
+Their own commit says why: "optional params ... were never displayed when their value is None,
+even though **None may encode an action rather than the absence of one**". In the Token programs'
+`SetAuthority`, `None` means remove the authority. The fix made the skip opt in **per field** -
+`default_value_to_hide: "none"` in the program definition - and renders the string `"None"`
+otherwise (`0fea14829`, firmware 2.13.0).
+
+```sh
+python3 <skill-dir>/scripts/sentinel_skip.py --source <module> [--source <module> ...]
+```
+
+The question is never *does it skip on a sentinel* - every UI does - but **what licenses the
+skip**:
+
+- a **per-field policy** read from the definition (`default_value_to_hide`, a `hide_when`, a
+  `display_rule`) is a decision somebody made about that field. Clean, and it goes to `notes`, so
+  the policy *values* can still be reviewed - they are data, and §1 is about data.
+- a **type-level property** (`optional`, `nullable`, `required`) is a claim about a whole class of
+  fields standing in for that decision: rank 0, the calibrated shape.
+- **nothing at all** - a blanket `if value is None: continue` - is rank 1.
+
+Two filters keep it from drowning in the same loop's other `is None` tests, and both come from the
+calibration: a dispatch on the loop item's own shape (`if ui_property.parameter is None`) selects
+what kind of property this is rather than ruling on a value, and a test for whether a per-field
+policy *exists* (`default_value_to_hide is not None`) is not a rule about the field either. Without
+them both revisions reported two leads each and the fix looked like no change at all.
+
+Measured: 1 lead at rank 0 on the revision before the fix, with `value None` and
+`property_template.optional` as its anchors; **0 leads after it**, and 0 across 59 confirmation and
+signing modules of current firmware - this shape was fixed in 2.13.0 and has not returned. A test
+puts the deleted line back into the fixed file and watches the lead return, so the silence is the
+line being gone rather than the check being blind.
+
+The verdict on any row needs the field's domain: read the definition and ask what the sentinel
+means **there**. The calibration case had both meanings inside one instruction set, which is why a
+blanket rule could not be right.
 
 ## Recording a clean result
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.37.0
+
+### A display rule keyed on a sentinel that carries meaning
+
+- **New generator, `scripts/sentinel_skip.py`.** A rendering loop drops a field when its value is
+  `None`, zero or empty. The question is not whether it skips - every UI does - but what licenses
+  the skip: a **per-field policy** is a decision about that field and goes to `notes`; a
+  **type-level claim** (`optional`, `nullable`, `required`) is a statement about a whole class of
+  fields standing in for that decision, and is a lead at rank 0; **nothing at all** is rank 1.
+- **Calibrated on Trezor's Solana optional-parameter bug** (`0fea14829`, firmware 2.13.0), which is
+  one line - `if property_template.optional and value is None: continue` - and whose own commit
+  message says why it is wrong: "None may encode an action rather than the absence of one". In the
+  Token programs' `SetAuthority`, `None` removes the authority.
+- **1 lead at rank 0 before the fix** with `value None` and `property_template.optional` as its
+  anchors, **0 after**, and 0 across 59 confirmation and signing modules of current firmware. A
+  test puts the deleted line back into the fixed file and watches the lead return.
+- Two filters, both from the calibration: a dispatch on the loop item's own shape
+  (`if ui_property.parameter is None`) selects what kind of property this is rather than ruling on
+  a value, and a test for whether a per-field policy *exists* is not a rule about the field either.
+  Without them the same two revisions reported two leads each and the fix looked like no change.
+- `blind-spots.md` §14 has the lens. §4, §13 and §14 now agree on the arithmetic: **five of the six
+  suppression bugs** Trezor fixed across 2.12.5 and 2.13.0 are covered by a generator. The last one
+  is a redesign commit that deletes a confirmation field outright - the inverse sweep, looking for
+  removed render calls rather than replaced predicates.
+
 ## 0.36.1
 
 ### Five discriminators for `suppression_witness`, bought by triaging its own first run
