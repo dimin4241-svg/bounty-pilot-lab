@@ -672,12 +672,37 @@ mattered: over `core/src/apps` it accounted for every rank-0 commit except the c
 Measured over the whole history of one module, `core/src/apps/stellar`: 105 commits touch it, 33
 pass the funnel, **17 leads of which 8 at rank 0 - and all 8 are the single redesign commit that
 contains the known bug**. Pointed at the whole application tree instead: 2163 commits touch
-`core/src/apps`, 317 pass the funnel, and rank 0 is **12 labels in 3 commits**, of which that one
-redesign is 8. Either aim is usable; a module keeps the output per screen you are reading.
+`core/src/apps`, 317 pass the funnel, and rank 0 is **8 labels in a single commit - that same
+redesign**, with the four rows the text filters below removed sitting in `notes` with their reason.
+Either aim is usable; a module keeps the output per screen you are reading.
 
 The rank-1 tier is almost entirely renames, and that is the honest shape of this signal rather
 than something to tune away. Read rank 0 first, and for each row read the flow as it is now and ask
 what the user used to be told and is not.
+
+### Two filters that read the catalogue's text, not its keys
+
+Triaging the sweep's own twelve rank-0 rows over `core/src/apps` found four that were the known bug
+and eight that were not. Two of the eight causes are mechanical, and neither needs the commit
+message - which matters, because the worst of them announces nothing: its subject is
+"chore(tron): boilerplate support for (un)delegate resource".
+
+- **A deleted key whose text reappears under a key added in the same commit has moved.**
+  `eos__delegate` -> `words__delegate`, same word in all five languages, because a Tron feature
+  needed the same strings. Comparing texts catches it; comparing keys cannot. The catalogue's
+  nested per-device form (`"key": {"Bolt": "text", ...}`) is parsed for this, empty variants
+  ignored.
+- **A text that is one word, or ends in a colon, and carries no placeholder is a title.**
+  `cardano__confirm` was the literal string `"Confirm:"`.
+
+Both demote to `notes` rather than dropping the row, so the classification stays reviewable.
+
+**And the limit, stated rather than tuned away.** Three of those twelve were titles these filters
+cannot reach: nothing at the text level separates `"Confirm Stellar"` from `"Confirm network"`, and
+the second is the find. A filter that reached them would have taken the find with it. The same goes
+for a *value* that moved to a different kind of screen - Stellar's initial balance went from a
+labelled property to the generic output layout, so the label is gone and the number is still shown.
+Tracking labels cannot see that. Both are why rank 0 is a lead and §12's triage is not optional.
 
 With this one, each of the six confirmation-suppression bugs Trezor fixed across 2.12.5 and 2.13.0
 has a generator pointed at its shape: §4 a predicate replaced by rendered text, §12 a field the

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.38.1
+
+### Two value-level filters for `removed_confirmation`, from triaging its own rows
+
+- 0.38.0's twelve rank-0 rows over `core/src/apps` were worked to a verdict: **four were the known
+  bug** (Stellar's network display, already fixed in 2.12.5) and **eight were not**. Two of the
+  eight causes are mechanical, and neither needs the commit message - which matters, because the
+  worst of them announces nothing: "chore(tron): boilerplate support for (un)delegate resource".
+- **A deleted key whose text reappears under a key added in the same commit has moved.**
+  `eos__delegate` -> `words__delegate`, the same word in five languages. Comparing texts catches
+  it; comparing keys cannot. The catalogue's nested per-device form
+  (`"key": {"Bolt": "text", ...}`) is parsed for this, with empty variants ignored.
+- **A text that is one word, or ends in a colon, and carries no placeholder is a title.**
+  `cardano__confirm` was the literal `"Confirm:"`.
+- Both demote to `notes` rather than dropping the row. The Stellar calibration passes through both
+  filters untouched - all eight labels, including the four that were the bug - and a test asserts
+  exactly that.
+- **Over the whole application tree rank 0 goes from 12 labels in 3 commits to 8 in one** - the
+  calibration commit - with the four removed rows in `notes`. 2163 commits touched, 317 through the
+  funnel, unchanged.
+- **The limit is documented, not tuned away.** Three of the twelve were titles no text-level rule
+  can reach: nothing separates `"Confirm Stellar"` from `"Confirm network"`, and the second is the
+  find. A test pins that non-behaviour. The same holds for a value that moved to a different kind
+  of screen, which label tracking structurally cannot see - both are why §12's triage is not
+  optional.
+
 ## 0.38.0
 
 ### A redesign that deleted a confirmation, and the catalogue that proves it

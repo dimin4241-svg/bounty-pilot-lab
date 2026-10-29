@@ -1,0 +1,61 @@
+diff --git a/core/src/apps/eos/actions/layout.py b/core/src/apps/eos/actions/layout.py
+index bf0786527..a78dab9f8 100644
+--- a/core/src/apps/eos/actions/layout.py
++++ b/core/src/apps/eos/actions/layout.py
+@@ -92 +92 @@ async def confirm_action_delegate(msg: EosActionDelegate) -> None:
+-        TR.eos__delegate,
++        TR.words__delegate,
+@@ -111 +111 @@ async def confirm_action_undelegate(msg: EosActionUndelegate) -> None:
+-        TR.eos__undelegate,
++        TR.words__undelegate,
+@@ -165 +165 @@ async def confirm_action_transfer(msg: EosActionTransfer, account: str) -> None:
+-        (TR.eos__from, eos_name_to_string(msg.sender), True),
++        (TR.words__from_title, eos_name_to_string(msg.sender), True),
+diff --git a/core/translations/en.json b/core/translations/en.json
+index dde4d526e..37b19887b 100644
+--- a/core/translations/en.json
++++ b/core/translations/en.json
+@@ -673,6 +672,0 @@
+-    "eos__delegate": {
+-      "Bolt": "Delegate",
+-      "Caesar": "",
+-      "Delizia": "",
+-      "Eckhart": ""
+-    },
+@@ -685,6 +678,0 @@
+-    "eos__from": {
+-      "Bolt": "From",
+-      "Caesar": "",
+-      "Delizia": "",
+-      "Eckhart": ""
+-    },
+@@ -805,6 +792,0 @@
+-    "eos__undelegate": {
+-      "Bolt": "Undelegate",
+-      "Caesar": "",
+-      "Delizia": "",
+-      "Eckhart": ""
+-    },
+@@ -3051,0 +3034,14 @@
++    "tron__delegate_resource": "Delegate resource",
++    "tron__lock_period": "Lock period",
++    "tron__lockperiod_blocks": {
++      "Bolt": "Blocks",
++      "Caesar": "Lock period (Blocks)",
++      "Delizia": "Blocks",
++      "Eckhart": "Blocks"
++    },
++    "tron__lockperiod_time": {
++      "Bolt": "Time",
++      "Caesar": "Lock period (Time)",
++      "Delizia": "Time",
++      "Eckhart": "Time"
++    },
+@@ -3052,0 +3049 @@
++    "tron__undelegate_resource": "Undelegate resource",
+@@ -3398,0 +3396 @@
++    "words__delegate": "Delegate",
+@@ -3427,0 +3426 @@
++    "words__from_title": "From",
+@@ -3566,0 +3566 @@
++    "words__undelegate": "Undelegate",
