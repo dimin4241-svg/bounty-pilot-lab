@@ -460,6 +460,38 @@ three identical accounts; the generator still reports the other two, and the sec
 first patch would have been worse than nothing. `tests/fixtures/summary-flow-gap/s2-partial.py` is
 that revision, asserted on its own.
 
+### A lead is not a finding: what must be true for the field to differ?
+
+A row says the screen does not show a field. It does not say the field can *differ from its benign
+value* in a transaction anyone can build, and that is the first thing triage asks. Three steps, in
+this order, and all of them cheap:
+
+1. **Name the benign value, and what it takes to depart from it.** Usually the field equals the
+   signer, or a derived address, or a fixed program - write down the condition under which it does
+   not.
+2. **Follow that condition out of this module.** It is almost never answered where the lead is. Look
+   for a check at the entry point, a *different* screen that fires in exactly that case, and the
+   rule the device is relying on the chain to enforce. A field can be absent from one screen because
+   another screen covers the only case where it matters.
+3. **Then price the counterfactual.** If departing from the benign value needs a capability that
+   already produces the same outcome by itself, the invisible field adds nothing.
+
+The worked case is the only lead this generator produced against live firmware, and it dies at step
+2 - which is the useful kind of death, because it dies for everyone and for good. Trezor's curated
+Solana token-transfer screen shows recipient, token, amount and fee, while the program definition
+for the same instruction declares `source_account` as "From" and `owner` as "Owner" with
+`default_value_to_hide: "signer"` - so the generic path shows "From" always and "Owner" whenever it
+is not the signer. The curated path shows neither and never compares `owner` to the signer. Step 1:
+the benign value is `owner == signer`. Step 2, in a different file: for `owner != signer` the
+authority has to sign the instruction itself, so the transaction needs two signatures **by
+construction**, and the device shows a "requires N signers" screen before the curated flow ever
+runs. No parameterisation is left in which the curated screen is drawn for a debit the user's own
+key authorises alone from an account that key does not control.
+
+Note what step 2 cost and what it saved: two greps in files the generator never reads, against a
+lead that looked live. Note also what it did **not** do - it did not invalidate the row. The
+show-set really is missing the field; the generator's job ended where it should.
+
 Where this came from: of the six confirmation-suppression bugs Trezor fixed in 2.12.5 and 2.13.0,
 the cosmetic-regression sweep in §4 catches **none** - five were never regressions at all, the field
 was never shown from the commit that added the feature. Each needs its own generator; this is the

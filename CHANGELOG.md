@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.35.1
+
+### §12 gains the triage step that killed its own first lead
+
+- **"A lead is not a finding: what must be true for the field to differ?"** Three steps - name the
+  benign value and the condition for departing from it; follow that condition *out of the module*,
+  because it is almost never answered where the lead is; then price the counterfactual.
+- Written from the generator's only live lead, which dies at step 2 and dies structurally. Trezor's
+  curated Solana token-transfer screen omits `source_account` and `owner`, both of which the program
+  definition declares for the generic path (`"From"`, and `"Owner"` with
+  `default_value_to_hide: "signer"`), and the curated path never compares `owner` to the signer. But
+  for `owner != signer` the authority must sign the instruction itself, so the transaction requires
+  two signatures by construction and the device shows a "requires N signers" screen first.
+- The section also says what the refutation did not do: it did not invalidate the row. The show-set
+  really is missing the field, and a lead generator's job ends there.
+- Documentation only; no script or behaviour changed.
+
 ## 0.35.0
 
 ### A summary flow that accepts a case it cannot render
