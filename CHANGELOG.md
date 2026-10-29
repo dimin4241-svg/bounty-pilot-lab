@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.39.0
+
+### `--renderer`, because a zero is only as good as what the check could see
+
+- **`suppression_witness` and `sentinel_skip` take `--renderer`.** What counts as drawing a screen
+  is per project; the default is Trezor-shaped. Pointing either at Coldcard's firmware unset reads
+  almost nothing: it draws with **`ux_show_story`, 326 call sites across `shared/` against 75 for
+  `ux_confirm`**, and the default matches none of them. A test runs the same Coldcard-shaped module
+  twice and asserts it is silent on the default and fires with the project's pattern - the
+  assertion that would have caught this.
+- **A source that cannot be parsed is skipped and named**, never fatal. Six of Coldcard's 94 shared
+  modules are generated data blobs; before this the first one aborted the sweep with
+  `invalid syntax (<unknown>, line 1)` - no file named, no result for the other 88, and an exit
+  indistinguishable from a clean run. The report now carries `skipped` and says so in `notice`.
+- **Measured on Coldcard** (`Coldcard/firmware`, 94 shared modules, 6 skipped): `suppression_witness`
+  **0 leads** with notes rising 9 -> 19 once the real pattern is set, so the instrument is looking;
+  `sentinel_skip` **1 rank-1 lead** per pattern, both outside the confirmation path (`lcd_display`
+  skipping an empty line, `backups` on `allow_copies`). With `cosmetic_regression`'s earlier 0 over
+  1857 commits of `shared/`, that surface is closed for this class.
+- §13 carries the census command and the exclusion list (Coldcard's `ux_wait_keydown`,
+  `ux_poll_key`, `ux_clear_keys`, `ux_dramatic_pause` draw nothing), and §14 points at it.
+
 ## 0.38.1
 
 ### Two value-level filters for `removed_confirmation`, from triaging its own rows

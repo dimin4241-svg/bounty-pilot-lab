@@ -265,6 +265,67 @@ class DiscriminatorTests(unittest.TestCase):
         self.assertEqual(report['leads'][0]['rank'], 0)
 
 
+COLDCARD_SHAPED = """
+async def flow(msg):
+    for item in msg.items:
+        if item.skip:
+            continue
+        await ux_show_story(item.text)
+    if msg.payload and not msg.indices:
+        await ux_show_story(msg.payload)
+"""
+
+COLDCARD_RENDERER = r'^ux_(show|confirm|msg|render|sign|enter|input)|^_?confirm|_confirm$'
+
+
+class RendererOptionTests(unittest.TestCase):
+    """The pattern that decides what counts as drawing a screen has to be an argument.
+
+    Coldcard's firmware draws with `ux_show_story` - 326 call sites in its `shared/` modules
+    against 75 for `ux_confirm` - and the Trezor-shaped default matches none of them. Run with
+    the default there and every check reports a confident zero while reading almost nothing.
+    """
+
+    def test_the_default_is_blind_to_a_coldcard_shaped_renderer(self):
+        self.assertEqual(witness.analyse(COLDCARD_SHAPED)['leads'], [])
+
+    def test_the_option_makes_the_same_code_fire(self):
+        report = witness.analyse(COLDCARD_SHAPED, COLDCARD_RENDERER)
+        self.assertEqual(report['counts']['suppressed-on-a-proxy'], 1)
+        self.assertEqual(report['leads'][0]['suppressed_call'], 'ux_show_story')
+        self.assertEqual(report['leads'][0]['proxy_operands'], ['msg.indices'])
+
+    def test_the_calibration_still_fires_on_the_default(self):
+        """Changing the default would silently rewrite every earlier result."""
+        self.assertEqual(run('monero-layout-pre')['counts']['suppressed-on-a-proxy'], 1)
+
+
+class UnparseableSourceTests(unittest.TestCase):
+    """One file this interpreter cannot parse must not end the sweep.
+
+    Six of Coldcard's 94 shared modules are generated data blobs. Before this, the first of them
+    aborted the run with `invalid syntax (<unknown>, line 1)` - no file named, no result for the
+    other 88, and an exit that reads like nothing was found.
+    """
+
+    def test_a_broken_source_is_skipped_named_and_not_fatal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            good = Path(folder) / 'good.py'
+            good.write_text(COLDCARD_SHAPED, encoding='utf-8')
+            bad = Path(folder) / 'generated_blob.py'
+            bad.write_text('\\x00 this is not python\n', encoding='utf-8')
+            out = Path(folder) / 'report.json'
+            code = witness.main(['--source', str(bad), '--source', str(good),
+                                 '--renderer', COLDCARD_RENDERER, '--out', str(out)])
+            self.assertEqual(code, 0)
+            report = json.loads(out.read_text(encoding='utf-8'))
+            self.assertEqual(len(report['skipped']), 1)
+            self.assertTrue(report['skipped'][0]['source'].endswith('generated_blob.py'))
+            self.assertIn('SyntaxError', report['skipped'][0]['reason'])
+            self.assertEqual(report['counts']['suppressed-on-a-proxy'], 1)
+            self.assertIn('could not be parsed', report['notice'])
+
+
 class CliTests(unittest.TestCase):
     def test_several_sources_are_merged_and_tagged(self):
         with tempfile.TemporaryDirectory() as folder:

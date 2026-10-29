@@ -41,7 +41,11 @@ import json
 import re
 from pathlib import Path
 
-RENDERER = re.compile(r"^_?(confirm|require_confirm|show|display|ask)_|_confirm$|^confirm$")
+# What counts as drawing a screen. The default is Trezor-shaped; every project names these
+# differently, and a pattern that misses the real ones makes every check below report a confident
+# zero - Coldcard's firmware draws with `ux_show_story`, which this default does not match.
+RENDERER_DEFAULT = r"^_?(confirm|require_confirm|show|display|ask)_|_confirm$|^confirm$"
+RENDERER = re.compile(RENDERER_DEFAULT)
 JUMPS = (ast.Continue, ast.Break, ast.Return)
 
 
@@ -58,13 +62,14 @@ def _root(node):
     return node.id if isinstance(node, ast.Name) else None
 
 
-def _is_renderer(call):
+def _is_renderer(call, renderer=RENDERER):
     name = _name_of(call)
-    return bool(name and RENDERER.search(name))
+    return bool(name and renderer.search(name))
 
 
-def _renderer_calls(node):
-    return [n for n in ast.walk(node) if isinstance(n, ast.Call) and _is_renderer(n)]
+def _renderer_calls(node, renderer=RENDERER):
+    return [n for n in ast.walk(node)
+            if isinstance(n, ast.Call) and _is_renderer(n, renderer)]
 
 
 def _parents(fn):
@@ -147,7 +152,7 @@ def _aliases(fn):
     return out
 
 
-def _confirming_blocks(fn):
+def _confirming_blocks(fn, renderer=RENDERER):
     """Statement lists whose own code confirms something, where a witness can be written."""
     blocks = []
     for node in ast.walk(fn):
@@ -158,18 +163,19 @@ def _confirming_blocks(fn):
         else:
             continue
         for block in candidates:
-            if any(_renderer_calls(statement) for statement in block):
+            if any(_renderer_calls(statement, renderer) for statement in block):
                 blocks.append(block)
     return blocks
 
 
-def _host_locals(fn, parameters, witnesses):
+def _host_locals(fn, parameters, witnesses, renderer=RENDERER):
     """`local -> source text` for a local computed from a parameter outside any confirming block.
 
     A flag like `shown = bool(msg.items)` is a proxy wearing a local name: it is derived from the
     request, not from the display having happened, so it answers the same wrong question.
     """
-    inside = {id(statement) for block in _confirming_blocks(fn) for statement in block
+    inside = {id(statement) for block in _confirming_blocks(fn, renderer)
+              for statement in block
               for statement in ast.walk(statement)}
     out = {}
     for node in ast.walk(fn):
@@ -220,7 +226,7 @@ def _resolves_through(text, shown, aliases, host_locals):
     return bool(candidates & shown)
 
 
-def _sibling_branch_renders(call, links):
+def _sibling_branch_renders(call, links, renderer=RENDERER):
     """True when an alternative branch of the same `if` chain also confirms something.
 
     `if verified_payment_request: confirm_payment_request(...)` / `else: confirm_recipient(...)`
@@ -232,7 +238,7 @@ def _sibling_branch_renders(call, links):
         if isinstance(parent, ast.If):
             in_body = any(node is st or node in ast.walk(st) for st in parent.body)
             others = parent.orelse if in_body else parent.body
-            if any(_renderer_calls(statement) for statement in others):
+            if any(_renderer_calls(statement, renderer) for statement in others):
                 return True
         node = parent
     return False
@@ -280,14 +286,14 @@ def _methods_of(tree):
     return owner
 
 
-def _witnesses(fn):
+def _witnesses(fn, renderer=RENDERER):
     """Locals written in a branch or loop body that confirms something.
 
     That is the only kind of value that can answer "was it shown": it is written where the
     showing is decided, so every `continue` and early return above it already applies.
     """
     names = set()
-    for block in _confirming_blocks(fn):
+    for block in _confirming_blocks(fn, renderer):
         if True:
             for statement in block:
                 for inner in ast.walk(statement):
@@ -301,10 +307,10 @@ def _witnesses(fn):
     return names
 
 
-def _conditional_renderers(fn, links):
+def _conditional_renderers(fn, links, renderer=RENDERER):
     """Renderer calls whose reachability depends on a branch, a loop or a jump above them."""
     out = []
-    for call in _renderer_calls(fn):
+    for call in _renderer_calls(fn, renderer):
         node, conditional = call, False
         while node in links:
             parent = links[node]
@@ -317,9 +323,9 @@ def _conditional_renderers(fn, links):
     return out
 
 
-def _has_jumping_display(fn, links):
+def _has_jumping_display(fn, links, renderer=RENDERER):
     """A display path that some branch skips: the thing a proxy gate cannot know about."""
-    for call in _conditional_renderers(fn, links):
+    for call in _conditional_renderers(fn, links, renderer):
         node = call
         while node in links:
             parent = links[node]
@@ -331,14 +337,15 @@ def _has_jumping_display(fn, links):
     return False
 
 
-def analyse(source):
+def analyse(source, renderer_pattern=RENDERER_DEFAULT):
+    renderer = re.compile(renderer_pattern)
     tree = ast.parse(source)
     self_state = _self_attributes_written(tree)
     owners = _methods_of(tree)
     leads, notes = [], []
     for fn in [n for n in ast.walk(tree)
                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
-        calls = _renderer_calls(fn)
+        calls = _renderer_calls(fn, renderer)
         if not calls:
             continue
         links = _parents(fn)
@@ -352,12 +359,12 @@ def analyse(source):
                       in zip(fn.args.kwonlyargs, fn.args.kw_defaults) if default is not None}
         parameters = {argument.arg for argument in positional + list(fn.args.kwonlyargs)
                       } - defaulted - {"self"}
-        witnesses = _witnesses(fn)
+        witnesses = _witnesses(fn, renderer)
         witnesses |= self_state.get(owners.get(id(fn)), set())
         aliases = _aliases(fn)
-        host_locals = _host_locals(fn, parameters, witnesses)
-        conditional = _conditional_renderers(fn, links)
-        skippable = _has_jumping_display(fn, links)
+        host_locals = _host_locals(fn, parameters, witnesses, renderer)
+        conditional = _conditional_renderers(fn, links, renderer)
+        skippable = _has_jumping_display(fn, links, renderer)
         for call in calls:
             shown, host_shown = set(), False
             for argument in list(call.args) + [kw.value for kw in call.keywords]:
@@ -391,7 +398,7 @@ def analyse(source):
                                       "host-supplied - it is a static label, and whether it "
                                       "applies is a policy question, not a suppression"})
                 continue
-            if _sibling_branch_renders(call, links):
+            if _sibling_branch_renders(call, links, renderer):
                 notes.append({"function": fn.name, "call": _name_of(call),
                               "note": "an alternative branch of the same `if` chain also "
                                       "confirms something, so this is a choice of presentation "
@@ -439,15 +446,26 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", required=True, action="append",
                    help="module to read; repeatable")
+    p.add_argument("--renderer", default=RENDERER_DEFAULT,
+                   help="regex matching the calls that draw a screen in THIS project. The "
+                        "default is Trezor-shaped; a pattern that misses the real ones makes "
+                        "every check report a confident zero. Coldcard needs "
+                        "'^ux_|^_?confirm|_confirm$'")
     p.add_argument("--out")
     a = p.parse_args(argv)
     report = {"leads": [], "notes": [],
               "counts": {"suppressed-on-a-proxy": 0, "with-a-skippable-display-path": 0},
-              "notice": ""}
+              "notice": "", "skipped": []}
     for path in a.source:
         try:
-            one = analyse(Path(path).read_text(encoding="utf-8"))
-        except (OSError, SyntaxError, ValueError) as exc:
+            one = analyse(Path(path).read_text(encoding="utf-8"), a.renderer)
+        except (SyntaxError, UnicodeDecodeError) as exc:
+            # A file this interpreter cannot parse is skipped and SAID, never fatal: six of
+            # Coldcard's 94 shared modules are generated data blobs, and killing the sweep on
+            # the first one returned no result at all for the other 88.
+            report["skipped"].append({"source": path, "reason": f"{type(exc).__name__}: {exc}"})
+            continue
+        except OSError as exc:
             p.error(str(exc))
         for row in one["leads"]:
             report["leads"].append(dict(row, source=path))
@@ -458,6 +476,10 @@ def main(argv=None):
     report["counts"]["with-a-skippable-display-path"] = sum(
         1 for row in report["leads"] if row["rank"] == 0)
     report["leads"].sort(key=lambda row: (row["rank"], row["source"], row["function"]))
+    if report["skipped"]:
+        report["notice"] += (f' {len(report["skipped"])} source file(s) could not be parsed and '
+                             'were skipped; see "skipped". A sweep that reports nothing because '
+                             'it read nothing is not a clean result.')
     payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if a.out:
         Path(a.out).write_text(payload, encoding="utf-8")
