@@ -7,6 +7,7 @@ on public prior art only after the PoC; anchors and coverage rows were never che
 the code they cite; and on published data most loss in audited protocols came through paths no
 audit covered.
 """
+import datetime
 import importlib.util
 import json
 import os
@@ -346,6 +347,45 @@ class AuditGapTests(Fixture):
         self.assertEqual(fresh['src/Quiet.sol'], 'audited-recent')
         _, stale = self.bands(audited=[audited], stale_days=0)
         self.assertEqual(stale['src/Quiet.sol'], 'audited-stale')
+
+    def commit_dated(self, message, committed_at):
+        """Commit with an exact committer date, offset included, as `%cI` will render it."""
+        git(self.repo, 'add', '-A')
+        env = dict(os.environ, GIT_COMMITTER_DATE=committed_at, GIT_AUTHOR_DATE=committed_at)
+        subprocess.run(['git', '-C', str(self.repo), '-c', 'user.name=Test',
+                        '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
+                        'commit', '-qm', message], check=True, env=env,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def test_the_audit_age_is_measured_on_the_utc_day_not_the_committers_own(self):
+        """`%cI` renders in the committer's offset; the age is measured against the UTC date.
+
+        A commit at 10:00 on the 16th at +14:00 happened at 20:00 on the 15th UTC. Reading the
+        first ten characters of `%cI` dated it a day later than it was, so the age came out one
+        day short - and at the boundary that silently promoted an unreviewed file to
+        `audited-recent`, the benign branch.
+        """
+        (self.repo / 'src/Quiet.sol').write_text('contract Quiet {}\n')
+        self.commit_dated('add quiet', '2026-01-16T10:00:00+14:00')
+        audited = head(self.repo)
+        (self.repo / 'src/Vault.sol').write_text(VAULT + '// later still\n')
+        commit(self.repo, 'later')
+        utc_day = datetime.date(2026, 1, 15)
+        age_in_utc = (datetime.datetime.now(datetime.timezone.utc).date() - utc_day).days
+        _, bands = self.bands(audited=[audited], stale_days=age_in_utc)
+        self.assertEqual(bands['src/Quiet.sol'], 'audited-stale')
+
+    def test_a_committer_date_in_the_future_is_not_a_review_from_the_future(self):
+        """Clock skew or a rewritten date made the age negative, which read as freshly audited."""
+        ahead = (datetime.datetime.now(datetime.timezone.utc)
+                 + datetime.timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+        (self.repo / 'src/Quiet.sol').write_text('contract Quiet {}\n')
+        self.commit_dated('add quiet', ahead)
+        audited = head(self.repo)
+        (self.repo / 'src/Vault.sol').write_text(VAULT + '// later still\n')
+        commit(self.repo, 'later')
+        _, bands = self.bands(audited=[audited], stale_days=0)
+        self.assertEqual(bands['src/Quiet.sol'], 'audited-stale')
 
     def test_deployment_and_migration_files_are_called_out(self):
         result, _ = self.bands(audited=[self.audited])

@@ -1045,6 +1045,12 @@ def review(run):
         overall = 'independence_unverified'
     else:
         overall = 'complete' if jobs else 'incomplete'
+    attempts = [attempt for job in jobs for attempt in job.get('attempts', [])]
+    # Hoisted out of the dict below: a replacement field that spans a newline is only valid
+    # from Python 3.12 (PEP 701), and this module claims 3.9. It did not parse there at all.
+    costed_attempts = sum((attempt.get('metrics') or {}).get('reported_cost_usd') is not None
+                          for attempt in attempts)
+    costed_jobs = sum(job.get('reported_cost_usd') is not None for job in jobs)
     return {'schema_version': SCHEMA_VERSION,
             'state': overall,
             'independence_status': ('conflict' if independence_conflicts else
@@ -1055,12 +1061,9 @@ def review(run):
             'independence_conflicts': independence_conflicts,
             'independence_unverified_jobs': independence_unverified,
             'known_reported_cost_usd': round(sum((attempt.get('metrics') or {}).get(
-                'reported_cost_usd', 0) or 0 for job in jobs for attempt in job.get('attempts', [])), 8),
-            'cost_attempt_coverage': (f"{sum((attempt.get('metrics') or {}).get('reported_cost_usd') is not None
-                                             for job in jobs for attempt in job.get('attempts', []))}/"
-                                      f"{sum(len(job.get('attempts', [])) for job in jobs)}"),
-            'cost_job_coverage': (f"{sum(job.get('reported_cost_usd') is not None for job in jobs)}/"
-                                  f"{len(jobs)}"),
+                'reported_cost_usd', 0) or 0 for attempt in attempts), 8),
+            'cost_attempt_coverage': f'{costed_attempts}/{len(attempts)}',
+            'cost_job_coverage': f'{costed_jobs}/{len(jobs)}',
             'notice': 'Missing provider cost metadata stays unknown and is not counted as zero. '
                       'Distinct mechanisms are parsed from model output as a research metric only.'}
 

@@ -4,8 +4,12 @@
 inside `tr -d '…'` in intake.md — rendered and read as `tr -d ''`, a command that deletes nothing.
 CI was not running at the time, so neither was caught.
 """
+import ast
 import json
 import re
+import shutil
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -45,6 +49,57 @@ class ReleaseTests(unittest.TestCase):
         version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
         first = re.search(r'^## (\S+)', (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8'), re.M)
         self.assertEqual(first.group(1), version)
+
+    def test_nothing_shipped_needs_a_python_newer_than_the_declared_minimum(self):
+        """A replacement field spanning a newline is valid only from Python 3.12 (PEP 701).
+
+        `agent_dispatch.py` carried one while both the README ("Python 3.9+") and the CI matrix
+        claimed 3.9, so that module did not parse there at all - the `agent-dispatch` command
+        was dead for anyone on 3.9, 3.10 or 3.11, and its whole test module was skipped. CI
+        would have caught it; CI had not run for days. `ast.parse(feature_version=(3, 9))` does
+        NOT reject it, which is why this walks the tree instead.
+
+        Before 3.12 an f-string's inner nodes carry approximate positions, so a legal implicit
+        concatenation across two lines also reports `end_lineno > lineno`. The check therefore
+        runs on 3.12+, where those positions are exact, and the companion test below compiles
+        the scripts with an older interpreter directly.
+        """
+        if sys.version_info < (3, 12):
+            self.skipTest('f-string node positions are approximate before 3.12; the companion '
+                          'test compiles with the older interpreter instead')
+        offenders = []
+        for path in sorted(ROOT.rglob('*.py')):
+            if '__pycache__' in path.parts:
+                continue
+            tree = ast.parse(path.read_text(encoding='utf-8'))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FormattedValue) and node.end_lineno > node.lineno:
+                    offenders.append(f'{path.relative_to(ROOT)}:{node.lineno}')
+        self.assertEqual(offenders, [])
+
+    def test_every_shipped_script_parses_on_the_oldest_interpreter_present(self):
+        """The direct check, when a 3.9-3.11 interpreter happens to be installed."""
+        older = None
+        for exe in ('python3.9', 'python3.10', 'python3.11', '/usr/bin/python3', 'python3'):
+            found = shutil.which(exe) if '/' not in exe else (exe if Path(exe).exists() else None)
+            if not found:
+                continue
+            printed = subprocess.run([found, '--version'], capture_output=True, text=True)
+            version = (printed.stdout or printed.stderr).split()[-1].split('.')[:2]
+            if version[:1] == ['3'] and version[1:] and int(version[1]) < 12:
+                older = found
+                break
+        if older is None:
+            self.skipTest('no 3.9-3.11 interpreter available; the AST check above still applies')
+        scripts = sorted(SKILL.rglob('*.py'))
+        self.assertTrue(scripts)
+        failed = []
+        for path in scripts:
+            done = subprocess.run([older, '-c', 'import ast,sys;ast.parse(open(sys.argv[1]).read())',
+                                   str(path)], capture_output=True, text=True)
+            if done.returncode != 0:
+                failed.append(f'{path.relative_to(ROOT)}: {done.stderr.strip().splitlines()[-1]}')
+        self.assertEqual(failed, [])
 
     def test_shipped_text_has_no_control_bytes(self):
         files = [ROOT / 'CHANGELOG.md', ROOT / 'AGENTS.md', ROOT / 'README.md', ROOT / 'README.ru.md']

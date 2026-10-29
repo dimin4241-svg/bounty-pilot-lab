@@ -7192,6 +7192,22 @@ def _changed_since(root, base, paths):
     return changed, existed
 
 
+def _commit_date_utc(root, commit):
+    """The commit's committer date as a UTC calendar date, `YYYY-MM-DD`.
+
+    `%cI` renders in the committer's own timezone offset, and the age below is measured against
+    the UTC date. East of UTC a commit made today therefore read as tomorrow, the age came out
+    negative, and `audit-gap` banded an unreviewed file `audited-recent` - the silent benign
+    branch. The offset is what decides the day, so it is applied rather than sliced off.
+    """
+    raw = git(root, 'log', '-1', '--format=%cI', commit).strip()
+    try:
+        return datetime.fromisoformat(raw.replace('Z', '+00:00')).astimezone(
+            timezone.utc).date().isoformat()
+    except ValueError:
+        return raw[:10]
+
+
 def audit_gap(repo, run, audited=None, scope_prefixes=None, stale_days=AUDIT_STALE_DAYS,
               limit=200):
     """Rank every in-scope file by whether anybody reviewed this version of it.
@@ -7223,7 +7239,7 @@ def audit_gap(repo, run, audited=None, scope_prefixes=None, stale_days=AUDIT_STA
             full = ''
         if full:
             resolved.append({'given': base, 'commit': full,
-                             'date': git(root, 'log', '-1', '--format=%cI', full).strip()[:10]})
+                             'date': _commit_date_utc(root, full)})
         else:
             unresolved.append(base)
 
@@ -7259,6 +7275,11 @@ def audit_gap(repo, run, audited=None, scope_prefixes=None, stale_days=AUDIT_STA
                                                          '%Y-%m-%d').date()).days
                     except ValueError:
                         age = None
+                if age is not None and age < 0:
+                    # A committer date ahead of today is clock skew or a rewritten date, not a
+                    # review from the future. Zero keeps `--stale-days 0`, documented as "0
+                    # makes every audit stale", from reading as freshly audited.
+                    age = 0
                 if age is not None and age >= stale_days:
                     band = 'audited-stale'
                     why = f"unchanged since {newest['given'][:12]}, {age} days ago"
