@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.35.0
+
+### A summary flow that accepts a case it cannot render
+
+- **New generator, `scripts/summary_flow_gap.py`.** When a device recognises a known transaction
+  and draws a curated screen, the recogniser's accept-set has to match the screen's show-set. This
+  reads both out of the AST - the declared fields of every accepted instruction class against what
+  the flow mentions, hands to the screen, and guards - and reports two kinds:
+  `unconstrained-unrendered` (a field nothing reads and nothing shows, chosen by the host) and
+  `reference-used-by-value` (an address read as its resolved half with no guard naming it, where a
+  table-referenced address resolves to the table).
+- **Calibrated on two paid Trezor disclosures** fixed in firmware 2.12.5, with the real module
+  vendored at five revisions. Both were closed by narrowing the *recogniser* - "fall back to the
+  generic UI" - which is the tell that the accept-set was the defect.
+- **Including a partial fix.** Trezor's first patch guarded one of three identical accounts; the
+  generator still reports the other two, and `tests/fixtures/summary-flow-gap/s2-partial.py` pins
+  that revision so a future change cannot make it quiet. One of the 15 tests disables the guard
+  pattern to prove the silence on the complete fix is the guard being credited and not the check
+  failing open.
+- Three refinements keep it an instrument rather than noise, each from the calibration: a `[0]`
+  read that only feeds a comparison is self-limiting and goes to `notes`; a recogniser that renders
+  nothing is noted, not judged, because its call site decides; and a guard or a read inside a
+  predicate the flow calls counts for the flow, one level deep. On today's firmware the whole
+  module reports **one** lead.
+- `blind-spots.md` §12 has the lens, and says plainly that the §4 commit sweep catches none of the
+  six suppression bugs Trezor fixed in 2.12.5 and 2.13.0 - five were never regressions - so each
+  needs a generator of its own. This is the first, and it covers two of the six.
+
 ## 0.34.1
 
 ### `agent-dispatch` did not run on the Python this skill claims to support
