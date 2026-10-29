@@ -343,7 +343,7 @@ more useful than three inflated ones: say which surfaces you closed and on what 
 ## Before you report — answer `misses.md`
 
 The last step of the loop is not a pass; it is a check against your own output.
-`references/misses.md` lists thirty-three ways a hunt stops short, each with a cheap fix: concluding from
+`references/misses.md` lists thirty-four ways a hunt stops short, each with a cheap fix: concluding from
 a name, stopping at the first consequence, skipping the privileged path because a checklist said
 "do not report admin can rug", never reading the dependency, never checking the compiler, auditing
 HEAD when scope is pinned to deployed addresses, dropping leads silently, and letting an unanchored

@@ -28,6 +28,11 @@ how far back the endpoint still answers historical queries. `--deep` additionall
 and test command and records their exit codes. The RPC URL itself is never written into the run and
 never printed.
 
+It also measures the checkout's own **commit history** — depth, shallow, grafted, blobless partial
+clone — and reports it as the `commit-history` evidence kind. A shallow or depth-1 checkout makes
+every lens that reads commits answer empty, which is indistinguishable from a clean sweep; while
+that kind is `unavailable` no history lens may record a clean result (`misses.md` item 34).
+
 Run it here, not after a candidate has been parked. The archive-depth measurement is the specific
 fact hunts keep rediscovering by hand, always too late — "needs an archive mainnet RPC", "public
 RPCs give no archive or log history", "blocked without a paid key", each one found with a candidate

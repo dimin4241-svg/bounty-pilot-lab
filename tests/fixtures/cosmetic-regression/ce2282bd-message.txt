@@ -1,0 +1,6 @@
+fix(clear_signing): double display of amount.
+
+- compare rendered strings now.
+- small typo in a test fixture name.
+
+[no changelog]

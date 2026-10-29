@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.34.0
+
+### A cosmetic fix is how a semantic guard disappears
+
+- **New sweep, `scripts/cosmetic_regression.py`.** It looks for the commit that promised a display
+  or duplication fix and replaced a semantic predicate — a declared path, a type check, an enum
+  comparison, a formatter probe — with a comparison against rendered text. Calibrated against the
+  real commit that introduced a live clear-signing defect: over that repository's whole history,
+  2,559 commits touch the signing and UI paths, 1,168 pass the message funnel, and the diff
+  classifier returns **exactly one** candidate, with both anchors a report would quote. The commit
+  vocabulary alone passes 46% of commits and is a cost control, not evidence.
+- **`blind-spots.md` §4 gained its fifth bullet and a worked case**: a field's provenance replaced
+  by the text it renders to — which outside a signing screen is token identity by `symbol()`, an
+  address in its truncated display form, an amount after formatting, a signing domain by name
+  instead of typehash, a nonce deduplicated on message text. It also says what may be written up
+  there while a finding is under coordinated disclosure, and that a suppressed confirmation on its
+  own sits at the bottom of a vendor's ladder until the loss route is built.
+
+### A history lens may no longer answer with silence
+
+- **`capability-probe` measures the checkout's commit history** — depth, shallow, grafted, blobless
+  partial clone — and reports it as the `commit-history` evidence kind. The sweep refuses to return
+  an empty candidate list from such a checkout and reports a `blocker` with the measured depth and
+  the remedy instead.
+- **Why:** a pass closed a target with "0 submittable" over a `--depth 1` checkout. Every lens that
+  reads commits answered empty, which is what a clean codebase looks like, and the run recorded the
+  silence as coverage. The defect was live in the branch that clone never fetched, in a file that
+  pass had open and quoted by line number, and the introducing commit was not in the clone at all.
+  This is `misses.md` item 24 one level up — not a harness that never fired, but a checkout that
+  made firing impossible. Full history is nearly free: `git clone --filter=blob:none --bare` carried
+  19,288 commits in 23 MB.
+- **`misses.md` item 34** asks both halves, the "could you" before the "did you", and names the two
+  commands that answer it.
+
 ## 0.33.0
 
 ### Add state-transition, agentic, CI, and runtime handoff research

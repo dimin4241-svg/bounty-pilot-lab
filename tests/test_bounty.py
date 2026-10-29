@@ -4353,8 +4353,9 @@ class CapabilityProbeTests(unittest.TestCase):
         # "not measured" and the contradiction would never be reported.
         for result in (self.probe(), self.probe(rpc=self.RPC, opener=self.node())):
             self.assertEqual(sorted(result['evidence']),
-                             ['archive-state', 'bytecode-comparison', 'historical-logs',
-                              'mainnet-fork', 'native-test-execution', 'source-build'])
+                             ['archive-state', 'bytecode-comparison', 'commit-history',
+                              'historical-logs', 'mainnet-fork', 'native-test-execution',
+                              'source-build'])
             for kind, entry in result['evidence'].items():
                 self.assertIn(entry['state'], bounty.EVIDENCE_STATES, kind)
                 self.assertTrue(entry['reason'].strip(), kind)

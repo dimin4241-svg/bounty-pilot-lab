@@ -107,8 +107,76 @@ value, it is in scope, and the code re-derives a weaker one instead.
 - A user-supplied address used where `msg.sender` was available.
 - A price, balance or amount re-read after validation instead of using the validated value.
 - A length, index or id recomputed from attacker-controlled input beside a canonical one.
+- **A field's provenance replaced by the text it renders to.** The authoritative fact is *where a
+  value came from* — its declared path, its type, the formatter the schema gave it — and the code
+  compares the string a human was meant to read instead. Two values with opposite economic meanings
+  that stringify alike then satisfy each other's checks. Beyond a signing screen the same shape is:
+  token identity by `symbol()` rather than by address, an address compared in its truncated or
+  checksummed display form, an amount compared after decimal formatting, a signing domain matched
+  by name instead of by typehash, an alert or a nonce deduplicated on message text.
 
 Search for the authoritative accessor, then find the places that do not use it.
+
+### A cosmetic fix is how this one arrives
+
+The provenance test is rarely attacked; it is *refactored away*, by someone fixing a complaint that
+a value appears twice on screen. The commit says it changes nothing — and it changes what the code
+knows.
+
+The public case, Trezor Core's Ethereum clear signing. The summary omits the transaction's own
+outgoing value when a field of the display format already shows it, and until July 2026 "already
+shows it" was a question about the field's declared source:
+
+```python
+value_shown_as_amount_field = any(
+    fd.path == ContainerPath.Value
+    and isinstance(fd.get_formatter(), AmountFormatter)
+    for fd in display_format.field_definitions
+)
+```
+
+The removed comment stated the invariant outright: "A `@.value` field formatted any other way still
+gets its own summary line." `ce2282bd` — "fix(clear_signing): double display of amount. / - compare
+rendered strings now. / [no changelog]", closing an issue about an amount shown twice — replaced it
+with:
+
+```python
+if amount is not None and formatted == amount:
+    value_shown_as_field = True
+```
+
+Any unrelated field that happens to render to the same string now suppresses the native debit's
+summary line. The author announced the mechanism change in the commit body and opted out of the
+changelog, which is the highest-signal line in the repository and the one nothing reads.
+
+**The sweep, and why it needs full history:**
+
+```sh
+python3 <skill-dir>/scripts/cosmetic_regression.py --repo <checkout> \
+    --path <confirmation/display/signing paths> [--all-commits]
+```
+
+Measured over that repository's whole history: 19,288 commits, 2,559 touching the signing and UI
+paths, **1,168 passed the commit-message funnel and the diff classifier returned exactly one
+candidate** — that commit, with `- fd.path == ContainerPath.Value` and
+`+ if amount is not None and formatted == amount:` as its anchors. The message funnel alone passes
+46% of commits and is a cost control, not evidence; the diff shape is the instrument.
+
+A pass over this same repository found none of it, because its checkout was `--depth 1`: one commit,
+shallow and grafted, so every history lens could only answer empty and the run recorded the silence
+as coverage. `capability-probe` now measures this as the `commit-history` evidence kind and the sweep
+refuses to produce an empty candidate list from such a checkout, reporting a `blocker` with the
+measured depth instead. Full history is nearly free — `git clone --filter=blob:none --bare` carried
+all 19,288 commits in 23 MB.
+
+**Then price it before writing it up.** A suppressed confirmation on its own is the bottom of a
+vendor's ladder — the two published payouts closest to this shape were 400 and 650 USD. What moves
+it is the loss route: which deployed contract turns the hidden field into a transfer, and who ends
+up holding what. Build that route, or file the cheap one knowingly.
+
+**One caution on writing these up here.** A finding of this shape that is under coordinated
+disclosure belongs in the run directory, not in this file: the public commit, the public issue and
+the public diff are citable, the exploit construction is not.
 
 ## 5. Safety that rests on a dependency's implementation detail
 
