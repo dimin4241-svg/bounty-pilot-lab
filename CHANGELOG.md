@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.38.0
+
+### A redesign that deleted a confirmation, and the catalogue that proves it
+
+- **New generator, `scripts/removed_confirmation.py`** - the inverse of the §4 sweep. That one
+  looks for a predicate replaced by rendered text; this one for a screen that simply stopped
+  existing, in a commit that announces a rework.
+- **The string catalogue is what makes it precise.** A label that leaves the code may have been
+  renamed or moved; a label deleted from the code **and** from the catalogue in the same commit is
+  a string the product no longer has. Rank 0 is that intersection, rank 1 the code-only losses
+  where the renames live. Both sides are removed-minus-added, so a field moved to another screen
+  inside the same commit is not lost and a reindented catalogue line is not either.
+- **Calibrated on `6dc393af6`**, "refactor(core): improve Stellar signing UX": sixteen labels left
+  the code, eight left the catalogue too, and **four of those eight were the network display**.
+  `7e4bbee93` restored it thirteen months later because "for users that have accounts both on
+  mainnet and testnet, it is crucial to be able to distinguish that they don't sign a transaction
+  for mainnet that was actually meant to be sent to testnet only".
+- Over the whole history of `core/src/apps/stellar`: 105 commits touch it, 33 pass the funnel, **17
+  leads of which 8 at rank 0, and all 8 are that one redesign commit.** Over the whole application
+  tree: 2163 commits touched, 317 through the funnel, rank 0 is **12 labels in 3 commits**, 8 of
+  them that redesign.
+- The funnel excludes two kinds of message: one that announces the removal (somebody decided, and
+  that decision is not the sweep's business) and one that announces a **key rename**, where the
+  catalogue loses the old key and gains a differently-named one. The rename exclusion was added
+  after the first apps-wide run, where it accounted for every rank-0 commit except the calibration
+  case. It reuses `cosmetic_regression`'s history guard, so the shallow-checkout rule has one
+  source of truth across every history lens.
+- **`blind-spots.md` §15, and the arithmetic closes:** each of the six confirmation-suppression
+  bugs Trezor fixed across 2.12.5 and 2.13.0 now has a generator pointed at its shape - §4, §12,
+  §13, §14, §15. A set built entirely out of bugs somebody already paid for.
+
 ## 0.37.0
 
 ### A display rule keyed on a sentinel that carries meaning

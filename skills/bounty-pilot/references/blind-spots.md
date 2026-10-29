@@ -175,10 +175,10 @@ it is the loss route: which deployed contract turns the hidden field into a tran
 up holding what. Build that route, or file the cheap one knowingly.
 
 Sibling generators for the same surface: §12 aims at the accept-set rather than at a commit, §13 at
-a suppression gate with no witness, §14 at a display rule keyed on a meaningful sentinel. Between
-the four, five of those six bugs are covered; this sweep alone covers none of them. The one still
-uncovered is a redesign commit that simply deletes a confirmation field - the inverse of this
-sweep, looking for removed render calls rather than replaced predicates.
+a suppression gate with no witness, §14 at a display rule keyed on a meaningful sentinel, §15 at a
+screen a redesign deleted - the inverse of this sweep, looking for removed labels rather than
+replaced predicates. Between the five, all six of those bugs have a generator pointed at their
+shape; this sweep alone covers none of them.
 
 **One caution on writing these up here.** A finding of this shape that is under coordinated
 disclosure belongs in the run directory, not in this file: the public commit, the public issue and
@@ -575,7 +575,7 @@ the loop that builds the screen, which is exactly where a witness belongs. That 
 sweep. Between the four: §13 catches a gate with no witness at all, §4 a witness that is a string
 comparison, §12 a field the curated screen never had, and §14 a display rule keyed on a sentinel
 that means something. Five of the six suppression bugs Trezor fixed across 2.12.5 and 2.13.0 are
-covered; the last one is a redesign commit that deletes a field outright.
+covered, and §15 takes the sixth: a screen a redesign deleted, proved by the string catalogue.
 
 The triage step in §12 applies to every row here as well, and it is where most of them will die:
 name the benign value, follow the condition out of the module, then price the counterfactual.
@@ -630,6 +630,60 @@ line being gone rather than the check being blind.
 The verdict on any row needs the field's domain: read the definition and ask what the sentinel
 means **there**. The calibration case had both meanings inside one instruction set, which is why a
 blanket rule could not be right.
+
+## 15. A redesign that deleted a confirmation, and the catalogue that proves it
+
+The inverse of §4. That sweep looks for a predicate replaced by rendered text; this one for a
+screen that simply stopped existing. A flow is reworked, the commit says it improves the UX, and a
+field nobody is thinking about leaves with the old layout. Nothing is broken. Something is just no
+longer shown, and the next person to notice is a user.
+
+The calibration case, in the words of the commit that undid it. `6dc393af6`, "refactor(core):
+improve Stellar signing UX" (August 2025), dropped sixteen display labels; eight of them were also
+deleted from the translation catalogue in the same commit, and **four of those eight were the
+network display**. Thirteen months later `7e4bbee93` put it back:
+
+> The network was intentionally omitted from the confirmation flow during a recent redesign ...
+> However, the stated rationale somewhat overlooked users that wish to interact with multiple
+> networks. For users that have accounts both on mainnet and testnet, it is crucial to be able to
+> distinguish that they don't sign a transaction for mainnet that was actually meant to be sent to
+> testnet only.
+
+```sh
+python3 <skill-dir>/scripts/removed_confirmation.py --repo <checkout> \
+    --path <confirmation paths> [--catalogue translations/] [--all-commits]
+```
+
+**The string catalogue is what makes this precise.** A label that disappears from the code may have
+been renamed or moved - and both are constant in a live codebase, so a code-only signal is mostly
+renames. A label deleted from the code **and** from the catalogue in the same commit is a string
+the product no longer has. That is rank 0; code-only losses are rank 1, where the renames live.
+Both sides are computed as removed-minus-added, so a field moved to another screen within the same
+commit does not count as lost, and a reindented catalogue line does not either.
+
+The message funnel takes commits that announce a rework (`refactor`, `redesign`, `improve the UX`,
+`unify`, `simplify`, `new layout`) and excludes two kinds that say the string did not stop being
+shown: one that **announces the removal** - somebody decided to, and that decision is not this
+sweep's business - and one that **announces a key rename**, where the catalogue loses the old key
+and gains a differently-named one. The second exclusion was not in the first version and it
+mattered: over `core/src/apps` it accounted for every rank-0 commit except the calibration case.
+`--all-commits` drops the funnel.
+
+Measured over the whole history of one module, `core/src/apps/stellar`: 105 commits touch it, 33
+pass the funnel, **17 leads of which 8 at rank 0 - and all 8 are the single redesign commit that
+contains the known bug**. Pointed at the whole application tree instead: 2163 commits touch
+`core/src/apps`, 317 pass the funnel, and rank 0 is **12 labels in 3 commits**, of which that one
+redesign is 8. Either aim is usable; a module keeps the output per screen you are reading.
+
+The rank-1 tier is almost entirely renames, and that is the honest shape of this signal rather
+than something to tune away. Read rank 0 first, and for each row read the flow as it is now and ask
+what the user used to be told and is not.
+
+With this one, each of the six confirmation-suppression bugs Trezor fixed across 2.12.5 and 2.13.0
+has a generator pointed at its shape: §4 a predicate replaced by rendered text, §12 a field the
+curated screen never had, §13 a suppression gate with no witness, §14 a display rule keyed on a
+meaningful sentinel, §15 a screen a redesign deleted. That is a set built entirely out of bugs
+somebody already paid for - which is the only reason to believe any of them.
 
 ## Recording a clean result
 

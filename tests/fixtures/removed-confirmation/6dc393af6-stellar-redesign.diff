@@ -1,0 +1,317 @@
+diff --git a/core/src/apps/stellar/get_address.py b/core/src/apps/stellar/get_address.py
+index bfd0e455e..8b8434678 100644
+--- a/core/src/apps/stellar/get_address.py
++++ b/core/src/apps/stellar/get_address.py
+@@ -34 +34 @@ async def get_address(msg: StellarGetAddress, keychain: Keychain) -> StellarAddr
+-        coin = "XLM"
++        coin = "Stellar"
+diff --git a/core/src/apps/stellar/layout.py b/core/src/apps/stellar/layout.py
+index 511691623..a350ed99f 100644
+--- a/core/src/apps/stellar/layout.py
++++ b/core/src/apps/stellar/layout.py
+@@ -14,15 +14,5 @@ if TYPE_CHECKING:
+-async def require_confirm_init(
+-    address: str,
+-    network_passphrase: str,
+-    accounts_match: bool,
+-) -> None:
+-    description = (
+-        TR.stellar__initialize_signing_with + TR.stellar__your_account
+-        if accounts_match
+-        else ""
+-    )
+-    await layouts.confirm_address(
+-        TR.stellar__confirm_stellar,
+-        address,
+-        description=description,
+-        br_name="confirm_init",
++async def require_confirm_tx_source(tx_source: str) -> None:
++    await layouts.show_warning(
++        br_name="confirm_tx_source",
++        content=TR.stellar__transaction_source_diff_warning,
++        br_code=ButtonRequestType.Warning,
+@@ -31,42 +21,5 @@ async def require_confirm_init(
+-    # get_network_warning
+-    if network_passphrase == consts.NETWORK_PASSPHRASE_PUBLIC:
+-        network = None
+-    elif network_passphrase == consts.NETWORK_PASSPHRASE_TESTNET:
+-        network = TR.stellar__testnet_network
+-    else:
+-        network = TR.stellar__private_network
+-
+-    if network:
+-        await layouts.confirm_metadata(
+-            "confirm_init_network",
+-            TR.stellar__confirm_network,
+-            TR.stellar__on_network_template,
+-            network,
+-            ButtonRequestType.ConfirmOutput,
+-        )
+-
+-
+-async def require_confirm_timebounds(start: int, end: int) -> None:
+-    await layouts.confirm_properties(
+-        "confirm_timebounds",
+-        TR.stellar__confirm_timebounds,
+-        (
+-            (
+-                TR.stellar__valid_from,
+-                (
+-                    strings.format_timestamp(start)
+-                    if start > 0
+-                    else TR.stellar__no_restriction
+-                ),
+-                False,
+-            ),
+-            (
+-                TR.stellar__valid_to,
+-                (
+-                    strings.format_timestamp(end)
+-                    if end > 0
+-                    else TR.stellar__no_restriction
+-                ),
+-                False,
+-            ),
+-        ),
++    await layouts.confirm_address(
++        title=TR.stellar__transaction_source,
++        address=tx_source,
++        br_name="confirm_tx_source",
++        br_code=ButtonRequestType.ConfirmOutput,
+@@ -88,5 +41,3 @@ async def require_confirm_memo(memo_type: StellarMemoType, memo_text: str) -> No
+-        return await layouts.confirm_action(
+-            "confirm_memo",
+-            TR.stellar__confirm_memo,
+-            TR.stellar__no_memo_set,
+-            TR.stellar__exchanges_require_memo,
++        return await layouts.show_warning(
++            br_name="confirm_memo",
++            content=TR.stellar__exchanges_require_memo,
+@@ -94 +44,0 @@ async def require_confirm_memo(memo_type: StellarMemoType, memo_text: str) -> No
+-            prompt_screen=True,
+@@ -97 +47 @@ async def require_confirm_memo(memo_type: StellarMemoType, memo_text: str) -> No
+-    await layouts.confirm_blob(
++    await layouts.confirm_text(
+@@ -101,0 +52 @@ async def require_confirm_memo(memo_type: StellarMemoType, memo_text: str) -> No
++        ButtonRequestType.ConfirmOutput,
+@@ -105,13 +56,41 @@ async def require_confirm_memo(memo_type: StellarMemoType, memo_text: str) -> No
+-async def require_confirm_final(fee: int, num_operations: int) -> None:
+-    op_str = strings.format_plural(
+-        "{count} {plural}", num_operations, TR.plurals__transaction_of_x_operations
+-    )
+-    text = (
+-        TR.stellar__sign_tx_count_template.format(op_str)
+-        + " "
+-        + TR.stellar__sign_tx_fee_template
+-    )
+-    await layouts.confirm_metadata(
+-        "confirm_final",
+-        TR.stellar__final_confirm,
+-        text,
++async def require_confirm_final(
++    address_n: list[int],
++    fee: int,
++    timebounds: tuple[int, int],
++    is_sending_from_trezor_account: bool,
++) -> None:
++    from trezor.wire import DataError
++
++    from apps.common import paths
++
++    from . import PATTERN, SLIP44_ID
++
++    timebounds_start, timebounds_end = timebounds
++    extra_items = [
++        (
++            TR.stellar__valid_from,
++            (
++                strings.format_timestamp(timebounds_start)
++                if timebounds_start > 0
++                else TR.stellar__no_restriction
++            ),
++            None,
++        ),
++        (
++            TR.stellar__valid_to,
++            (
++                strings.format_timestamp(timebounds_end)
++                if timebounds_end > 0
++                else TR.stellar__no_restriction
++            ),
++            None,
++        ),
++    ]
++
++    account_name = paths.get_account_name("Stellar", address_n, PATTERN, SLIP44_ID)
++    account_path = paths.address_n_to_str(address_n)
++
++    if account_name is None:
++        raise DataError("Stellar: Invalid account name")
++
++    await layouts.confirm_stellar_tx(
+@@ -119 +98,4 @@ async def require_confirm_final(fee: int, num_operations: int) -> None:
+-        hold=True,
++        account_name,
++        account_path,
++        is_sending_from_trezor_account,
++        extra_items,
+diff --git a/core/src/apps/stellar/operations/__init__.py b/core/src/apps/stellar/operations/__init__.py
+index 2ddc7b35d..ea1a565a6 100644
+--- a/core/src/apps/stellar/operations/__init__.py
++++ b/core/src/apps/stellar/operations/__init__.py
+@@ -8 +8,3 @@ if TYPE_CHECKING:
+-async def process_operation(w: Writer, op: StellarMessageType) -> None:
++async def process_operation(
++    w: Writer, op: StellarMessageType, output_index: int
++) -> None:
+@@ -24 +26 @@ async def process_operation(w: Writer, op: StellarMessageType) -> None:
+-        await layout.confirm_account_merge_op(op)
++        await layout.confirm_account_merge_op(op, output_index)
+@@ -36 +38 @@ async def process_operation(w: Writer, op: StellarMessageType) -> None:
+-        await layout.confirm_create_account_op(op)
++        await layout.confirm_create_account_op(op, output_index)
+@@ -51 +53 @@ async def process_operation(w: Writer, op: StellarMessageType) -> None:
+-        await layout.confirm_path_payment_strict_receive_op(op)
++        await layout.confirm_path_payment_strict_receive_op(op, output_index)
+@@ -54 +56 @@ async def process_operation(w: Writer, op: StellarMessageType) -> None:
+-        await layout.confirm_path_payment_strict_send_op(op)
++        await layout.confirm_path_payment_strict_send_op(op, output_index)
+@@ -57 +59 @@ async def process_operation(w: Writer, op: StellarMessageType) -> None:
+-        await layout.confirm_payment_op(op)
++        await layout.confirm_payment_op(op, output_index)
+diff --git a/core/src/apps/stellar/operations/layout.py b/core/src/apps/stellar/operations/layout.py
+index 83d7766a1..f3fde0ea9 100644
+--- a/core/src/apps/stellar/operations/layout.py
++++ b/core/src/apps/stellar/operations/layout.py
+@@ -10,0 +11 @@ from trezor.ui.layouts import (
++    confirm_stellar_output,
+@@ -57 +58,3 @@ async def confirm_allow_trust_op(op: StellarAllowTrustOp) -> None:
+-async def confirm_account_merge_op(op: StellarAccountMergeOp) -> None:
++async def confirm_account_merge_op(
++    op: StellarAccountMergeOp, output_index: int
++) -> None:
+@@ -60,0 +64 @@ async def confirm_account_merge_op(op: StellarAccountMergeOp) -> None:
++        subtitle=f"{TR.words__recipient} #{output_index + 1}",
+@@ -85,8 +89,7 @@ async def confirm_change_trust_op(op: StellarChangeTrustOp) -> None:
+-async def confirm_create_account_op(op: StellarCreateAccountOp) -> None:
+-    await confirm_properties(
+-        "op_create_account",
+-        TR.stellar__create_account,
+-        (
+-            (TR.words__account, op.new_account, True),
+-            (TR.stellar__initial_balance, format_amount(op.starting_balance), False),
+-        ),
++async def confirm_create_account_op(
++    op: StellarCreateAccountOp, output_index: int
++) -> None:
++    await confirm_output(
++        op.new_account,
++        format_amount(op.starting_balance),
++        output_index=output_index,
+@@ -203,0 +207 @@ async def confirm_path_payment_strict_receive_op(
++    output_index: int,
+@@ -204,0 +209 @@ async def confirm_path_payment_strict_receive_op(
++    # TODO: show output index in the subtitle
+@@ -222,0 +228 @@ async def confirm_path_payment_strict_send_op(
++    output_index: int,
+@@ -223,0 +230 @@ async def confirm_path_payment_strict_send_op(
++    # TODO: show output index in the subtitle
+@@ -240,2 +247,2 @@ async def confirm_path_payment_strict_send_op(
+-async def confirm_payment_op(op: StellarPaymentOp) -> None:
+-    await confirm_output(
++async def confirm_payment_op(op: StellarPaymentOp, output_index: int) -> None:
++    await confirm_stellar_output(
+@@ -243,0 +251,2 @@ async def confirm_payment_op(op: StellarPaymentOp) -> None:
++        output_index,
++        op.asset,
+@@ -245 +253,0 @@ async def confirm_payment_op(op: StellarPaymentOp) -> None:
+-    await confirm_asset_issuer(op.asset)
+diff --git a/core/src/apps/stellar/sign_tx.py b/core/src/apps/stellar/sign_tx.py
+index 532a84a8f..44cdd8eae 100644
+--- a/core/src/apps/stellar/sign_tx.py
++++ b/core/src/apps/stellar/sign_tx.py
+@@ -19 +19,9 @@ async def sign_tx(msg: StellarSignTx, keychain: Keychain) -> StellarSignedTx:
+-    from trezor.messages import StellarSignedTx, StellarTxOpRequest
++    from trezor.messages import (
++        StellarAccountMergeOp,
++        StellarCreateAccountOp,
++        StellarPathPaymentStrictReceiveOp,
++        StellarPathPaymentStrictSendOp,
++        StellarPaymentOp,
++        StellarSignedTx,
++        StellarTxOpRequest,
++    )
+@@ -42,0 +51,3 @@ async def sign_tx(msg: StellarSignTx, keychain: Keychain) -> StellarSignedTx:
++    is_sending_from_trezor_account = True
++    current_output_index = 0
++
+@@ -54,10 +65,4 @@ async def sign_tx(msg: StellarSignTx, keychain: Keychain) -> StellarSignedTx:
+-    # confirm init
+-    await layout.require_confirm_init(
+-        msg.source_account, msg.network_passphrase, accounts_match
+-    )
+-
+-    # ---------------------------------
+-    # TIMEBOUNDS
+-    # ---------------------------------
+-    # confirm dialog
+-    await layout.require_confirm_timebounds(msg.timebounds_start, msg.timebounds_end)
++    if not accounts_match:
++        is_sending_from_trezor_account = False
++        # If the tx source account does not match the Trezor account, we need to confirm it.
++        await layout.require_confirm_tx_source(msg.source_account)
+@@ -106 +111,17 @@ async def sign_tx(msg: StellarSignTx, keychain: Keychain) -> StellarSignedTx:
+-        await process_operation(w, op)  # type: ignore [Argument of type "MessageType" cannot be assigned to parameter "op" of type "StellarMessageType" in function "process_operation"]
++        await process_operation(w, op, current_output_index)  # type: ignore [Argument of type "MessageType" cannot be assigned to parameter "op" of type "StellarMessageType" in function "process_operation"]
++
++        if op.source_account is not None and op.source_account != address:  # type: ignore [Cannot access attribute "source_account" for class "MessageType"]
++            # if the operation source account does not match the Trezor account
++            is_sending_from_trezor_account = False
++
++        if any(
++            op_type.is_type_of(op)
++            for op_type in [
++                StellarAccountMergeOp,
++                StellarCreateAccountOp,
++                StellarPaymentOp,
++                StellarPathPaymentStrictSendOp,
++                StellarPathPaymentStrictReceiveOp,
++            ]
++        ):
++            current_output_index += 1
+@@ -114 +135,6 @@ async def sign_tx(msg: StellarSignTx, keychain: Keychain) -> StellarSignedTx:
+-    await layout.require_confirm_final(msg.fee, num_operations)
++    await layout.require_confirm_final(
++        msg.address_n,
++        msg.fee,
++        (msg.timebounds_start, msg.timebounds_end),
++        is_sending_from_trezor_account,
++    )
+diff --git a/core/translations/en.json b/core/translations/en.json
+index d3b1b0ef4..f0b4ec743 100644
+--- a/core/translations/en.json
++++ b/core/translations/en.json
+@@ -1062 +1061,0 @@
+-    "stellar__confirm_network": "Confirm network",
+@@ -1064 +1062,0 @@
+-    "stellar__confirm_stellar": "Confirm Stellar",
+@@ -1072 +1070 @@
+-    "stellar__exchanges_require_memo": "Important: Many exchanges require a memo when depositing",
++    "stellar__exchanges_require_memo": "Memo is not set.\nTypically needed when sending to exchanges.",
+@@ -1078,2 +1075,0 @@
+-    "stellar__initial_balance": "Initial Balance",
+-    "stellar__initialize_signing_with": "Initialize signing with",
+@@ -1090 +1085,0 @@
+-    "stellar__on_network_template": "Transaction is on {0}",
+@@ -1097 +1091,0 @@
+-    "stellar__private_network": "private network",
+@@ -1105,0 +1100 @@
++    "stellar__sign_with": "Sign with",
+@@ -1107 +1102,4 @@
+-    "stellar__testnet_network": "testnet network",
++    "stellar__timebounds": "Timebounds",
++    "stellar__token_info": "Token info",
++    "stellar__transaction_source": "Transaction source",
++    "stellar__transaction_source_diff_warning": "Transaction source does not belong to this Trezor.",
+@@ -1114 +1111,0 @@
+-    "stellar__your_account": " your account",

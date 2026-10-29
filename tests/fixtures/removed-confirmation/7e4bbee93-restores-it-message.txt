@@ -1,0 +1,18 @@
+feat(stellar): show network in signing flows
+
+The network can be optionally viewed in the info menu on the last
+screen of the tx and auth entry signing flows.
+
+The network was intentionally omitted from the confirmation flow
+during a recent redesign:
+https://github.com/trezor/trezor-firmware/issues/5148#issuecomment-2975448688
+
+However, the stated rationale somewhat overlooked users that wish to
+interact with multiple networks. For users that have accounts both
+on mainnet and testnet, it is crucial to be able to distinguish that
+they don't sign a transaction for mainnet that was actually meant to
+be sent to testnet only.
+
+Fixes: https://github.com/satoshilabs/trezor-firmware/issues/319
+(cherry picked from commit cb97b0b37cccfa60619111ebc35aad518635d5b3)
+
