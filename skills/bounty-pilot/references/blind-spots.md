@@ -517,8 +517,22 @@ change and dummy outputs with `continue`. The standalone payment-id screen was t
 and gates on that - a witness instead of a proxy (`9558d1cbf`).
 
 ```sh
-python3 <skill-dir>/scripts/suppression_witness.py --source <module> [--source <module> ...]
+python3 <skill-dir>/scripts/suppression_witness.py --source <module> [--source <module> ...] \
+    [--renderer '<regex matching THIS project's screen calls>']
 ```
+
+**Set `--renderer` before you believe a zero.** The default is Trezor-shaped
+(`confirm_*`, `show_*`, `*_confirm`), and what counts as drawing a screen is per project. Coldcard's
+firmware draws with **`ux_show_story` - 326 call sites across its `shared/` modules against 75 for
+`ux_confirm`** - which the default matches not at all; run it there unset and the check reads almost
+nothing and reports a confident zero. Census the names first
+(`grep -ohE '\b(ux_[a-z_]+|[a-z_]*confirm[a-z_]*)\(' *.py | sort | uniq -c | sort -rn`), then pass
+the pattern. Exclude the input plumbing: Coldcard's `ux_wait_keydown`, `ux_poll_key`,
+`ux_clear_keys` and `ux_dramatic_pause` draw nothing. §14 takes the same option for the same reason.
+
+A source this interpreter cannot parse is **skipped and named in `skipped`**, never fatal: six of
+Coldcard's 94 shared modules are generated data blobs, and aborting on the first of them returned no
+result for the other 88 while looking exactly like a clean sweep.
 
 Four discriminators, each of which exists because without it the check floods:
 
@@ -602,8 +616,12 @@ even though **None may encode an action rather than the absence of one**". In th
 otherwise (`0fea14829`, firmware 2.13.0).
 
 ```sh
-python3 <skill-dir>/scripts/sentinel_skip.py --source <module> [--source <module> ...]
+python3 <skill-dir>/scripts/sentinel_skip.py --source <module> [--source <module> ...] \
+    [--renderer '<regex matching THIS project's screen calls>']
 ```
+
+`--renderer` and the skip-and-name behaviour for unparseable sources work exactly as in §13, and the
+warning there applies here too: a rendering loop is only found if the renderer inside it is.
 
 The question is never *does it skip on a sentinel* - every UI does - but **what licenses the
 skip**:

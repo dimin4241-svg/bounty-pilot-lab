@@ -35,7 +35,10 @@ import json
 import re
 from pathlib import Path
 
-RENDERER = re.compile(r"^_?(confirm|require_confirm|show|display|ask)_|_confirm$|^confirm$")
+# What counts as drawing a screen; the default is Trezor-shaped. A pattern that misses a
+# project's real renderers makes this report a confident zero, so it is an option.
+RENDERER_DEFAULT = r"^_?(confirm|require_confirm|show|display|ask)_|_confirm$|^confirm$"
+RENDERER = re.compile(RENDERER_DEFAULT)
 # A decision recorded per field, by whoever wrote the field down.
 PER_FIELD = re.compile(r"default_value|hide|suppress|display_rule|policy|skip_when|show_when",
                        re.I)
@@ -65,14 +68,14 @@ def _text(node):
         return _root(node) or "?"
 
 
-def _renders(block):
-    return any(isinstance(n, ast.Call) and RENDERER.search(_name_of(n) or "")
+def _renders(block, renderer=RENDERER):
+    return any(isinstance(n, ast.Call) and renderer.search(_name_of(n) or "")
                for statement in block for n in ast.walk(statement))
 
 
-def _rendering_loops(fn):
+def _rendering_loops(fn, renderer=RENDERER):
     return [node for node in ast.walk(fn)
-            if isinstance(node, (ast.For, ast.AsyncFor)) and _renders(node.body)]
+            if isinstance(node, (ast.For, ast.AsyncFor)) and _renders(node.body, renderer)]
 
 
 def _parents(root):
@@ -142,12 +145,13 @@ def _qualifiers(tests, sentinel_expressions):
     return out
 
 
-def analyse(source):
+def analyse(source, renderer_pattern=RENDERER_DEFAULT):
+    renderer = re.compile(renderer_pattern)
     tree = ast.parse(source)
     leads, notes = [], []
     for fn in [n for n in ast.walk(tree)
                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
-        for loop in _rendering_loops(fn):
+        for loop in _rendering_loops(fn, renderer):
             links = _parents(loop)
             for jump in [n for n in ast.walk(loop)
                          if isinstance(n, (ast.Continue, ast.Return))]:
@@ -199,14 +203,24 @@ def analyse(source):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", required=True, action="append", help="module to read; repeatable")
+    p.add_argument("--renderer", default=RENDERER_DEFAULT,
+                   help="regex matching the calls that draw a screen in THIS project; the "
+                        "default is Trezor-shaped and a pattern that misses the real ones makes "
+                        "this report a confident zero")
     p.add_argument("--out")
     a = p.parse_args(argv)
     report = {"leads": [], "notes": [],
-              "counts": {"sentinel-skip": 0, "licensed-by-a-type-level-claim": 0}, "notice": ""}
+              "counts": {"sentinel-skip": 0, "licensed-by-a-type-level-claim": 0}, "notice": "", "skipped": []}
     for path in a.source:
         try:
-            one = analyse(Path(path).read_text(encoding="utf-8"))
-        except (OSError, SyntaxError, ValueError) as exc:
+            one = analyse(Path(path).read_text(encoding="utf-8"), a.renderer)
+        except (SyntaxError, UnicodeDecodeError) as exc:
+            # A file this interpreter cannot parse is skipped and SAID, never fatal: six of
+            # Coldcard's 94 shared modules are generated data blobs, and killing the sweep on
+            # the first one returned no result at all for the other 88.
+            report["skipped"].append({"source": path, "reason": f"{type(exc).__name__}: {exc}"})
+            continue
+        except OSError as exc:
             p.error(str(exc))
         report["leads"] += [dict(row, source=path) for row in one["leads"]]
         report["notes"] += [dict(row, source=path) for row in one["notes"]]
@@ -215,6 +229,10 @@ def main(argv=None):
     report["counts"]["licensed-by-a-type-level-claim"] = sum(
         1 for row in report["leads"] if row["rank"] == 0)
     report["leads"].sort(key=lambda row: (row["rank"], row["source"], row["function"]))
+    if report["skipped"]:
+        report["notice"] += (f' {len(report["skipped"])} source file(s) could not be parsed and '
+                             'were skipped; see "skipped". A sweep that reports nothing because '
+                             'it read nothing is not a clean result.')
     payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if a.out:
         Path(a.out).write_text(payload, encoding="utf-8")
