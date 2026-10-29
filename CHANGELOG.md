@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.36.1
+
+### Five discriminators for `suppression_witness`, bought by triaging its own first run
+
+- 0.36.0 reported **11 rank-1 leads** over 59 confirmation and signing modules of current
+  trezor-firmware. All eleven were taken through §12's three steps and **all eleven were benign**:
+  precision zero on live code. They were not eleven mistakes, they were five, and each is now a
+  rule. The same run now reports **0 leads and 87 notes**, and the Monero calibration still fires at
+  rank 0.
+- **An operand computed from the displayed value is a precondition** - the operand's own source
+  expression is searched for the displayed one, so
+  `is_payment = SCHEMA_PAYMENT.match(witness_path)` no longer reads as a proxy.
+- **A comparison against our own value is the same** - `msg.source_account == address` is
+  hide-the-default.
+- **An alternative branch that also confirms is a choice of presentation**, not a suppression.
+- **A parameter with a default is written by the caller**, not by the request; `self` never carries
+  the request either.
+- **State a class accumulates is a witness** - `self.external_in += txi.amount` in an input handler
+  is a local flag by another name.
+- A suppressed call that displays nothing host-supplied now goes to `notes`: a fixed label whose
+  applicability is a policy question.
+- Seven new tests, one per rule plus one asserting the calibration still fires **through** all of
+  them, so the quiet was not bought by silencing the known positive.
+
 ## 0.36.0
 
 ### A confirmation suppressed on a proxy for having shown it

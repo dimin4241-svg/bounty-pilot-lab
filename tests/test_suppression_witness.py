@@ -150,6 +150,121 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(witness.analyse('def f(msg):\n    return msg.x\n')['leads'], [])
 
 
+PRECONDITION_FROM_DISPLAYED = """
+async def flow(msg, witness_path):
+    for item in msg.items:
+        if item.skip:
+            continue
+        await confirm_item(item)
+    is_payment = SCHEMA_PAYMENT.match(witness_path)
+    if not is_payment:
+        await confirm_witness_request(witness_path)
+"""
+
+COMPARISON_AGAINST_OUR_OWN = """
+async def flow(msg, address):
+    for item in msg.items:
+        if item.skip:
+            continue
+        await confirm_item(item)
+    accounts_match = msg.source_account == address
+    if not accounts_match:
+        await confirm_tx_source(msg.source_account)
+"""
+
+ALTERNATIVE_BRANCH = """
+async def flow(msg, verified_payment_request):
+    for item in msg.items:
+        if item.skip:
+            continue
+        await confirm_item(item)
+    if verified_payment_request:
+        await confirm_payment_request(msg.recipient)
+    else:
+        await confirm_recipient(msg.recipient)
+"""
+
+DEFAULTED_PARAMETER = """
+async def flow(msg, is_root=False):
+    for item in msg.items:
+        if item.skip:
+            continue
+        await confirm_item(item)
+    if not is_root:
+        await confirm_invoke_contract(msg.function)
+"""
+
+ACCUMULATED_ON_SELF = """
+class Approver:
+    def __init__(self):
+        self.external_in = 0
+
+    def add_external_input(self, txi):
+        self.external_in += txi.amount
+
+    async def approve_tx(self, msg):
+        for item in msg.items:
+            if item.skip:
+                continue
+            await confirm_item(item)
+        if not self.external_in:
+            await confirm_total(msg.total)
+"""
+
+STATIC_LABEL = """
+async def flow(msg, multisig):
+    if not multisig:
+        await confirm_text(TR.nem__convert_account_to_multisig)
+    for item in msg.items:
+        if item.skip:
+            continue
+        await confirm_item(item)
+"""
+
+
+class DiscriminatorTests(unittest.TestCase):
+    """The five rules that took the live false-positive rate from eleven to zero.
+
+    Every shape here is one a real site in current firmware has, named in each test. All eleven
+    rank-1 leads this generator produced over 59 confirmation modules were of these five shapes,
+    and all eleven were benign on inspection.
+    """
+
+    def test_an_operand_computed_from_the_displayed_value_is_a_precondition(self):
+        """cardano `_show_witness_request`: `is_payment = SCHEMA_PAYMENT.match(witness_path)`."""
+        self.assertEqual(witness.analyse(PRECONDITION_FROM_DISPLAYED)['leads'], [])
+
+    def test_a_comparison_against_our_own_value_is_a_precondition(self):
+        """stellar `sign_tx`: `accounts_match = msg.source_account == address`."""
+        self.assertEqual(witness.analyse(COMPARISON_AGAINST_OUR_OWN)['leads'], [])
+
+    def test_an_alternative_branch_that_also_confirms_is_presentation(self):
+        """solana `confirm_system_transfer`: payment-request screen or recipient screen."""
+        report = witness.analyse(ALTERNATIVE_BRANCH)
+        self.assertEqual(report['leads'], [])
+        self.assertTrue(any('presentation' in note['note'] for note in report['notes']))
+
+    def test_a_parameter_with_a_default_is_not_the_request(self):
+        """stellar `confirm_invocation(..., is_root: bool = False)` is recursion state."""
+        self.assertEqual(witness.analyse(DEFAULTED_PARAMETER)['leads'], [])
+
+    def test_state_the_class_accumulates_is_a_witness(self):
+        """bitcoin approvers: `self.external_in += txi.amount` in `add_external_input`."""
+        self.assertEqual(witness.analyse(ACCUMULATED_ON_SELF)['leads'], [])
+
+    def test_a_call_that_displays_nothing_host_supplied_is_a_policy_question(self):
+        """nem `ask_aggregate_modification`: the suppressed screen is a fixed label."""
+        report = witness.analyse(STATIC_LABEL)
+        self.assertEqual(report['leads'], [])
+        self.assertTrue(any('static label' in note['note'] for note in report['notes']))
+
+    def test_the_calibration_still_fires_through_all_five(self):
+        """The rules must not have been bought by silencing the known positive."""
+        report = run('monero-layout-pre')
+        self.assertEqual(report['counts']['suppressed-on-a-proxy'], 1)
+        self.assertEqual(report['leads'][0]['rank'], 0)
+
+
 class CliTests(unittest.TestCase):
     def test_several_sources_are_merged_and_tagged(self):
         with tempfile.TemporaryDirectory() as folder:

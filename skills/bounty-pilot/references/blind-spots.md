@@ -533,10 +533,39 @@ Four discriminators, each of which exists because without it the check floods:
   expression it came from.
 
 Rank 0 is the calibration shape: the display the gate stands in for sits in a loop a `continue`
-can skip. Rank 1 is the same gate over a display that is merely conditional. Measured over 59
-confirmation and signing modules of current firmware: **11 leads, none of them rank 0, and 98
-notes** - so the sharpest shape is currently absent from that codebase while the broader one is
-not.
+can skip. Rank 1 is the same gate over a display that is merely conditional.
+
+### Five more discriminators, bought by triaging the first run
+
+The first version reported **11 rank-1 leads** over 59 confirmation and signing modules of current
+firmware. All eleven were worked to a verdict through the three steps above and **all eleven were
+benign** - a precision of zero on live code. The useful part is that they were not eleven different
+mistakes. They were five, each now a rule, and with them the same run reports **0 leads and 87
+notes** while the calibration still fires:
+
+1. **An operand computed *from* the displayed value is a precondition.**
+   `is_payment = SCHEMA_PAYMENT.match(witness_path)` guarding `confirm_witness_request(witness_path)`
+   asks a question *about* the value being shown. Equality of expressions is not enough; the
+   operand's own source expression has to be searched for the displayed one.
+2. **A comparison against our own value is the same thing.**
+   `accounts_match = msg.source_account == address`, then
+   `if not accounts_match: confirm_tx_source(msg.source_account)` - hide-the-default, the rule a
+   definition writes as `default_value_to_hide: "signer"`.
+3. **An alternative branch that also confirms is a choice of presentation.** A payment-request
+   screen in one arm and a recipient screen in the other both show the recipient.
+4. **A parameter with a default is written by the caller, not by the request.** `is_root: bool =
+   False` is recursion state. Only the handler's own arguments carry host data, and `self` never
+   does.
+5. **State the class accumulates is a witness.** `self.external_in += txi.amount` in an input
+   handler is the same construct as a local flag set beside a confirmation; it just does not live
+   in a local.
+
+A sixth kind went to `notes` rather than becoming a rule: a suppressed call that displays **nothing
+host-supplied** is a fixed label, and whether it applies is a policy question, not a suppression.
+
+Note what this costs and what it buys. Fifteen reads closed a whole tier, and the tier did not have
+to be deleted or rebalanced by taste - each row named the rule it was missing. That is the only
+honest way to answer "too noisy": go find out what the noise was made of.
 
 **What this does not cover, deliberately.** A gate whose witness is real but is *derived from the
 rendered text* rather than from the fact of rendering reads as clean here - the flag is written in
