@@ -103,6 +103,78 @@ def labels_lost(diff, hints, label_pattern=LABEL_IN_CODE, key_pattern=KEY_IN_CAT
     return code_removed - code_added, catalogue_removed - catalogue_added
 
 
+def catalogue_texts(diff, hints, key_pattern=KEY_IN_CATALOGUE):
+    """`({key: {text}} removed, {key: {text}} added)` from the catalogue side of a diff.
+
+    Two forms are read, because Trezor's catalogue uses both: a flat `"key": "text"` and a nested
+    `"key": {"Bolt": "text", ...}` with one variant per device. Empty variants are ignored.
+    """
+    key = re.compile(key_pattern)
+    nested_open = re.compile(key_pattern + r"\s*:\s*\{")
+    flat = re.compile(key_pattern + r"\s*:\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+    variant = re.compile(r"\"[A-Za-z][A-Za-z0-9_]*\"\s*:\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+    sides = {"-": {}, "+": {}}
+    current = {"-": None, "+": None}
+    path, catalogue = None, False
+    for line in diff.splitlines():
+        header = re.match(r"^diff --git a/(\S+) b/(\S+)", line)
+        if header:
+            path = header.group(2)
+            catalogue = _is_catalogue(path, hints)
+            current = {"-": None, "+": None}
+            continue
+        if path is None or not catalogue or not line:
+            continue
+        side = line[0]
+        if side not in sides or line.startswith("---") or line.startswith("+++"):
+            continue
+        body = line[1:]
+        if body.strip() in ("}", "},"):
+            current[side] = None
+            continue
+        opened = nested_open.search(body)
+        if opened:
+            current[side] = opened.group(1)
+            continue
+        hit = flat.search(body)
+        if hit:
+            if hit.group(2):
+                sides[side].setdefault(hit.group(1), set()).add(hit.group(2))
+            current[side] = None
+            continue
+        if current[side]:
+            inner = variant.search(body)
+            if inner and inner.group(1):
+                sides[side].setdefault(current[side], set()).add(inner.group(1))
+    return sides["-"], sides["+"]
+
+
+def _moved_or_title(lost, removed_texts, added_texts):
+    """Which lost labels say, from their own text, that nothing stopped being shown.
+
+    - **moved**: a deleted key's text reappears under a key added in the same commit. That is a
+      rename or a namespace move, and it does not depend on the commit message saying so - which
+      matters, because the one in the calibration run said only "boilerplate support".
+    - **title**: the text is a single word, or ends in a colon, and carries no placeholder. A
+      screen title, not a field's value.
+
+    Nothing here can separate a two-word title from a two-word field label - "Confirm Stellar" from
+    "Confirm network" - and this deliberately does not try.
+    """
+    everything_added = {text for texts in added_texts.values() for text in texts}
+    moved, titles = set(), set()
+    for name in lost:
+        texts = removed_texts.get(name) or set()
+        if texts & everything_added:
+            moved.add(name)
+            continue
+        if texts and all("{" not in text
+                         and (text.strip().endswith(":") or len(text.split()) == 1)
+                         for text in texts):
+            titles.add(name)
+    return moved, titles
+
+
 def sweep(repo, paths=None, hints=None, funnel=True, max_commits=DEFAULT_MAX_COMMITS,
           label_pattern=LABEL_IN_CODE, key_pattern=KEY_IN_CATALOGUE):
     guard = _guard()
@@ -110,7 +182,8 @@ def sweep(repo, paths=None, hints=None, funnel=True, max_commits=DEFAULT_MAX_COM
     history = guard.history_surface(repo)
     blocker = guard.guard_history(history)
     if blocker:
-        return {"state": "blocked", "history": history, "blocker": blocker, "leads": []}
+        return {"state": "blocked", "history": history, "blocker": blocker,
+                "leads": [], "notes": []}
     hints = hints or [hint for hint in CATALOGUE_HINT.split(",") if hint]
     pathspec = ["--", *paths] if paths else []
     log = git(repo, "log", f"--max-count={max_commits}", "--format=%H%x01%s%x02%b%x03", *pathspec)
@@ -131,7 +204,7 @@ def sweep(repo, paths=None, hints=None, funnel=True, max_commits=DEFAULT_MAX_COM
         if funnel and RENAMED.search(message):
             continue
         looked_at.append((sha, subject, body))
-    leads = []
+    leads, notes = [], []
     for sha, subject, body in looked_at:
         # the whole commit, so the catalogue counts even when --path narrows the code
         lost, gone = labels_lost(git(repo, "show", "--unified=0", "--format=", sha),
@@ -141,7 +214,20 @@ def sweep(repo, paths=None, hints=None, funnel=True, max_commits=DEFAULT_MAX_COM
                 git(repo, "show", "--unified=0", "--format=", sha, *pathspec),
                 hints, label_pattern, key_pattern)
             lost &= in_paths
-        for name in sorted(lost):
+        whole = git(repo, "show", "--unified=0", "--format=", sha)
+        removed_texts, added_texts = catalogue_texts(whole, hints, key_pattern)
+        moved, titles = _moved_or_title(lost, removed_texts, added_texts)
+        for name in sorted(moved):
+            notes.append({"commit": sha[:12], "label": name, "subject": subject.strip(),
+                          "note": "its text reappears under a key added in the same commit: a "
+                                  "rename or a namespace move, whatever the message says",
+                          "text": sorted(removed_texts.get(name) or [])})
+        for name in sorted(titles):
+            notes.append({"commit": sha[:12], "label": name, "subject": subject.strip(),
+                          "note": "a single word or a trailing colon and no placeholder: a screen "
+                                  "title rather than a field's value",
+                          "text": sorted(removed_texts.get(name) or [])})
+        for name in sorted(lost - moved - titles):
             leads.append({
                 "commit": sha[:12], "date": git(repo, "log", "-1", "--format=%ci", sha).strip(),
                 "subject": subject.strip(), "label": name,
@@ -158,7 +244,7 @@ def sweep(repo, paths=None, hints=None, funnel=True, max_commits=DEFAULT_MAX_COM
         "state": "swept", "history": history,
         "commits_touching_paths": len(commits), "commits_diffed": len(looked_at),
         "message_funnel_applied": bool(funnel),
-        "leads": leads,
+        "leads": leads, "notes": notes,
         "counts": {"lost-confirmation-label": len(leads),
                    "gone-from-the-catalogue-too": sum(1 for row in leads if row["rank"] == 0)},
         "notice": "Leads, not findings. For each rank-0 row, read the flow as it is now and ask "

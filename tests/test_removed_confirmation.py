@@ -108,6 +108,68 @@ class RuleTests(unittest.TestCase):
         self.assertTrue(lost)
 
 
+class ValueLevelFilterTests(unittest.TestCase):
+    """Two filters that read the catalogue's text instead of its keys.
+
+    Both came from triaging the sweep's own 12 rank-0 rows over `core/src/apps`, where 4 were the
+    known bug and 8 were not. They work without the commit message, which is why they are better
+    than the subject-line rename exclusion already in the funnel: the EOS commit's subject says
+    only "chore(tron): boilerplate support for (un)delegate resource" and announces nothing.
+    """
+
+    def classify(self, name):
+        diff = (FIXTURES / f'{name}.diff').read_text(encoding='utf-8')
+        lost, gone = removed.labels_lost(diff, HINTS)
+        removed_texts, added_texts = removed.catalogue_texts(diff, HINTS)
+        moved, titles = removed._moved_or_title(lost & gone, removed_texts, added_texts)
+        return sorted(lost & gone), sorted(moved), sorted(titles)
+
+    def test_the_nested_per_device_form_is_parsed(self):
+        """Trezor's catalogue writes some strings as `"key": {"Bolt": "text", ...}`."""
+        diff = (FIXTURES / 'ef5109436-eos-keys-moved.diff').read_text(encoding='utf-8')
+        removed_texts, _ = removed.catalogue_texts(diff, HINTS)
+        self.assertIn('Delegate', removed_texts['eos__delegate'])
+        self.assertNotIn('', removed_texts['eos__delegate'])
+
+    def test_a_namespace_move_is_recognised_from_the_text(self):
+        """`eos__delegate` -> `words__delegate`: same words, different key, no message about it."""
+        rank0, moved, titles = self.classify('ef5109436-eos-keys-moved')
+        self.assertEqual(rank0, ['eos__delegate', 'eos__from', 'eos__undelegate'])
+        self.assertEqual(moved, rank0)
+        self.assertEqual(titles, [])
+
+    def test_a_trailing_colon_with_no_placeholder_is_a_title(self):
+        """`cardano__confirm` was the literal string "Confirm:"."""
+        rank0, moved, titles = self.classify('1c7bfdb04-colon-template')
+        self.assertEqual(rank0, ['cardano__confirm'])
+        self.assertEqual(titles, rank0)
+        self.assertEqual(moved, [])
+
+    def test_the_calibration_survives_both_filters(self):
+        """All eight Stellar labels stay, including the four that were the real bug."""
+        rank0, moved, titles = self.classify('6dc393af6-stellar-redesign')
+        self.assertEqual(len(rank0), 8)
+        self.assertEqual(moved, [])
+        self.assertEqual(titles, [])
+
+    def test_a_two_word_title_is_deliberately_not_filtered(self):
+        """Nothing at the text level separates "Confirm Stellar" from "Confirm network".
+
+        Three of the twelve rows were titles this filter cannot reach, and it does not guess:
+        over-reaching here would have taken the find with it.
+        """
+        moved, titles = removed._moved_or_title(
+            {'stellar__confirm_stellar'}, {'stellar__confirm_stellar': {'Confirm Stellar'}}, {})
+        self.assertEqual(moved, set())
+        self.assertEqual(titles, set())
+
+    def test_an_identical_text_under_the_same_key_is_not_a_move(self):
+        """A key reworded in place keeps its key, so it never reaches these filters."""
+        moved, _ = removed._moved_or_title(
+            {'a__b'}, {'a__b': {'Text'}}, {'a__b': {'Text'}})
+        self.assertEqual(moved, {'a__b'})
+
+
 @unittest.skipUnless(__import__('shutil').which('git'), 'git is not on PATH')
 class HistoryGuardTests(unittest.TestCase):
     """The same checkout rule as every other history lens, from the same source of truth."""

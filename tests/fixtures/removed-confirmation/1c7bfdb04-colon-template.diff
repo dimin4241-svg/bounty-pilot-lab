@@ -1,0 +1,20 @@
+diff --git a/core/src/apps/cardano/layout.py b/core/src/apps/cardano/layout.py
+index 2e5d0d0bd..f2604ee3f 100644
+--- a/core/src/apps/cardano/layout.py
++++ b/core/src/apps/cardano/layout.py
+@@ -567 +567,4 @@ async def confirm_certificate(
+-        (TR.cardano__confirm, CERTIFICATE_TYPE_NAMES[certificate.type]),
++        (
++            TR.label_with_colon_template.format(TR.words__confirm),
++            CERTIFICATE_TYPE_NAMES[certificate.type],
++        ),
+diff --git a/core/translations/en.json b/core/translations/en.json
+index 2f0673c0c..77fe0693b 100644
+--- a/core/translations/en.json
++++ b/core/translations/en.json
+@@ -149 +148,0 @@
+-    "cardano__confirm": "Confirm:",
+@@ -403,0 +403 @@
++    "label_with_colon_template": "{0}:",
+@@ -754 +753,0 @@
+-    "send__total_amount_colon": "Total amount:",
