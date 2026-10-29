@@ -174,8 +174,9 @@ vendor's ladder — the two published payouts closest to this shape were 400 and
 it is the loss route: which deployed contract turns the hidden field into a transfer, and who ends
 up holding what. Build that route, or file the cheap one knowingly.
 
-A sibling generator for the same surface, aimed at the accept-set rather than at a commit, is
-§12 - it covers two more of these bugs and the sweep here covers none of them.
+Sibling generators for the same surface: §12 aims at the accept-set rather than at a commit, and
+§13 at a suppression gate with no witness. Between the three, four of those six bugs are covered;
+this sweep alone covers none of them.
 
 **One caution on writing these up here.** A finding of this shape that is under coordinated
 disclosure belongs in the run directory, not in this file: the public commit, the public issue and
@@ -496,6 +497,57 @@ Where this came from: of the six confirmation-suppression bugs Trezor fixed in 2
 the cosmetic-regression sweep in §4 catches **none** - five were never regressions at all, the field
 was never shown from the commit that added the feature. Each needs its own generator; this is the
 first of them, and it covers two of the six.
+
+## 13. A confirmation suppressed on a proxy for having shown it
+
+A flow shows a field in one place and later decides whether to show it again - or at all - by
+asking something else: a host-supplied index, a count, a flag from the request. The question it
+means to ask is *did the user already see this?*, and the only value that can answer it is one
+written where the showing happened. An input cannot: the display path has `continue`s, early
+returns and branches the input knows nothing about.
+
+The calibration case is Trezor's Monero flow, and its own commit message states the mechanism:
+"integrated_indices is host-supplied and never validated, so an index naming an output the
+confirmation loop skips left the payment id on no screen while it was still folded into the signed
+transaction." The output loop showed the payment id only for outputs the host named, and skipped
+change and dummy outputs with `continue`. The standalone payment-id screen was then suppressed by
+`not tsx_data.integrated_indices`. The fix tracks `payment_id_shown` where the output is confirmed
+and gates on that - a witness instead of a proxy (`9558d1cbf`).
+
+```sh
+python3 <skill-dir>/scripts/suppression_witness.py --source <module> [--source <module> ...]
+```
+
+Four discriminators, each of which exists because without it the check floods:
+
+- **A gate on the field the call displays is a precondition, not a suppression.**
+  `if unlock_time is not None: await confirm_unlock_time(unlock_time)` is correct and is not
+  reported. Resolving the local copy matters here: `payment_id = tsx_data.payment_id` means a gate
+  on `payment_id` is still a gate on the field being shown.
+- **A negation is what makes it read as "already handled".** `not x` suppresses; a plain `if x`
+  is a precondition and goes to `notes`.
+- **A witness is a local written inside a branch or loop body that itself confirms something.**
+  That is the only place a value can learn what the display path did.
+- **A local computed from the request outside any confirming block is a proxy wearing a local
+  name** - `shown = bool(msg.items)` answers the same wrong question - and is reported with the
+  expression it came from.
+
+Rank 0 is the calibration shape: the display the gate stands in for sits in a loop a `continue`
+can skip. Rank 1 is the same gate over a display that is merely conditional. Measured over 59
+confirmation and signing modules of current firmware: **11 leads, none of them rank 0, and 98
+notes** - so the sharpest shape is currently absent from that codebase while the broader one is
+not.
+
+**What this does not cover, deliberately.** A gate whose witness is real but is *derived from the
+rendered text* rather than from the fact of rendering reads as clean here - the flag is written in
+the loop that builds the screen, which is exactly where a witness belongs. That shape is §4's
+sweep. Between them: §13 catches a gate with no witness at all, §4 catches a witness that is a
+string comparison, and §12 catches a field the curated screen never had. The six suppression bugs
+Trezor fixed across 2.12.5 and 2.13.0 needed all three and are still not fully covered - §13 takes
+one more of them.
+
+The triage step in §12 applies to every row here as well, and it is where most of them will die:
+name the benign value, follow the condition out of the module, then price the counterfactual.
 
 ## Recording a clean result
 

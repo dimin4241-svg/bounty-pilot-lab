@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.36.0
+
+### A confirmation suppressed on a proxy for having shown it
+
+- **New generator, `scripts/suppression_witness.py`.** A flow decides whether to show a field by
+  asking a host-supplied input instead of a value written where the showing happened. The input
+  cannot answer it: the display path has `continue`s, early returns and branches the input knows
+  nothing about.
+- **Calibrated on Trezor's Monero payment-id bug** (`9558d1cbf`), whose own message states the
+  mechanism - an index naming an output the loop skips left the payment id on no screen while it
+  was still folded into the signed transaction. The real module is vendored either side of the fix:
+  one lead at rank 0 before, silent after.
+- **Four discriminators, each because the check floods without it:** a gate on the field the call
+  displays is a precondition, not a suppression (and the local copy is resolved, so a gate on
+  `payment_id` still counts as a gate on `tsx_data.payment_id`); a negation is what makes a gate
+  read as "already handled", so a plain `if x` goes to `notes`; a witness is a local written inside
+  a branch or loop that itself confirms something; and a local computed from the request outside any
+  confirming block is a proxy wearing a local name, reported with the expression it came from.
+- **Measured on 59 confirmation and signing modules of current firmware: 11 leads, none at rank 0,
+  98 notes.** The sharpest shape is currently absent from that codebase; the broader one is not.
+- `blind-spots.md` §13 has the lens, and states plainly what it does **not** cover: a gate whose
+  witness is real but derived from the rendered text reads as clean here, because that is §4's
+  sweep. §13 catches a gate with no witness, §4 a witness that is a string comparison, §12 a field
+  the curated screen never had - four of the six bugs Trezor fixed across 2.12.5 and 2.13.0, and
+  still not all six.
+
 ## 0.35.1
 
 ### §12 gains the triage step that killed its own first lead
