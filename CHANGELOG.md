@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.34.1
+
+### `agent-dispatch` did not run on the Python this skill claims to support
+
+- **`agent_dispatch.py` carried a replacement field spanning two lines**, which is valid only
+  from Python 3.12 (PEP 701), while the README says "Python 3.9+" and the CI matrix tests 3.9.
+  The module did not parse there at all: `agent-dispatch` was dead for anyone on 3.9, 3.10 or
+  3.11, and its own 21-test module was silently skipped. The two sums are now hoisted out of the
+  returned dict; the values are unchanged.
+- **Two release guards.** One walks every `*.py` in the repository for a `FormattedValue` that
+  spans a newline — `ast.parse(feature_version=(3, 9))` does **not** reject these, so the check
+  is explicit. The other compiles every shipped script with a 3.9-3.11 interpreter when one is
+  installed, and says so when it skips.
+
+### `audit-gap` measured the audit's age against the wrong day
+
+- **The audited commit's date was read from `%cI` by slicing its first ten characters**, which is
+  the date in the *committer's own* timezone offset, and compared against a UTC date. A commit at
+  10:00 on the 16th at +14:00 happened at 20:00 on the 15th UTC; sliced, it dated a day late and
+  the age came out one day short. At the boundary that promoted an unreviewed file to
+  `audited-recent` — the benign branch, where nothing gets read. The offset is now applied
+  instead of discarded.
+- **A negative age is clamped to zero.** A committer date ahead of today is clock skew or a
+  rewritten date, not a review from the future, and it previously made `--stale-days 0`
+  — documented as "0 makes every audit stale" — report `audited-recent`.
+- Both are covered by tests that fail on `441f20c` and pass here.
+
 ## 0.34.0
 
 ### A cosmetic fix is how a semantic guard disappears
