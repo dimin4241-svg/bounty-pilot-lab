@@ -190,6 +190,96 @@ def _host_locals(fn, parameters, witnesses):
     return out
 
 
+def _inner_chains(node):
+    """Every name and attribute chain appearing inside an expression."""
+    texts = set()
+    for inner in ast.walk(node):
+        if isinstance(inner, (ast.Name, ast.Attribute, ast.Subscript)):
+            try:
+                texts.add(ast.unparse(inner))
+            except AttributeError:  # pragma: no cover - Python < 3.9
+                root = _root(inner)
+                if root:
+                    texts.add(root)
+    return texts
+
+
+def _resolves_through(text, shown, aliases, host_locals):
+    """Is this operand computed from something the call displays?
+
+    `is_payment = SCHEMA_PAYMENT.match(witness_path)` and
+    `accounts_match = msg.source_account == address` are questions *about* the displayed value, so
+    they are preconditions on it and not proxies for having shown it.
+    """
+    source_text = host_locals.get(text, aliases.get(text, text))
+    candidates = {source_text}
+    try:
+        candidates |= _inner_chains(ast.parse(source_text, mode="eval").body)
+    except SyntaxError:
+        pass
+    return bool(candidates & shown)
+
+
+def _sibling_branch_renders(call, links):
+    """True when an alternative branch of the same `if` chain also confirms something.
+
+    `if verified_payment_request: confirm_payment_request(...)` / `else: confirm_recipient(...)`
+    is a choice of presentation, not a suppression: both branches show the value.
+    """
+    node = call
+    while node in links:
+        parent = links[node]
+        if isinstance(parent, ast.If):
+            in_body = any(node is st or node in ast.walk(st) for st in parent.body)
+            others = parent.orelse if in_body else parent.body
+            if any(_renderer_calls(statement) for statement in others):
+                return True
+        node = parent
+    return False
+
+
+def _self_attributes_written(tree):
+    """`{class: {"self.x", ...}}` for attributes a class writes outside `__init__`.
+
+    State the device accumulates while it walks a transaction - `self.external_in += txi.amount`
+    in an input handler - is a witness in every sense that matters; it just does not live in a
+    local.
+    """
+    out = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        written = set()
+        for method in node.body:
+            if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if method.name == "__init__":
+                continue
+            for inner in ast.walk(method):
+                targets = []
+                if isinstance(inner, ast.Assign):
+                    targets = inner.targets
+                elif isinstance(inner, (ast.AugAssign, ast.AnnAssign)):
+                    targets = [inner.target]
+                for target in targets:
+                    if isinstance(target, ast.Attribute) and _root(target.value) == "self":
+                        written.add(f"self.{target.attr}")
+        if written:
+            out[node.name] = written
+    return out
+
+
+def _methods_of(tree):
+    """`{id(function node): class}` so a method can see its class's accumulated state."""
+    owner = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            for method in node.body:
+                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    owner[id(method)] = node.name
+    return owner
+
+
 def _witnesses(fn):
     """Locals written in a branch or loop body that confirms something.
 
@@ -243,6 +333,8 @@ def _has_jumping_display(fn, links):
 
 def analyse(source):
     tree = ast.parse(source)
+    self_state = _self_attributes_written(tree)
+    owners = _methods_of(tree)
     leads, notes = [], []
     for fn in [n for n in ast.walk(tree)
                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
@@ -250,25 +342,40 @@ def analyse(source):
         if not calls:
             continue
         links = _parents(fn)
-        parameters = {argument.arg for argument in
-                      list(fn.args.posonlyargs) + list(fn.args.args) + list(fn.args.kwonlyargs)}
+        positional = list(fn.args.posonlyargs) + list(fn.args.args)
+        # A parameter with a default is supplied by the caller - recursion state, a flag the
+        # device computed - not by the request. `self` is never the request either.
+        defaulted = {argument.arg for argument in
+                     (positional[len(positional) - len(fn.args.defaults):]
+                      if fn.args.defaults else [])}
+        defaulted |= {argument.arg for argument, default
+                      in zip(fn.args.kwonlyargs, fn.args.kw_defaults) if default is not None}
+        parameters = {argument.arg for argument in positional + list(fn.args.kwonlyargs)
+                      } - defaulted - {"self"}
         witnesses = _witnesses(fn)
+        witnesses |= self_state.get(owners.get(id(fn)), set())
         aliases = _aliases(fn)
         host_locals = _host_locals(fn, parameters, witnesses)
         conditional = _conditional_renderers(fn, links)
         skippable = _has_jumping_display(fn, links)
         for call in calls:
-            shown = set()
+            shown, host_shown = set(), False
             for argument in list(call.args) + [kw.value for kw in call.keywords]:
                 for text in _operands(argument):
                     shown.add(text)
                     shown.add(aliases.get(text, text))
+            for text in sorted(shown):
+                root = text.split(".")[0].split("[")[0]
+                if root in parameters or root in host_locals:
+                    host_shown = True
             proxies, witness_in_gate = [], False
             for test, _ in _enclosing_tests(call, links):
                 for text, operand in _operands(test).items():
-                    if operand["root"] in witnesses:
+                    if operand["root"] in witnesses or text in witnesses:
                         witness_in_gate = True
                     elif text in shown or aliases.get(text, text) in shown:
+                        continue
+                    elif _resolves_through(text, shown, aliases, host_locals):
                         continue
                     elif operand["root"] in parameters:
                         proxies.append({"operand": text, "negated": operand["negated"]})
@@ -277,6 +384,18 @@ def analyse(source):
                             "operand": f'{text} (= {host_locals[operand["root"]]})',
                             "negated": operand["negated"]})
             if not proxies or witness_in_gate:
+                continue
+            if not host_shown:
+                notes.append({"function": fn.name, "call": _name_of(call),
+                              "note": "gated on a host field, but this call displays nothing "
+                                      "host-supplied - it is a static label, and whether it "
+                                      "applies is a policy question, not a suppression"})
+                continue
+            if _sibling_branch_renders(call, links):
+                notes.append({"function": fn.name, "call": _name_of(call),
+                              "note": "an alternative branch of the same `if` chain also "
+                                      "confirms something, so this is a choice of presentation "
+                                      "rather than a suppression"})
                 continue
             negated = any(p["negated"] for p in proxies)
             others = [other for other in conditional if other is not call]
