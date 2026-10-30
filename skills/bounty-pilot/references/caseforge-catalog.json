@@ -44,6 +44,39 @@
       "vulnerable_commit": null,
       "mechanism": "An uninitialized UUPS implementation had upgrade privileges separate from its initialized proxy.",
       "invariant": "No lower-privilege user may acquire implementation-side authority to alter or destroy the deployed bridge logic."
+    },
+    {
+      "id": "BALANCER-CSP-2025",
+      "project": "Balancer V2",
+      "family": "stateful-economics",
+      "source_type": "incident-postmortem",
+      "source_url": "https://medium.com/balancer-protocol/nov-3-exploit-post-mortem-51dcbeb6b020",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Exact-out upscaling rounded toward the wrong side of the stable-swap invariant; rate-provider imprecision and low balances amplified an underpayment in batched swaps.",
+      "invariant": "Exact-out settlement must collect enough assets to preserve the pool invariant under supported rate scales and boundary states."
+    },
+    {
+      "id": "EULER-2023-DONATION",
+      "project": "Euler V1",
+      "family": "stateful-economics",
+      "source_type": "incident-postmortem",
+      "source_url": "https://www.euler.finance/blog/war-peace-behind-the-scenes-of-eulers-240m-exploit-recovery",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Leveraged position creation combined with reserve donation and subsequent liquidation exposed an accounting/collateralization inconsistency.",
+      "invariant": "Every operation sequence must maintain debt/collateral accounting constraints before and after liquidation."
+    },
+    {
+      "id": "KELP-2026-TRUST",
+      "project": "KelpDAO / LayerZero",
+      "family": "authorization",
+      "source_type": "incident-postmortem",
+      "source_url": "https://layerzero.network/blog/layerzero-labs-kelpdao-incident-report",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Poisoned RPC observations and single-DVN configuration allowed a cryptographically valid attestation to describe an event that did not occur.",
+      "invariant": "Valid attestations must correspond to independently verified source-chain facts, not only authentic signatures from an incorrectly trusted observer."
     }
   ]
 }
