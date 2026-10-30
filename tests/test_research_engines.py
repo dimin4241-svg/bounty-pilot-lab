@@ -43,10 +43,22 @@ class CaseForgeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'duplicate'):
             caseforge.validate({'schema_version': 1, 'cases': [item, item]})
 
+    def test_pinned_scope_cannot_escape_target_checkout(self):
+        original = dict(caseforge._read(caseforge.CATALOG)['cases'][2])
+        self.assertEqual(original['status'], 'revision-pinned')
+        with self.assertRaisesRegex(ValueError, 'invalid scope path'):
+            caseforge.validate({'schema_version': 1, 'cases': [
+                dict(original, scope_paths=['../secrets.json'])]})
+        with self.assertRaisesRegex(ValueError, 'source revision citation'):
+            caseforge.validate({'schema_version': 1, 'cases': [
+                dict(original, revision_source_url=None)]})
+
     def test_blind_task_hides_mechanism_source_and_case_id(self):
         item = dict(caseforge._read(caseforge.CATALOG)['cases'][0],
                     status='revision-pinned', vulnerable_commit='1' * 40,
-                    repository_url='https://github.com/example/project')
+                    repository_url='https://github.com/example/project',
+                    scope_paths=['src/Module.sol'],
+                    revision_source_url='https://example.org/report')
         result = caseforge.blind_queue({'schema_version': 1, 'cases': [item]})
         self.assertEqual(len(result['tasks']), 1)
         body = json.dumps(result)
