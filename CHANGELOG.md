@@ -13,7 +13,7 @@
   SHA-256 hypothesis fingerprints and falsification protocols.
 - Added `belief_ledger.py` for hashed, private, revision-bound observation
   memory with reviewable evidence requirements and no auto-dismissal.
-- Added 12 synthetic regression test methods plus reference docs.
+- Added 15 synthetic regression test methods plus reference docs.
 - No measured bounty uplift or independent historical rediscovery is claimed.
   Never merge before real tests execute.
 

@@ -33,7 +33,7 @@
   not duplicated scanners.
 - **Belief ledger:** private revision-bound, hashed evidence memory; no automatic
   suppression of refuted hypotheses.
-- **12 synthetic regression tests** added to the suite; results and runner
+- **15 synthetic regression tests** added to the suite; results and runner
   availability must be checked before merging this draft.
 
 Details: [Research Next](skills/bounty-pilot/references/research-next.md).

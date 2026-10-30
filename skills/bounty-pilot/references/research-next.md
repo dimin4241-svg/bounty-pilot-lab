@@ -75,7 +75,7 @@ python3 skills/bounty-pilot/scripts/bounty.py research-next native \
 
 The launcher runs both native tests twice, rejects zero-test/ignored runs
 through the existing native runner, checks pinned HEAD and tracked-file status,
-and preserves the runner's **sanitized** per-round output in private
+and rejects changed tracked-source diffs between rounds. It preserves the runner's **sanitized** per-round output in private
 `round-1.json`, `round-2.json`, alongside per-case logs.
 **Caution:** a flag does not create a sandbox! The operator must isolate the
 workspace externally. Never run this against a production chain or with live
