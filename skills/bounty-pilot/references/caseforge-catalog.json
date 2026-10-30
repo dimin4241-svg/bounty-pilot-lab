@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "POLYGON-PLASMA-2021",
+      "project": "Polygon Plasma Bridge",
+      "family": "semantic-identity",
+      "source_type": "paid-disclosure",
+      "source_url": "https://immunefi.com/blog/bug-fix-reviews/polygon-double-spend-bugfix-review-2m-bounty/",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Multiple HP branch-mask representations have equivalent proof semantics but produce distinct withdrawal exit identifiers.",
+      "invariant": "One semantic withdrawal must have one replay identity across all admissible representations."
+    },
+    {
+      "id": "LIQUID-2026-CACHE",
+      "project": "Liquid / Elements",
+      "family": "semantic-identity",
+      "source_type": "incident-postmortem",
+      "source_url": "https://blog.liquid.net/liquid-network-security-incident-assessment/",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Unframed concatenation of variable-width cache-key fields permitted different proof contexts to share one cache identity.",
+      "invariant": "A cache hit must only reuse proof validity under an equivalent complete verification context."
+    },
+    {
+      "id": "MONAD-2026-STAGE",
+      "project": "Monad",
+      "family": "cross-phase",
+      "source_type": "audited-finding",
+      "source_url": "https://code4rena.com/reports/2025-09-monad",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "EIP-7702 admission and downstream block validity policy can disagree on the same transaction.",
+      "invariant": "Transaction admission must not create an unintended permanently invalid block or recurrent no-cost processing loop."
+    },
+    {
+      "id": "WORMHOLE-UUPS-2022",
+      "project": "Wormhole",
+      "family": "lifecycle",
+      "source_type": "paid-disclosure",
+      "source_url": "https://immunefi.com/blog/bug-fix-reviews/wormhole-uninitialized-proxy-bugfix-review/",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "An uninitialized UUPS implementation had upgrade privileges separate from its initialized proxy.",
+      "invariant": "No lower-privilege user may acquire implementation-side authority to alter or destroy the deployed bridge logic."
+    }
+  ]
+}
