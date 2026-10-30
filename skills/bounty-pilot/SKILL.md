@@ -430,6 +430,25 @@ objection may be `withdrawn`; concessions go in `concessions[]`. Place survivors
 separate judgments. A refuted record citing a specific protection is alive again if that protection
 is edited.
 
+## Optional Lab 0.42 — executable research and memory
+
+When a bounty hypothesis cites a published protocol requirement, read
+`references/research-next.md` and use `bounty.py research-next spec`
+only on explicitly in-scope source. Treat mapped or missing symbols as
+research leads, never verified compliance or violations. For an existing
+paired native test, use `research-next native` to pin the source revision
+and repeat candidate/control twice. Actual execution requires a disposable,
+externally network-isolated, secret-free checkout and a fresh private
+evidence directory; the launcher does NOT provide a sandbox. The separate
+Evidence-First submission gate must still independently verify reachability,
+assertions, impact and deployed revision.
+
+Use `research-next memory-record` and `memory-lookup` only with an
+external private ledger. Previous refutations inform next experiments but
+do NOT automatically suppress new or repeated hypotheses. Existing
+`ecosystem_intelligence` patch variants now cite parent/patch commits
+and explicit falsifiers. No new lexical engine replaces AVRE.
+
 ## Stage 5 — Verify
 
 For each survivor, build a minimal PoC from `templates/` against **unmodified** production source,

@@ -307,5 +307,67 @@ class EcosystemIntelligenceTests(unittest.TestCase):
                             for row in report["safe_verification_plans"]))
 
 
+class MalformedURLTextTests(unittest.TestCase):
+    """A target's own text must never abort a passive run.
+
+    urlsplit raises ValueError on a malformed authority. Charon's credential-redaction
+    fixtures contain `https://user:s3cret`-shaped strings, where the password parses as
+    a port, and bracket-less IPv6 fragments survive URL regexes. Either one aborted the
+    whole ecosystem-intel run with "Port could not be cast to integer value" or
+    "Invalid IPv6 URL".
+    """
+
+    def test_unparsable_authorities_are_not_urls_instead_of_raising(self):
+        for value in ("https://user:s3cret", "https://user:s", "http://admin:secret",
+                      "http://[::1", "https://host:]", "http://[::1]:notaport/x"):
+            with self.subTest(value=value):
+                self.assertIsInstance(eco.safe_url(value), str)
+                self.assertIsInstance(eco.normalize_url(value), str)
+
+    def test_ordinary_urls_and_ipv6_literals_still_round_trip(self):
+        self.assertEqual(eco.safe_url("https://ok.example.org/b"), "https://ok.example.org/b")
+        self.assertEqual(eco.normalize_url("https://ok.example.org:8443/a"),
+                         "https://ok.example.org:8443/a")
+        # hostname drops the IPv6 brackets; a host:port join must put them back or the
+        # result ("http://::1:3600") is not a URL at all.
+        self.assertEqual(eco.safe_url("http://[::1]:3600/c"), "http://[::1]:3600/c")
+        self.assertEqual(eco.normalize_url("http://[::1]/d"), "http://[::1]/d")
+
+    def test_a_full_passive_run_survives_such_text_in_the_target(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        repo = root / "checkout"
+        (repo / "src").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        # Exactly the shape that aborted the run on a real target.
+        (repo / "src/redact.go").write_text(
+            'package src\n\nvar fixtures = []string{\n'
+            '\t"https://user:s3cret@beacon.example.invalid/eth/v1",\n'
+            '\t"http://[::1]:3600/eth/v1/node/version",\n'
+            '}\n', encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "config", "user.email",
+                        "fixture@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Fixture"], check=True)
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "fixture"], check=True)
+        scope = root / "scope.json"
+        scope.write_text(json.dumps({
+            "schema_version": 1, "project": "fixture",
+            "allowed": {"domains": [], "urls": [], "repositories": [], "contracts": [],
+                        "networks": [], "methods": ["local_static", "git_history"]},
+            "related_out_of_scope": {"domains": [], "urls": [], "repositories": [],
+                                     "contracts": [], "networks": []}}), encoding="utf-8")
+        out = root / "run"
+        result = subprocess.run(
+            ["python3", str(SCRIPT_DIR / "bounty.py"), "ecosystem-intel",
+             "--repo", str(repo), "--scope", str(scope), "--out", str(out)],
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Invalid IPv6 URL", result.stderr)
+        self.assertNotIn("cast to integer", result.stderr)
+        self.assertTrue((out / "ecosystem-intelligence.json").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -111,14 +111,16 @@ def now_utc():
 def normalize_domain(value):
     text = str(value or "").strip().lower().rstrip(".")
     if "://" in text:
-        text = urlsplit(text).hostname or ""
+        text = _hostname(text) or ""
     return text[4:] if text.startswith("www.") else text
 
 
 def normalize_repo(value):
     text = str(value or "").strip()
     if "://" in text:
-        parsed = urlsplit(text)
+        parsed = _split(text)
+        if parsed is None:
+            return ""
         path = parsed.path.strip("/").removesuffix(".git")
         return (parsed.hostname or "").lower() + "/" + path.lower()
     if text.startswith("git@") and ":" in text:
@@ -128,24 +130,58 @@ def normalize_repo(value):
     return "github.com/" + text.lower() if text.count("/") == 1 else text.lower()
 
 
+def _split(value):
+    """urlsplit raises ValueError on a malformed authority; a target's text must never
+    abort a passive run, so a string we cannot parse is simply not a URL."""
+    try:
+        return urlsplit(str(value))
+    except ValueError:
+        return None
+
+
+def _hostname(value):
+    parsed = _split(value)
+    return parsed.hostname if parsed else None
+
+
+def _host_literal(parsed):
+    """hostname drops the IPv6 brackets, so re-add them before any host:port join."""
+    host = (parsed.hostname or "").lower()
+    return "[" + host + "]" if ":" in host else host
+
+
+def _safe_port(parsed):
+    """urlsplit().port raises ValueError on a non-numeric authority segment."""
+    try:
+        return parsed.port
+    except ValueError:
+        return None
+
+
 def normalize_url(value):
-    parsed = urlsplit(str(value).strip())
+    parsed = _split(str(value).strip())
+    if parsed is None:
+        return ""
     if parsed.scheme.lower() not in ("http", "https", "ws", "wss") or not parsed.hostname:
         return ""
-    host = parsed.hostname.lower()
-    if parsed.port and parsed.port not in (80, 443):
-        host += ":" + str(parsed.port)
+    host = _host_literal(parsed)
+    port = _safe_port(parsed)
+    if port and port not in (80, 443):
+        host += ":" + str(port)
     path = re.sub(r"/{2,}", "/", parsed.path or "/").rstrip("/") or "/"
     return urlunsplit((parsed.scheme.lower(), host, path, "", ""))
 
 
 def safe_url(value):
-    parsed = urlsplit(str(value).rstrip(".,;:!?)\"]}"))
+    parsed = _split(str(value).rstrip(".,;:!?)\"]}"))
+    if parsed is None:
+        return ""
     if not parsed.scheme or not parsed.hostname:
         return ""
-    host = parsed.hostname.lower()
-    if parsed.port and parsed.port not in (80, 443):
-        host += ":" + str(parsed.port)
+    host = _host_literal(parsed)
+    port = _safe_port(parsed)
+    if port and port not in (80, 443):
+        host += ":" + str(port)
     parts = [p for p in parsed.path.split("/") if p]
     parts = ["<redacted>" if (SENSITIVE_PATH.search(p) or
              len(p) >= 24 and re.fullmatch(r"[A-Za-z0-9._~-]+", p) or
@@ -210,7 +246,9 @@ def _url_matches(target, rule):
     candidate, pattern = normalize_url(target), normalize_url(rule)
     if not candidate or not pattern:
         return False
-    left, right = urlsplit(candidate), urlsplit(pattern)
+    left, right = _split(candidate), _split(pattern)
+    if left is None or right is None:
+        return False
     root = right.path.rstrip("/") or "/"
     return left.scheme == right.scheme and left.netloc == right.netloc and (
         root == "/" or left.path == root or left.path.startswith(root + "/"))
@@ -221,7 +259,7 @@ def classify(scope, kind, value, network=None, chain_id=None):
     # More-specific exclusions must win over a broader allowed parent domain or repository.
     groups = (("related_out_of_scope", "RELATED_OUT_OF_SCOPE"), ("allowed", "IN_SCOPE"))
     if kind in ("domain", "url"):
-        host = urlsplit(value).hostname if "://" in value else value
+        host = _hostname(value) if "://" in value else value
         safe = safe_url(value) if "://" in value else normalize_domain(value)
         for group, label in groups:
             data = scope[group]
@@ -387,7 +425,7 @@ def _dependency_graph(files, path_times, observed, repo_key, scope):
             decision, role = classify(scope, "url", url), _role(text, match.start())
             nid = _id("service", url)
             nodes[nid] = {"id": nid, "kind": "service_or_endpoint", "label": url,
-                          "host": urlsplit(url).hostname, "scope": decision["classification"]}
+                          "host": _hostname(url), "scope": decision["classification"]}
             source = _evidence(path, text, match.start(), match.end(), path_times.get(path))
             edges.append({"from": repo_id, "to": nid, "kind": "references", "role": role,
                           "trust_boundary": "repository to external endpoint", "observed_at": observed,
@@ -533,7 +571,7 @@ def _history(root, files, path_times, scope):
                                 "invariants_removed": minus, "removed_urls": removed_urls,
                                 "diff_summary_only": True})
         if changes:
-            patch_leads.append({"commit": row["commit"], "timestamp": row["timestamp"],
+            patch_leads.append({"commit": row["commit"], "parent_commit": parent, "timestamp": row["timestamp"],
                                 "subject": row["subject"], "changes": changes,
                                 "status": "historical_patch_lead",
                                 "notice": "Token changes do not prove a complete security patch."})
@@ -547,7 +585,7 @@ def _history(root, files, path_times, scope):
                                   "source": _evidence(path, text, match.start(), match.end(),
                                                       path_times.get(path))})
     leads = []
-    current_hosts = {urlsplit(safe_url(match.group(0))).hostname
+    current_hosts = {_hostname(safe_url(match.group(0)))
                      for text in files.values() for match in URL_RE.finditer(text)
                      if safe_url(match.group(0))}
     for patch in patch_leads:
@@ -577,7 +615,7 @@ def _history(root, files, path_times, scope):
                     ],
                 })
             for url in change.get("removed_urls", []):
-                host = urlsplit(url).hostname
+                host = _hostname(url)
                 if host and host not in current_hosts:
                     decision = classify(scope, "url", url)
                     leads.append({
@@ -660,8 +698,13 @@ def _patch_variant_analysis(patches, files):
                     else:
                         ev = {"path": path, "line": 1, "excerpt": redact_text(body[:160])}
                         function_name = "unresolved"
+                    candidate_key = "|".join((patch["commit"], family, path, function_name))
                     candidates.append({
-                        "patch_commit": patch["commit"], "patch_subject": patch["subject"],
+                        "candidate_fingerprint_sha256": hashlib.sha256(
+                            candidate_key.encode("utf-8")).hexdigest(),
+                        "patch_commit": patch["commit"],
+                        "pre_patch_commit": patch.get("parent_commit"),
+                        "patch_subject": patch["subject"],
                         "invariant": family, "current_path": path,
                         "function": function_name,
                         "relation": "same_path" if path in patch_paths else "alternate_path_or_version",
@@ -670,6 +713,16 @@ def _patch_variant_analysis(patches, files):
                             "This is a lexical candidate; the patch may be path-specific or a shared library may enforce the property.",
                             "No deployment, inheritance, generated code, or runtime call path was resolved.",
                         ],
+                        "recommended_verification": {
+                            "before_revision": patch.get("parent_commit"),
+                            "after_revision": patch["commit"],
+                            "method": "Pin both revisions in separate disposable checkouts. "
+                                      "Reproduce the SAME native candidate and negative control "
+                                      "with identical inputs; independently replay unchanged tests.",
+                            "falsifiers": ["A shared verifier enforces the invariant.",
+                                           "The code path cannot be reached by an attacker.",
+                                           "The patch changes behavior by design or is not deployed."],
+                            "evidence_status": "commands-not-run"},
                         "status": "hypothesis", "confidence": "low",
                     })
                     if len(candidates) >= 200:

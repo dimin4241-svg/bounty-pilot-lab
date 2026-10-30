@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.42.0 — Draft research workflows
+
+- Added opt-in source-anchored `research-next spec` mapping, with tracked-code
+  scope, bounded exact-symbol leads and source-quote SHA verification.
+- Added `native_cycle.py`, reusing the existing experimenter and scenario runner,
+  to repeat existing candidate/control tests at one verified checkout revision.
+  Execution is explicit, requires external isolation confirmation and a fresh
+  private evidence directory with both rounds of sanitized logs; this does not
+  prove a target bug.
+- Extended existing patch-variant leads with before/after commit provenance,
+  SHA-256 hypothesis fingerprints and falsification protocols.
+- Added `belief_ledger.py` for hashed, private, revision-bound observation
+  memory with reviewable evidence requirements and no auto-dismissal.
+- Added 19 synthetic and controlled-local regression test methods, including
+  an actual stdlib unittest candidate/control subprocess fixture, strict complete-pair
+  detection, rejection of dirty tracked sources, and unchanged diff fingerprints.
+- `ecosystem-intel` no longer aborts on a target's own URL-shaped text. `urlsplit` raises
+  `ValueError` on a malformed authority, and a regex-extracted substring supplies plenty:
+  a credential fixture such as `https://user:s3cret` parses its password as a port
+  ("Port could not be cast to integer value"), and a bracket-less IPv6 fragment raises
+  "Invalid IPv6 URL". Either one ended the whole passive run on a real checkout. The split
+  is now guarded at every call site, an unparsable string is simply not a URL, and an IPv6
+  literal is re-bracketed before any host:port join instead of emitting `http://::1:3600`.
+- `research-next spec` declares a bounded result instead of presenting one as a map. A
+  requirement that fills the 40-hit budget now carries `truncated`, `symbol_hit_cap`,
+  `unread_code_files` and a notice saying how many scoped files were never opened; test
+  fixtures are read after production code, because a fixture mentions the same symbols and
+  can sort first — on one checkout every hit for a requirement came from one
+  `*_internal_test.go` while 76 of 78 scoped files went unread.
+- Six regression tests, each failing before the change and passing after, including a full
+  `ecosystem-intel` run over a checkout containing both crashing URL shapes.
+- No measured bounty uplift or independent historical rediscovery is claimed.
+  Never merge before real tests execute.
+
 ## 0.41.1
 
 ### Research-engine validation and local controls

@@ -11660,6 +11660,20 @@ def build_parser():
                     help="scan only: repeatable kind=regex cue in the project's own "
                          "vocabulary, e.g. cache_context=keyCache\\w+")
 
+    rn = sub.add_parser('research-next', help='opt-in spec mapping, native repetitions and private hypothesis memory')
+    rn.add_argument('operation', choices=('spec', 'native', 'memory-record', 'memory-lookup'))
+    rn.add_argument('--repo', default=None)
+    rn.add_argument('--spec', default=None)
+    rn.add_argument('--stack', choices=('foundry', 'cargo', 'pytest', 'go', 'unittest'))
+    rn.add_argument('--allow-exec', action='store_true')
+    rn.add_argument('--isolated-workspace-confirmed', action='store_true')
+    rn.add_argument('--evidence-dir', default=None, help='new private path outside checkout for both executed native rounds')
+    rn.add_argument('--ledger', default=None)
+    rn.add_argument('--input', default=None)
+    rn.add_argument('--target', default=None)
+    rn.add_argument('--mechanism', default=None)
+    rn.add_argument('--revision', default=None)
+
     route_parser = sub.add_parser('route', help='recommend native adapters from tracked manifests (heuristic)')
     route_parser.add_argument('--repo', required=True)
 
@@ -11946,6 +11960,40 @@ def main(argv=None):
                           else rd.quorum(observations))
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0
+        if args.action == 'research-next':
+            if args.operation == 'spec':
+                if not args.repo or not args.spec or args.allow_exec:
+                    raise ValueError('spec needs --repo and --spec, without execution')
+                mapper = load_impact_helper('spec_mapper')
+                source = Path(args.spec)
+                if source.is_symlink() or not source.is_file() or source.stat().st_size > 100_000:
+                    raise ValueError('spec file must be a non-symlink JSON file under 100kB')
+                result = mapper.map_spec(json.loads(source.read_text(encoding='utf-8')), args.repo)
+            elif args.operation == 'native':
+                if not args.repo or not args.spec or not args.stack:
+                    raise ValueError('native requires --repo, --spec and --stack')
+                cycle = load_impact_helper('native_cycle')
+                source = Path(args.spec)
+                if source.is_symlink() or not source.is_file() or source.stat().st_size > 100_000:
+                    raise ValueError('native spec must be a non-symlink JSON file under 100kB')
+                result = cycle.cycle(json.loads(source.read_text(encoding='utf-8')),
+                                     args.stack, args.repo, args.allow_exec,
+                                     args.isolated_workspace_confirmed, args.evidence_dir)
+            elif args.operation == 'memory-record':
+                if not args.ledger or not args.input:
+                    raise ValueError('memory-record requires --ledger and --input')
+                source = Path(args.input)
+                if source.is_symlink() or not source.is_file() or source.stat().st_size > 4096:
+                    raise ValueError('memory input must be a non-symlink JSON file under 4kB')
+                result = load_impact_helper('belief_ledger').record(
+                    json.loads(source.read_text(encoding='utf-8')), args.ledger)
+            else:
+                if not all((args.ledger, args.target, args.mechanism, args.revision)):
+                    raise ValueError('memory-lookup requires --ledger, --target, --mechanism, --revision')
+                result = load_impact_helper('belief_ledger').lookup(
+                    args.target, args.mechanism, args.revision, args.ledger)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 1 if args.operation == 'native' and args.allow_exec and not result['status'].startswith('NATIVE_PAIR') else 0
         if args.action == 'route':
             print(json.dumps(load_stack_route().route(args.repo), indent=2))
             return 0

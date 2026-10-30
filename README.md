@@ -18,6 +18,27 @@
 
 ---
 
+## What changed in 0.42 (experimental)
+
+- **Native two-pass runner:** reuses the existing `experimenter.plan`,
+  `native_fuzz_plan` and `scenario_runner` to run native candidate and
+  negative-control tests twice at one pinned git revision. Actual execution
+  requires explicit opt-in, an externally isolated disposable workspace and a
+  fresh private evidence directory for logs. Harness conformance is not proof.
+- **Spec-to-code mapping:** verified documentation line anchors linked to
+  bounded, explicit in-scope lexical code-symbol hints; missing code matches
+  are not vulnerabilities.
+- **Patch variant verification:** existing ecosystem patch analysis now carries
+  before/after commit provenance and deterministic hypothesis fingerprints,
+  not duplicated scanners.
+- **Belief ledger:** private revision-bound, hashed evidence memory; no automatic
+  suppression of refuted hypotheses.
+- **19 regression tests** added to the suite, including an actual synthetic
+  stdlib unittest pair executed by subprocesses; results and runner
+  availability must be checked before merging this draft.
+
+Details: [Research Next](skills/bounty-pilot/references/research-next.md).
+
 ## What changed in 0.41.1
 
 - **CaseForge (ten sourced retrospective cases)** records published incidents,
