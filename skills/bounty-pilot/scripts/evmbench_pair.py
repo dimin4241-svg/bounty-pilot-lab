@@ -132,6 +132,19 @@ def _stage_skill(repo, sha, dst):
             "answer_corpus_excluded": True}
 
 
+def _staged_integrity(root):
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError("staged skill missing or symlinked")
+    rows = []
+    for p in sorted(root.rglob("*")):
+        if p.is_symlink():
+            raise ValueError("symlink found in staged skill")
+        if not p.is_file() or p.name == "BENCHMARK.md":
+            continue
+        rows.append((p.relative_to(root).as_posix(), _hash(p)))
+    return hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
+
+
 def _inject(official):
     path = official / ENGINE
     content = path.read_text(encoding="utf-8")
@@ -155,7 +168,7 @@ def _audits(value, eligible):
 
 def prepare(repo, official, output, audits):
     repo, official, output = Path(repo).resolve(), Path(official).resolve(), Path(output).resolve()
-    if output.exists() or output == official or output == repo or repo in output.parents:
+    if output.exists() or output == official or output == repo or repo in output.parents or official in output.parents:
         raise ValueError("use a new private output directory outside Pilot source and EVMbench checkout")
     eligible = _official_check(official)
     audits = _audits(audits, eligible)
@@ -201,14 +214,24 @@ def run(manifest_path, model, timeout, confirmed):
         raise ValueError("upstream EVMbench HEAD drifted")
     if _hash(official / ENGINE) != data["solver"]["patched_solver_sha256"]:
         raise ValueError("patched upstream solver changed since preparation")
-    if output / "STARTED":
-        pass
+    tracked_changes = _git(official, "status", "--porcelain", "--untracked-files=no").splitlines()
+    if len(tracked_changes) != 1 or not tracked_changes[0].endswith(ENGINE):
+        raise ValueError("official EVMbench source contains unexpected tracked changes")
+    if shutil.which("uv") is None or shutil.which("docker") is None:
+        raise ValueError("official EVMbench needs uv + Docker; no model calls started")
+    if data.get("official_commit") != OFFICIAL or data.get("baseline_commit") != BASELINE or data.get("candidate_commit") != CANDIDATE:
+        raise ValueError("prepared manifest source revisions differ from audited harness")
+    if not (official / SPLIT).is_file():
+        raise ValueError("official EVMbench detect split is missing")
+    _audits(data.get("audits"), set((official / SPLIT).read_text().splitlines()))
+    for arm in ARM_IDS:
+        expected = data.get("stages", {}).get(arm, {}).get("staged_tree_sha256")
+        if _staged_integrity(output / "skills" / arm) != expected:
+            raise ValueError("staged skill contents changed after preparation")
     marker = output / "STARTED"
     fd = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     with os.fdopen(fd, "w") as fh:
-        fh.write("External provider budget and model access must be monitored independently.\n")
-    if shutil.which("uv") is None or shutil.which("docker") is None:
-        raise ValueError("official EVMbench needs uv + Docker; no model calls started")
+        fh.write("External provider budget and model access must be monitored independently.\\n")
     report = []
     for audit in data["audits"]:
         # Deterministic order blocks easy systematic first/second-arm bias,
