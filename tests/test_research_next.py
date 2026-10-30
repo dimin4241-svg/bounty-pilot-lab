@@ -165,6 +165,30 @@ class NativeCycleTests(CheckoutFixture):
         self.assertTrue(report["tracked_files_unchanged"])
 
 
+class IntegratedCLITests(CheckoutFixture):
+    def test_bounty_cli_spec_maps_without_promoting_finding(self):
+        spec_file = Path(self.tmp.name) / "spec.json"
+        spec_file.write_text(json.dumps(self.spec()), encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(SCRIPTS / "bounty.py"), "research-next", "spec",
+             "--repo", str(self.root), "--spec", str(spec_file)],
+            capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(r.stdout)["confirmed_vulnerabilities"], 0)
+
+    def test_bounty_cli_native_defaults_to_dry_run(self):
+        spec_file = Path(self.tmp.name) / "native.json"
+        spec_file.write_text(json.dumps({
+            "finding_id": "BP-123", "source_revision": self.sha,
+            "invariant": "Caller authentication required",
+            "cases": [{"id": "auth", "candidate": "test_candidate",
+                       "control": "test_control"}]}), encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(SCRIPTS / "bounty.py"), "research-next", "native",
+             "--repo", str(self.root), "--spec", str(spec_file), "--stack", "pytest"],
+            capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(r.stdout)["mode"], "dry-run")
+
+
 class PatchVariantTests(unittest.TestCase):
     def test_patch_lead_has_provenance_and_falsification_recipe(self):
         result = ecosystem._patch_variant_analysis([
