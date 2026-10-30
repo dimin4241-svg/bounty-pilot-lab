@@ -58,8 +58,11 @@ def _validate_scope(scopes):
 
 
 def _run_scanner(script, root, scopes, timeout):
-    source = Path(script).resolve()
-    if not source.is_file() or source.is_symlink() or source.stat().st_size > 200_000:
+    raw = Path(script)
+    if raw.is_symlink():
+        raise ValueError("scanner source must not be a symlink")
+    source = raw.resolve()
+    if not source.is_file() or source.stat().st_size > 200_000:
         raise ValueError("scanner must be a regular Python source file under 200kB")
     argv = [sys.executable, str(source), "scan", "--repo", str(root)]
     for scope in scopes:
