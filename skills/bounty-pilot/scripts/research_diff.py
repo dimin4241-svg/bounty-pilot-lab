@@ -228,6 +228,7 @@ def source_scan(repo, scope_prefixes):
                     if len(found) >= MAX_FINDINGS:
                         return dict(_report("source-scan", found,
                                            ["Scan capped at 200 lexical signals."]),
+                                    truncated=True,
                                     scanned_files=scanned, skipped=skipped,
                                     files_over_cap=max(0, len(names) - MAX_SOURCE_FILES))
     return dict(_report("source-scan", found),
