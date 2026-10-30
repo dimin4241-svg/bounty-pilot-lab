@@ -68,7 +68,7 @@ class IdentityDifferentialTests(unittest.TestCase):
              'equivalence_basis': 'different output', 'left': {'identity_key': 'k1'},
              'right': {'identity_key': 'k2'}},
         ]})
-        self.assertEqual([r['signal'] for r in result['findings']],
+        self.assertEqual([r['signal'] for r in result['leads']],
                          ['SAME_ACTION_DISTINCT_KEY', 'DISTINCT_CONTEXT_SHARED_KEY'])
         self.assertEqual(result['confirmed_vulnerabilities'], 0)
 
@@ -89,15 +89,15 @@ class IdentityDifferentialTests(unittest.TestCase):
              'left': {'identity_key': framed(left_parts).hex()},
              'right': {'identity_key': framed(right_parts).hex()}}
         ]})
-        self.assertEqual([r['id'] for r in compare['findings']], ['unsafe'])
+        self.assertEqual([r['id'] for r in compare['leads']], ['unsafe'])
 
     def test_missing_basis_stays_unverified(self):
         result = research.identity({'schema_version': 1, 'pairs': [
             {'id': 'unproven', 'expected_semantic_relation': 'same',
              'equivalence_basis': '', 'left': {'identity_key': 'a'},
              'right': {'identity_key': 'b'}}]})
-        self.assertEqual(result['findings'][0]['basis_status'], 'MISSING')
-        self.assertEqual(result['findings'][0]['classification'], 'NEEDS_EVIDENCE')
+        self.assertEqual(result['leads'][0]['basis_status'], 'MISSING')
+        self.assertEqual(result['leads'][0]['classification'], 'NEEDS_EVIDENCE')
 
     def test_wrong_shape_and_large_sets_fail(self):
         with self.assertRaises(ValueError):
@@ -127,10 +127,10 @@ class PhaseDifferentialTests(unittest.TestCase):
                  {'name': 'worker', 'decision': 'allow', 'payload_digest': 'a'}]},
         ]})
         self.assertEqual(report['candidate_count'], 1)
-        self.assertEqual(report['findings'][0]['signals'],
+        self.assertEqual(report['leads'][0]['signals'],
                          ['DECISION_DIVERGENCE', 'PAYLOAD_DRIFT', 'POLICY_VERSION_DRIFT'])
-        self.assertFalse(report['findings'][0]['comparable'])
-        self.assertEqual(report['findings'][0]['comparison_blocker'], 'POLICY_VERSION_MISMATCH')
+        self.assertFalse(report['leads'][0]['comparable'])
+        self.assertEqual(report['leads'][0]['comparison_blocker'], 'POLICY_VERSION_MISMATCH')
         self.assertEqual(report['confirmed_vulnerabilities'], 0)
 
     def test_synthetic_two_stage_rule_disagreement_with_normal_control(self):
@@ -147,8 +147,8 @@ class PhaseDifferentialTests(unittest.TestCase):
                          'policy_id': 'epoch-1'}]}
         report = research.phases({'schema_version': 1, 'cases': [
             stage_case('edge-case', 0), stage_case('normal-control', 1)]})
-        self.assertEqual([r['id'] for r in report['findings']], ['edge-case'])
-        self.assertTrue(report['findings'][0]['comparable'])
+        self.assertEqual([r['id'] for r in report['leads']], ['edge-case'])
+        self.assertTrue(report['leads'][0]['comparable'])
 
     def test_no_basis_makes_signal_not_comparable(self):
         report = research.phases({'schema_version': 1, 'cases': [
@@ -156,7 +156,7 @@ class PhaseDifferentialTests(unittest.TestCase):
                 {'name': 'mempool', 'decision': 'allow'},
                 {'name': 'block', 'decision': 'deny'}]}]})
         self.assertEqual(report['candidate_count'], 1)
-        self.assertFalse(report['findings'][0]['comparable'])
+        self.assertFalse(report['leads'][0]['comparable'])
 
     def test_stages_need_unique_names_and_valid_decisions(self):
         with self.assertRaisesRegex(ValueError, 'stage name repeated'):
@@ -182,10 +182,10 @@ class LocalCodeAndCLITests(unittest.TestCase):
             'contract Proof { bytes32 x = keccak256(abi.encodePacked(left, right)); }\n')
         subprocess.run(['git', '-C', str(self.repo), 'add', '-A'], check=True)
         result = research.source_scan(self.repo, ['src'])
-        self.assertTrue(any(x['signal'] == 'packed_dynamic' for x in result['findings']))
+        self.assertTrue(any(x['signal'] == 'packed_dynamic' for x in result['leads']))
         self.assertEqual(result['confirmed_vulnerabilities'], 0)
         self.assertTrue(all(x['classification'] == 'LEXICAL_LEAD'
-                            for x in result['findings']))
+                            for x in result['leads']))
 
     def test_scan_scope_is_required(self):
         with self.assertRaisesRegex(ValueError, 'scope'):
