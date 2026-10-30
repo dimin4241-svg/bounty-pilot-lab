@@ -117,6 +117,17 @@ class PreparedPairTests(unittest.TestCase):
                 bp.run(manifest, "codex-default", 300, True)
         self.assertFalse((self.result / "STARTED").exists())
 
+    def test_explicit_audit_name_is_rejected_from_agent_materials(self):
+        (self.repo / "skills/bounty-pilot/references/generic.md").write_text(
+            "Internal example: 2024-07-basin known answer" + "\\n")
+        run_git(self.repo, "add", "-A")
+        run_git(self.repo, "commit", "-qm", "contaminated skill fixture")
+        contaminated = run_git(self.repo, "rev-parse", "HEAD")
+        with mock.patch.object(bp, "BASELINE", contaminated):
+            with self.assertRaisesRegex(ValueError, "leaked into staged"):
+                bp.prepare(self.repo, self.upstream, self.result,
+                           ["2024-07-basin"])
+
     def test_staged_skill_changes_are_detected(self):
         bp.prepare(self.repo, self.upstream, self.result, ["2024-07-basin"])
         staged = self.result / "skills" / "candidate"
