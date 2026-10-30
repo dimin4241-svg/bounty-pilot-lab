@@ -19,6 +19,11 @@ EXCLUDED = {"node_modules", "vendor", "dist", "build", "target", ".git", "test",
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{2,79}$")
 REQ_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,79}$")
 MAX_FILE = 200_000
+MAX_SYMBOL_HITS = 40
+# A test fixture mentions the same symbols as the code it exercises, and sorts
+# before it. Read production code first so the hit budget is never spent on
+# fixtures while the enforcement sites go unread.
+TEST_NAME = re.compile(r"(?i)(?:^|/)(?:test_[^/]+|[^/]*(?:_test|\.test|\.spec|\.t))\.[a-z]+$")
 
 
 def _path(value):
@@ -109,6 +114,7 @@ def map_spec(spec, repository):
                  if any(n == p or n.startswith(p + "/") for p in prefixes)
                  and Path(n).suffix.lower() in CODE_SUFFIX
                  and not EXCLUDED.intersection(Path(n).parts)]
+        names.sort(key=lambda n: (bool(TEST_NAME.search(n)), n))
         if len(names) > 500:
             raise ValueError("spec mapping scope exceeds 500 code files")
         coverage = []
@@ -126,22 +132,33 @@ def map_spec(spec, repository):
                         coverage.append({"path": name, "line": n, "symbol": symbol,
                                          "line_sha256": hashlib.sha256(
                                              body.encode("utf-8")).hexdigest()})
-                        if len(coverage) >= 40:
+                        if len(coverage) >= MAX_SYMBOL_HITS:
                             break
-                if len(coverage) >= 40:
+                if len(coverage) >= MAX_SYMBOL_HITS:
                     break
-            if len(coverage) >= 40:
+            if len(coverage) >= MAX_SYMBOL_HITS:
                 break
+        truncated = len(coverage) >= MAX_SYMBOL_HITS
+        notice = ("Lexical presence does not prove enforcement; lexical absence "
+                  "does not establish a vulnerability or code coverage.")
+        if truncated:
+            notice += (" The hit budget was reached, so this is a bounded sample and not "
+                       "a map: %d of %d scoped files were read and %d were never opened. "
+                       "Narrow code_scope or declare fewer symbols before reading the "
+                       "distribution of these hits."
+                       % (readable, len(names), max(0, len(names) - readable)))
         report.append({
             "id": ident, "spec_anchor": {"path": doc, "line": line,
                        "quote_sha256": hashlib.sha256(quote.encode()).hexdigest()},
             "declared_symbols": symbols, "scoped_code_files": len(names),
-            "readable_code_files": readable, "symbol_hits": coverage,
+            "readable_code_files": readable,
+            "unread_code_files": max(0, len(names) - readable),
+            "symbol_hit_cap": MAX_SYMBOL_HITS, "truncated": truncated,
+            "symbol_hits": coverage,
             "classification": "LEXICAL_MAPPING_LEAD" if coverage else "UNMAPPED_LEAD",
             "next_experiment": "Trace reachable implementation and independently test the "
                                "stated property with candidate and control in native tests.",
-            "notice": "Lexical presence does not prove enforcement; lexical absence "
-                      "does not establish a vulnerability or code coverage."})
+            "notice": notice})
     return {"schema_version": 1, "classification": "RESEARCH_LEADS",
             "source_revision": head, "working_tree_dirty": dirty,
             "requirements": report, "confirmed_vulnerabilities": 0,

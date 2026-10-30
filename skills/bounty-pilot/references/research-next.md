@@ -34,6 +34,17 @@ SHA-256 evidence fingerprints. A symbol hit is NOT proof of enforcement;
 missing symbols are NOT proof of a bypass. Follow every candidate with
 real control-flow review and native negative-control tests.
 
+**The hit budget is bounded, and a bounded result says so.** Each requirement collects
+at most `symbol_hit_cap` (40) hits. When the cap is reached the requirement carries
+`truncated: true` plus `readable_code_files` and `unread_code_files`, and its `notice`
+states that the result is a sample rather than a map — because `scoped_code_files` beside
+a truncated hit list otherwise reads like coverage of the whole scope. Narrow `code_scope`
+or declare fewer symbols, then read the distribution again.
+Test fixtures are read **after** production code, since a fixture mentions the same
+symbols as the code it exercises and may sort before it: on one real checkout all 40 hits
+for a requirement landed in `cluster/cluster_internal_test.go` while 76 of 78 scoped files
+were never opened.
+
 ## 2. Run paired native tests twice with real runner detection
 
 Reuse `experimenter.plan`, `native_fuzz_plan.py` and

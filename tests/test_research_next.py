@@ -48,6 +48,71 @@ class CheckoutFixture(unittest.TestCase):
             "symbols": [symbol], "code_scope": [scope]}]}
 
 
+class SpecMappingBudgetTests(unittest.TestCase):
+    """The hit budget must not be spent on fixtures, and a bounded sample must say so."""
+
+    @staticmethod
+    def _commit(repo):
+        for key, value in (("user.email", "fixture@example.invalid"),
+                           ("user.name", "Fixture")):
+            subprocess.run(["git", "-C", str(repo), "config", key, value], check=True)
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "fixture"], check=True)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "checkout"
+        (self.root / "src").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / "README.md").write_text(
+            "Every withdrawal must check the caller.\n", encoding="utf-8")
+        # A fixture mentioning the same symbol, named so it sorts BEFORE the code it
+        # exercises -- the real case was cluster/cluster_internal_test.go preceding
+        # cluster/definition.go, which spent the whole budget on the fixture.
+        (self.root / "src/agent_internal_test.go").write_text(
+            "package src\n" + "var withdraw = 1\n" * 60, encoding="utf-8")
+        (self.root / "src/vault.go").write_text(
+            "package src\n" + "func withdraw() {}\n" * 60, encoding="utf-8")
+        self._commit(self.root)
+
+    def spec(self):
+        return {"schema_version": 1, "requirements": [{
+            "id": "REQ-001", "source_path": "README.md", "source_line": 1,
+            "quote": "Every withdrawal must check the caller.",
+            "symbols": ["withdraw"], "code_scope": ["src"]}]}
+
+    def test_production_code_is_read_before_test_fixtures(self):
+        item = spec_mapper.map_spec(self.spec(), self.root)["requirements"][0]
+        paths = [hit["path"] for hit in item["symbol_hits"]]
+        self.assertEqual(paths[0], "src/vault.go",
+                         "the budget must not be spent on a fixture first")
+        self.assertNotIn("src/agent_internal_test.go", paths)
+
+    def test_a_capped_map_declares_itself_a_bounded_sample(self):
+        item = spec_mapper.map_spec(self.spec(), self.root)["requirements"][0]
+        self.assertTrue(item["truncated"])
+        self.assertEqual(len(item["symbol_hits"]), item["symbol_hit_cap"])
+        self.assertEqual(item["scoped_code_files"], 2)
+        self.assertEqual(item["readable_code_files"], 1)
+        self.assertEqual(item["unread_code_files"], 1)
+        self.assertIn("bounded sample and not", item["notice"])
+        self.assertIn("were never opened", item["notice"])
+
+    def test_an_uncapped_map_is_not_marked_truncated(self):
+        small = Path(self.tmp.name) / "small"
+        (small / "src").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(small)], check=True)
+        (small / "README.md").write_text(
+            "Every withdrawal must check the caller.\n", encoding="utf-8")
+        (small / "src/vault.go").write_text("func withdraw() {}\n", encoding="utf-8")
+        self._commit(small)
+        item = spec_mapper.map_spec(self.spec(), small)["requirements"][0]
+        self.assertFalse(item["truncated"])
+        self.assertEqual(item["unread_code_files"], 0)
+        self.assertNotIn("bounded sample", item["notice"])
+
+
 class SpecMappingTests(CheckoutFixture):
     def test_spec_uses_a_real_doc_anchor_and_returns_source_only_lead(self):
         res = spec_mapper.map_spec(self.spec(), self.root)
