@@ -74,6 +74,8 @@ def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False,
             raise ValueError("native evidence must be outside the target checkout")
         evidence.mkdir(mode=0o700, parents=False, exist_ok=False)
     before = _git(checkout, "status", "--porcelain", "--untracked-files=no")
+    if allow_exec and before:
+        raise ValueError("native checkout has pre-existing tracked changes; use a clean pinned revision")
     before_diff = _tracked_diff_fingerprint(checkout)
     snapshots = []
     for round_number in range(1, 3 if allow_exec else 2):
