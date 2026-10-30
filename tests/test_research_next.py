@@ -198,7 +198,7 @@ class NativeCycleTests(CheckoutFixture):
         self.assertEqual(report["confirmed_vulnerabilities"], 0)
 
     def test_missing_control_or_zero_executed_cases_cannot_claim_conformance(self):
-        only_candidate = [{"pair_id": "withdraw-pair", "role": "candidate",
+        only_candidate = [{"id": "withdraw-pair-candidate", "pair_id": "withdraw-pair", "role": "candidate",
                            "executed": True, "tests_ran": True, "status": "ran",
                            "matched_expected_exit": True, "stdout": "1 passed",
                            "stderr": ""}]
@@ -220,7 +220,7 @@ class NativeCycleTests(CheckoutFixture):
         self.assertEqual(report["status"], "INCOMPLETE_OR_NOT_EXECUTED")
 
     def test_two_independent_synthetic_runs_are_only_harness_evidence(self):
-        pairs = [{"pair_id": "withdraw-pair", "role": role, "executed": True,
+        pairs = [{"id": "withdraw-pair-" + role, "pair_id": "withdraw-pair", "role": role, "executed": True,
                   "tests_ran": True, "status": "ran", "matched_expected_exit": True,
                   "stdout": "1 passed", "stderr": ""}
                  for role in ("candidate", "negative-control")]
