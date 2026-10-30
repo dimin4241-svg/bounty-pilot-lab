@@ -84,6 +84,59 @@
       "vulnerable_commit": null,
       "mechanism": "Poisoned RPC observations and single-DVN configuration allowed a cryptographically valid attestation to describe an event that did not occur.",
       "invariant": "Valid attestations must correspond to independently verified source-chain facts, not only authentic signatures from an incorrectly trusted observer."
+    },
+    {
+      "project": "Monad",
+      "family": "cross-phase",
+      "source_type": "audited-finding",
+      "source_url": "https://code4rena.com/reports/2025-09-monad",
+      "status": "revision-pinned",
+      "repository_url": "https://github.com/category-labs/monad-bft",
+      "vulnerable_commit": "6aaccc2ec51eac66a2cf18ec64ab0df2c1448990",
+      "revision_source_url": "https://code4rena.com/reports/2025-09-monad",
+      "snapshot_note": "Code4rena report independently specifies this pre-fix monad-bft source snapshot. All affected paths checked against pinned commit. No blind benchmark executed.",
+      "id": "MONAD-2026-H01",
+      "mechanism": "Block policy applies EIP-1559 gas-bid discount to legacy transactions while native execution does not, underestimating required gas and producing invalid blocks.",
+      "invariant": "Consensus block policy and execution must agree on transaction affordability across transaction formats.",
+      "scope_paths": [
+        "monad-eth-block-policy/src/lib.rs"
+      ]
+    },
+    {
+      "project": "Monad",
+      "family": "cross-phase",
+      "source_type": "audited-finding",
+      "source_url": "https://code4rena.com/reports/2025-09-monad",
+      "status": "revision-pinned",
+      "repository_url": "https://github.com/category-labs/monad-bft",
+      "vulnerable_commit": "6aaccc2ec51eac66a2cf18ec64ab0df2c1448990",
+      "revision_source_url": "https://code4rena.com/reports/2025-09-monad",
+      "snapshot_note": "Code4rena report independently specifies this pre-fix monad-bft source snapshot. All affected paths checked against pinned commit. No blind benchmark executed.",
+      "id": "MONAD-2026-H03",
+      "mechanism": "Mempool admission ignores transaction priority fee in affordability checks whereas block policy accounts for it, allowing repeatedly rejected transactions to clog proposal sampling.",
+      "invariant": "Admission and proposal policy must either agree on solvency or reject/evict permanently non-includable transactions.",
+      "scope_paths": [
+        "monad-eth-txpool/src/pool/mod.rs",
+        "monad-eth-block-policy/src/lib.rs"
+      ]
+    },
+    {
+      "project": "Monad",
+      "family": "cross-phase",
+      "source_type": "audited-finding",
+      "source_url": "https://code4rena.com/reports/2025-09-monad",
+      "status": "revision-pinned",
+      "repository_url": "https://github.com/category-labs/monad-bft",
+      "vulnerable_commit": "6aaccc2ec51eac66a2cf18ec64ab0df2c1448990",
+      "revision_source_url": "https://code4rena.com/reports/2025-09-monad",
+      "snapshot_note": "Code4rena report independently specifies this pre-fix monad-bft source snapshot. All affected paths checked against pinned commit. No blind benchmark executed.",
+      "id": "MONAD-2026-H04",
+      "mechanism": "Txpool updates delegated EOA status in inclusion order while block policy pre-marks all EIP-7702 authorities across the whole block, creating an order-dependent policy mismatch.",
+      "invariant": "Delegation state and reserve requirements must be evaluated with identical order semantics across proposal and block validation.",
+      "scope_paths": [
+        "monad-eth-txpool/src/pool/tracked/sequencer.rs",
+        "monad-eth-block-policy/src/lib.rs"
+      ]
     }
   ]
 }
