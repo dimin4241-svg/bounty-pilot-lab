@@ -65,6 +65,10 @@ def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False,
                          "the Pilot runner is not a network sandbox")
     if allow_exec and (checkout == Path.home().resolve() or checkout == Path("/")):
         raise ValueError("refusing execution from home directory or filesystem root")
+    before = _git(checkout, "status", "--porcelain", "--untracked-files=no")
+    if allow_exec and before:
+        raise ValueError("native checkout has pre-existing tracked changes; use a clean pinned revision")
+    before_diff = _tracked_diff_fingerprint(checkout)
     evidence = None
     if allow_exec:
         if evidence_dir is None:
@@ -73,10 +77,6 @@ def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False,
         if evidence == checkout or checkout in evidence.parents:
             raise ValueError("native evidence must be outside the target checkout")
         evidence.mkdir(mode=0o700, parents=False, exist_ok=False)
-    before = _git(checkout, "status", "--porcelain", "--untracked-files=no")
-    if allow_exec and before:
-        raise ValueError("native checkout has pre-existing tracked changes; use a clean pinned revision")
-    before_diff = _tracked_diff_fingerprint(checkout)
     snapshots = []
     for round_number in range(1, 3 if allow_exec else 2):
         report = scenario_runner.execute(plan, checkout, allow_exec=allow_exec)
