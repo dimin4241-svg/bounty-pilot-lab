@@ -79,7 +79,8 @@ python3 skills/bounty-pilot/scripts/evmbench_pair.py run \
   --manifest /tmp/private-evmbench-comparison/manifest.json \
   --model codex-gpt-5.3-codex \
   --timeout 900 \
-  --authorize-provider-spend
+  --authorize-provider-spend \
+  --external-spend-cap-confirmed
 ```
 
 The command writes arm-separated private run logs and per-audit status,
