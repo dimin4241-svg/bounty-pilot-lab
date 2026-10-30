@@ -26,12 +26,25 @@ class CaseForgeTests(unittest.TestCase):
     def test_seed_catalog_has_published_references_but_no_fabricated_revisions(self):
         catalog = caseforge._read(caseforge.CATALOG)
         summary = caseforge.validate(catalog)
-        self.assertEqual(summary['total_cases'], 7)
+        self.assertEqual(summary['total_cases'], 10)
         self.assertEqual(summary['measurement_ready'], 1)
+        self.assertEqual(summary['pinned_finding_truths'], 4)
         self.assertEqual(len(caseforge.blind_queue(catalog)['tasks']), 1)
         self.assertEqual(caseforge.blind_queue(catalog)['tasks'][0]['pinned_commit'],
                          '6aaccc2ec51eac66a2cf18ec64ab0df2c1448990')
         self.assertIn('source_url', caseforge.index(catalog)['cases'][0])
+
+    def test_one_snapshot_groups_multiple_known_findings_without_leaking_count(self):
+        catalog = caseforge._read(caseforge.CATALOG)
+        self.assertEqual(sum(x['status'] == 'revision-pinned'
+                             for x in catalog['cases']), 4)
+        queue = caseforge.blind_queue(catalog)
+        self.assertEqual(len(queue['tasks']), 1)
+        self.assertEqual(queue['tasks'][0]['case'], 'CASE-0001')
+        content = json.dumps(queue)
+        for forbidden in ('MONAD-2026-H01', 'MONAD-2026-H03',
+                          'MONAD-2026-H04', 'signatures', 'block policy'):
+            self.assertNotIn(forbidden, content)
 
     def test_invalid_revision_and_duplicate_refused(self):
         item = dict(caseforge._read(caseforge.CATALOG)['cases'][0])
@@ -280,12 +293,12 @@ class LocalCodeAndCLITests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['candidate_count'], 0)
         command = ['python3', str(SCRIPTS / 'caseforge.py'), 'validate']
         result = subprocess.run(command, capture_output=True, text=True, check=True)
-        self.assertEqual(json.loads(result.stdout)['total_cases'], 7)
+        self.assertEqual(json.loads(result.stdout)['total_cases'], 10)
 
     def test_bounty_cli_registration(self):
         result = subprocess.run(['python3', str(SCRIPTS / 'bounty.py'), 'caseforge',
                                  'validate'], capture_output=True, text=True, check=True)
-        self.assertEqual(json.loads(result.stdout)['total_cases'], 7)
+        self.assertEqual(json.loads(result.stdout)['total_cases'], 10)
         result = subprocess.run(['python3', str(SCRIPTS / 'bounty.py'), 'research-diff',
                                  'scan', '--repo', str(self.repo), '--scope', 'src'],
                                 capture_output=True, text=True, check=True)
