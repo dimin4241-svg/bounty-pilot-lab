@@ -130,6 +130,17 @@ Preserve these invariants when editing:
   blocks comparability. The synthetic Foundry/Rust fixtures are harness checks,
   never target findings or historical rediscoveries.
 
+- **Lab 0.42 research-next is advisory until native evidence passes the existing gate.**
+  Spec mapping requires an exact citation of a tracked documentation line and explicit
+  source scope. Absence of a lexical symbol is no proof of missing enforcement.
+  Native repeated candidate/control tests require a pinned HEAD, a new private evidence
+  directory outside the checkout and externally enforced isolation. A green exit is
+  harness conformance only; do not auto-promote to a verified report.
+  The belief ledger stores only hashes and revision-scoped reviewer labels;
+  even a refuted exact revision never silently suppresses a future report.
+  Patch variants reuse ecosystem intelligence rather than creating a parallel
+  security-patch detector.
+
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.
 Bump `VERSION` and `skills/bounty-pilot/VERSION` together; `.claude-plugin/plugin.json` carries the

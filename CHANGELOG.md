@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.42.0 — Draft research workflows
+
+- Added opt-in source-anchored `research-next spec` mapping, with tracked-code
+  scope, bounded exact-symbol leads and source-quote SHA verification.
+- Added `native_cycle.py`, reusing the existing experimenter and scenario runner,
+  to repeat existing candidate/control tests at one verified checkout revision.
+  Execution is explicit, requires external isolation confirmation and a fresh
+  private evidence directory with both rounds of sanitized logs; this does not
+  prove a target bug.
+- Extended existing patch-variant leads with before/after commit provenance,
+  SHA-256 hypothesis fingerprints and falsification protocols.
+- Added `belief_ledger.py` for hashed, private, revision-bound observation
+  memory with reviewable evidence requirements and no auto-dismissal.
+- Added 12 synthetic regression test methods plus reference docs.
+- No measured bounty uplift or independent historical rediscovery is claimed.
+  Never merge before real tests execute.
+
 ## 0.41.1
 
 ### Research-engine validation and local controls
