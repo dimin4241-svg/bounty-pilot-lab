@@ -27,16 +27,76 @@ EXCLUDE_PARTS = {"vendor", "node_modules", "dist", "build", "target",
                  "__pycache__", "test", "tests", "fixtures", "examples"}
 GIT_OPTS = ("--no-optional-locks", "-c", "core.fsmonitor=false", "-c",
             "core.hooksPath=/dev/null", "-c", "core.pager=cat")
+MAX_CUSTOM_CUES = 16
+MAX_CUE_PATTERN = 200
+CUE_KIND = re.compile(r"\A[a-z][a-z0-9_]{0,31}\Z")
+# `\b` treats "_" as a word character, so \bcache_key\b misses build_cache_key and
+# cache_key_prefix. These separators bound on alphanumerics only, so a cue inside a
+# longer snake_case or camelCase identifier still matches.
+_L = r"(?<![A-Za-z0-9])"
+_R = r"(?![A-Za-z0-9])"
+# Each family carries the multi-word camelCase spelling next to the snake_case one:
+# (?i) alone bridges cacheKey/cache_key but never validateBlock/validate_block, so a
+# cue set written in one convention reads a codebase in another as clean.
 PATTERNS = (
-    ("packed_dynamic", re.compile(r"\babi\.encodePacked\s*\("),
+    ("packed_dynamic",
+     re.compile(r"\b(?:abi\.encodePacked|encodePacked|solidityPacked|encode_packed)\s*\("),
      "Compare tuple identity with packed ABI encoding; multiple dynamic arguments may be ambiguous."),
-    ("cache_context", re.compile(r"(?i)\b(?:cache_key|cachekey|proof_cache|cache_hash|cachehash)\b"),
+    ("cache_context",
+     re.compile(r"(?i)" + _L + r"(?:cache_key|cachekey|proof_cache|proofcache|cache_hash"
+                r"|cachehash|cache_id|cacheid)" + _R),
      "Check that cache identity includes all verification context and unambiguous framing."),
-    ("signature_quorum", re.compile(r"(?i)\b(?:signer_count|signatures\.length|quorum|threshold)\b"),
+    ("cache_key_builder",
+     re.compile(r"\b(?:key|prefix)[A-Z][A-Za-z0-9]*"),
+     "Identifier shape only: check what this key or prefix is built from, and whether "
+     "unnormalised caller input can reach it."),
+    ("signature_quorum",
+     re.compile(r"(?i)" + _L + r"(?:signer_count|signercount|signatures\.length"
+                r"|signatures\.len|num_signers|numsigners|signer_threshold"
+                r"|signerthreshold|quorum|quorum_size|quorumsize|threshold)" + _R),
      "Review whether quorum counts unique authenticated signers rather than signatures."),
-    ("phase_boundary", re.compile(r"(?i)\b(?:mempool|txpool|validate_block|sign_transaction|signTransaction|execute_job|withdrawal_worker)\b"),
+    ("phase_boundary",
+     re.compile(r"(?i)" + _L + r"(?:mempool|mem_pool|txpool|tx_pool|validate_block"
+                r"|validateblock|sign_transaction|signtransaction|execute_job|executejob"
+                r"|withdrawal_worker|withdrawalworker)" + _R),
      "Compare the admission policy, authorized payload, and execution decision."),
 )
+
+
+def compile_cues(extra=None):
+    """Default families plus investigator cues as `kind=regex`; a bad cue fails closed.
+
+    What a cache key, a quorum or a phase boundary is called is per project, so a zero
+    from this scan is only as good as the vocabulary behind it. The report names the
+    vocabulary that produced it.
+    """
+    cues = list(PATTERNS)
+    if not extra:
+        return cues
+    if not isinstance(extra, (list, tuple)):
+        raise ValueError("--cue must be repeatable kind=regex text")
+    if len(extra) > MAX_CUSTOM_CUES:
+        raise ValueError("at most %d --cue values" % MAX_CUSTOM_CUES)
+    seen = set()
+    for item in extra:
+        if not isinstance(item, str) or "=" not in item:
+            raise ValueError("--cue must be kind=regex, e.g. cache_context=keyCache\\w+")
+        kind, _, expression = item.partition("=")
+        kind = kind.strip()
+        if not CUE_KIND.match(kind):
+            raise ValueError("cue kind must be a short lowercase slug: " + kind[:32])
+        if not expression or len(expression) > MAX_CUE_PATTERN:
+            raise ValueError("cue regex for %s must be 1..%d characters" % (kind, MAX_CUE_PATTERN))
+        if (kind, expression) in seen:
+            raise ValueError("duplicate cue: " + kind)
+        seen.add((kind, expression))
+        try:
+            compiled = re.compile(expression)
+        except re.error as exc:
+            raise ValueError("cue regex for %s does not compile: %s" % (kind, exc)) from exc
+        cues.append((kind, compiled,
+                     "Investigator-supplied cue; the same evidence burden applies."))
+    return cues
 
 
 def _text(value, name, limit=500):
@@ -501,10 +561,16 @@ def byte_tuple(data):
     return result
 
 
-def source_scan(repo, scope_prefixes):
+def source_scan(repo, scope_prefixes, cues=None):
     """Tracked local source only, with symlink/size/extension bounds and safe git config."""
     if not isinstance(scope_prefixes, (list, tuple)) or not scope_prefixes:
         raise ValueError("scan requires explicit --scope path prefixes")
+    patterns = compile_cues(cues)
+    vocabulary = {
+        "cue_kinds": sorted({kind for kind, _, _ in patterns}),
+        "default_cue_kinds": sorted({kind for kind, _, _ in PATTERNS}),
+        "custom_cues": max(0, len(patterns) - len(PATTERNS)),
+    }
     for prefix in scope_prefixes:
         if (not isinstance(prefix, str) or not prefix or prefix.startswith("/")
                 or ".." in Path(prefix).parts or chr(0) in prefix
@@ -543,7 +609,7 @@ def source_scan(repo, scope_prefixes):
             continue
         scanned += 1
         for number, line in enumerate(lines, 1):
-            for kind, pattern, question in PATTERNS:
+            for kind, pattern, question in patterns:
                 if pattern.search(line):
                     found.append({"signal": kind, "path": name, "line": number,
                                   "classification": "LEXICAL_LEAD",
@@ -556,13 +622,20 @@ def source_scan(repo, scope_prefixes):
                                     truncated=True,
                                     scanned_files=scanned, skipped=skipped,
                                     files_over_cap=max(0, len(scoped) - MAX_SOURCE_FILES),
-                                    in_scope_tracked_files=len(scoped))
+                                    in_scope_tracked_files=len(scoped),
+                                    **vocabulary)
     notes = (["No tracked source file matched the declared scope; not a clean scan."]
              if not scoped or scanned == 0 else [])
+    if scanned and not found:
+        notes.append("No cue matched. What a cache key, quorum or phase boundary is "
+                     "called is per project: this zero only covers the cue kinds listed "
+                     "in cue_kinds. Calibrate with --cue against a known site before "
+                     "reading it as a clean scan.")
     return dict(_report("source-scan", found, notes),
                 scanned_files=scanned, skipped=skipped,
                 in_scope_tracked_files=len(scoped),
-                files_over_cap=max(0, len(scoped) - MAX_SOURCE_FILES))
+                files_over_cap=max(0, len(scoped) - MAX_SOURCE_FILES),
+                **vocabulary)
 
 
 def main(argv=None):
@@ -575,6 +648,9 @@ def main(argv=None):
     scan.add_argument("--repo", required=True)
     scan.add_argument("--scope", action="append", required=True,
                       help="repeatable in-scope relative path prefix; never scan all by default")
+    scan.add_argument("--cue", action="append", default=None,
+                      help="repeatable kind=regex cue in the project's own vocabulary, "
+                           "e.g. cache_context=keyCache\\w+")
     args = cli.parse_args(argv)
     try:
         if args.command == "identity":
@@ -586,7 +662,7 @@ def main(argv=None):
         elif args.command == "quorum":
             result = quorum(_json(args.input))
         else:
-            result = source_scan(args.repo, args.scope)
+            result = source_scan(args.repo, args.scope, args.cue)
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
     except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:

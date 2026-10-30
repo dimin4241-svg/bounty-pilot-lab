@@ -199,7 +199,9 @@ implementation or that code equality proves the active roles and permissions.
 For new retrospective case research or comparisons across representations/phases, also
 read `references/research-engines.md`. The optional `caseforge` command indexes
 sourced incidents without pretending they are benchmark cases; `research-diff scan`
-requires an explicit in-scope source prefix, and `research-diff identity/phases/quorum`
+requires an explicit in-scope source prefix and reports the cue vocabulary behind its
+result, so calibrate it with `--cue kind=regex` in the project's own naming before reading
+a zero as a clean scan; `research-diff identity/phases/quorum`
 compare investigator-supplied local observations, including ordered security context
 and unique signer counts. Output is `RESEARCH_LEADS`, never a verified PoC or impact.
 Do not feed the unblinded

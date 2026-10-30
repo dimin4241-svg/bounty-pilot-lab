@@ -19,6 +19,18 @@
   and grouped under the single cited pre-fix audit snapshot.
 - Confirmed AVRE already owns sequence generation, economic metamorphic plans, exact integer
   measurements and sequence minimization; no parallel generator was added.
+- `research-diff scan` takes repeatable `--cue kind=regex` so a project's own vocabulary can be
+  scanned, and every report now names the vocabulary behind it (`cue_kinds`,
+  `default_cue_kinds`, `custom_cues`), with an explicit note when it read files and matched
+  nothing. A cue that does not compile, repeats or exceeds the bound is rejected, not skipped.
+- Closed four spellings the word-only cue set could not reach, each proven blind before and
+  caught after: multi-word camelCase (`validateBlock`), a cue inside a longer snake_case
+  identifier (`build_cache_key`, missed because `\b` treats `_` as a word character),
+  `signatures.len()`, and `encodePacked(` without the `abi.` prefix. Added the
+  `cache_key_builder` shape family for `keyXxx` / `prefixXxx` builders: a Go relay checkout of
+  74 files returned `leads: 0` with all four old families at zero hits, while the same
+  construct written as `keyCacheGetHeaderResponse` is the site a finding came from.
+  Single-word camelCase already matched through `(?i)` and is covered by a regression test.
 
 ## 0.41.0
 

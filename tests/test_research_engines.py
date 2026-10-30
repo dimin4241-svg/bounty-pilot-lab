@@ -609,5 +609,112 @@ class LocalCodeAndCLITests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['mode'], 'signer-quorum')
 
 
+class ScanVocabularyTests(unittest.TestCase):
+    """A zero from the scan is only as good as the vocabulary behind it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / 'repo'
+        (self.repo / 'src').mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q', str(self.repo)], check=True)
+
+    def write(self, name, text):
+        (self.repo / 'src' / name).write_text(text, encoding='utf-8')
+        subprocess.run(['git', '-C', str(self.repo), 'add', '-A'], check=True)
+
+    def signals(self, cues=None):
+        report = research.source_scan(self.repo, ['src'], cues)
+        return {lead['signal'] for lead in report['leads']}, report
+
+    def test_identifier_shapes_a_word_cue_cannot_reach(self):
+        # Each line is a real spelling that the word-only cue set missed: the
+        # multi-word camelCase mirror, a cue inside a longer snake_case name, a
+        # Go/Rust length call, and the no-prefix ABI helper.
+        self.write('shapes.go', 'func validateBlock() {}\n'
+                                'func build_cache_key() {}\n'
+                                'var n = signatures.len()\n'
+                                'var h = encodePacked(a, b)\n')
+        signals, _ = self.signals()
+        self.assertEqual(signals, {'phase_boundary', 'cache_context', 'signature_quorum',
+                                   'packed_dynamic'})
+
+    def test_key_builder_shape_is_its_own_kind(self):
+        # The exact construct that read as clean on a Go relay checkout.
+        self.write('redis.go', 'func keyCacheGetHeaderResponse(slot uint64) string {\n'
+                               '\treturn prefixGetHeaderResponse + itoa(slot)\n}\n')
+        signals, report = self.signals()
+        self.assertEqual(signals, {'cache_key_builder'})
+        self.assertIn('cache_key_builder', report['default_cue_kinds'])
+
+    def test_single_word_camel_case_still_matches(self):
+        # (?i) already bridged these; the fix must not regress them.
+        self.write('words.ts', 'const cacheKey = 1; const memPool = 2;\n')
+        signals, _ = self.signals()
+        self.assertEqual(signals, {'cache_context', 'phase_boundary'})
+
+    def test_project_vocabulary_is_silent_by_default_and_fires_with_cue(self):
+        # The paired assertion: one module, scanned twice. What a project calls
+        # its own cache identity is per project, and no default can know it.
+        self.write('house.rs', 'fn bucket_fingerprint_for(slot: u64) -> String { snapshot_tag(slot) }\n')
+        default_signals, default_report = self.signals()
+        self.assertEqual(default_signals, set())
+        self.assertEqual(default_report['candidate_count'], 0)
+        self.assertEqual(default_report['custom_cues'], 0)
+        self.assertTrue(any('only covers the cue kinds' in note
+                            for note in default_report['notes']),
+                        'a zero must disclose the vocabulary that produced it')
+
+        cued_signals, cued_report = self.signals(
+            ['cache_context=bucket_fingerprint|snapshot_tag'])
+        self.assertEqual(cued_signals, {'cache_context'})
+        self.assertEqual(cued_report['custom_cues'], 1)
+        self.assertTrue(all(lead['classification'] == 'LEXICAL_LEAD'
+                            for lead in cued_report['leads']))
+        self.assertEqual(cued_report['confirmed_vulnerabilities'], 0)
+
+    def test_custom_cue_may_declare_a_new_kind(self):
+        self.write('house.go', 'func settleWithdrawalBatch() {}\n')
+        signals, report = self.signals(['settlement_boundary=settleWithdrawal\\w*'])
+        self.assertIn('settlement_boundary', signals)
+        self.assertIn('settlement_boundary', report['cue_kinds'])
+        self.assertNotIn('settlement_boundary', report['default_cue_kinds'])
+
+    def test_bad_cues_fail_closed(self):
+        self.write('x.go', 'package x\n')
+        for bad, message in (
+                (['cache_context'], 'kind=regex'),
+                (['Cache=abc'], 'lowercase slug'),
+                (['cache_context='], '1\\.\\.'),
+                (['cache_context=(unclosed'], 'does not compile'),
+                (['cache_context=a', 'cache_context=a'], 'duplicate'),
+                (['cache_context=a'] * (research.MAX_CUSTOM_CUES + 1), 'at most'),
+                ('cache_context=a', 'repeatable')):
+            with self.subTest(bad=bad):
+                with self.assertRaisesRegex(ValueError, message):
+                    research.source_scan(self.repo, ['src'], bad)
+
+    def test_cli_passes_cues_and_refuses_them_off_scan(self):
+        self.write('house.rs', 'fn snapshot_tag() {}\n')
+        result = subprocess.run(
+            ['python3', str(SCRIPTS / 'bounty.py'), 'research-diff', 'scan',
+             '--repo', str(self.repo), '--scope', 'src',
+             '--cue', 'cache_context=snapshot_tag'],
+            capture_output=True, text=True, check=True)
+        report = json.loads(result.stdout)
+        self.assertEqual(report['custom_cues'], 1)
+        self.assertEqual(report['candidate_count'], 1)
+
+        observations = self.root / 'obs.json'
+        observations.write_text(json.dumps({'schema_version': 1, 'pairs': []}),
+                                encoding='utf-8')
+        rejected = subprocess.run(
+            ['python3', str(SCRIPTS / 'bounty.py'), 'research-diff', 'identity',
+             '--input', str(observations), '--cue', 'cache_context=a'],
+            capture_output=True, text=True)
+        self.assertNotEqual(rejected.returncode, 0)
+
+
 if __name__ == '__main__':
     unittest.main()

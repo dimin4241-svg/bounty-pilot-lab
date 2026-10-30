@@ -11656,6 +11656,9 @@ def build_parser():
     rd.add_argument('--repo', default=None, help='local tracked checkout for passive lexical scan')
     rd.add_argument('--scope', action='append', default=None,
                     help='required in-scope relative path prefix for scan; repeatable')
+    rd.add_argument('--cue', action='append', default=None,
+                    help="scan only: repeatable kind=regex cue in the project's own "
+                         "vocabulary, e.g. cache_context=keyCache\\w+")
 
     route_parser = sub.add_parser('route', help='recommend native adapters from tracked manifests (heuristic)')
     route_parser.add_argument('--repo', required=True)
@@ -11932,10 +11935,10 @@ def main(argv=None):
             if args.operation == 'scan':
                 if not args.repo or args.input:
                     raise ValueError('scan requires --repo and no --input')
-                result = rd.source_scan(args.repo, args.scope)
+                result = rd.source_scan(args.repo, args.scope, args.cue)
             else:
-                if not args.input or args.repo or args.scope:
-                    raise ValueError('identity/phases/byte-tuple/quorum requires --input and no --repo/--scope')
+                if not args.input or args.repo or args.scope or args.cue:
+                    raise ValueError('identity/phases/byte-tuple/quorum requires --input and no --repo/--scope/--cue')
                 observations = rd._json(args.input)
                 result = (rd.identity(observations) if args.operation == 'identity'
                           else rd.phases(observations) if args.operation == 'phases'

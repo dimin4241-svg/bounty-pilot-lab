@@ -68,10 +68,36 @@ python3 <skill-dir>/scripts/bounty.py research-diff scan \
 ```
 
 The scan only matches lexical cues such as packed ABI encoding, cache-key
-terms, quorum counting, or phase boundaries. It does not parse full data flow,
-claim a bug, run target code, read network state or scan directories outside the
-explicit relative `--scope` prefixes. No hit is a finding; no hit is an
-assurance of safety either.
+terms, cache/prefix key builders, quorum counting, or phase boundaries. It does not
+parse full data flow, claim a bug, run target code, read network state or scan
+directories outside the explicit relative `--scope` prefixes. No hit is a finding; no
+hit is an assurance of safety either.
+
+**A zero is only as good as the vocabulary behind it.** What a project calls its cache
+identity, its quorum or its phase boundary is per project, so the default cue set cannot
+be complete. The report names the vocabulary that produced it — `cue_kinds`,
+`default_cue_kinds`, `custom_cues` — and a scan that read files but matched nothing says
+so in `notes`. Calibrate against a site you already know before reading a zero as clean:
+
+```sh
+python3 <skill-dir>/scripts/bounty.py research-diff scan \
+  --repo <target-checkout> --scope services \
+  --cue 'cache_context=bucket_fingerprint|snapshot_tag' \
+  --cue 'settlement_boundary=settleWithdrawal\w*'
+```
+
+`--cue` is repeatable and takes `kind=regex`: `kind` is a short lowercase slug, either one
+of the default families or a new one of your own, and the regex is applied per line exactly
+as written. A cue that does not compile, repeats, or exceeds the 16-cue bound is rejected
+rather than skipped. Custom hits are labelled with their kind and carry the same evidence
+burden as every other lead.
+
+The defaults bound on alphanumerics rather than `\b`, because `_` is a word character:
+`\bcache_key\b` never matched `build_cache_key` or `cache_key_prefix`. They also carry the
+multi-word camelCase spelling beside the snake_case one — `(?i)` bridges
+`cacheKey`/`cache_key` on its own but never `validateBlock`/`validate_block` — and
+`cache_key_builder` matches the `keyXxx` / `prefixXxx` identifier shape, which is a shape
+cue only and says nothing about what the key is built from.
 
 For a directly executable **synthetic raw-byte framing experiment**,
 compare two different byte-field tuples. This computes an actual unframed
