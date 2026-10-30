@@ -147,11 +147,18 @@ def phases(data):
             policy = step.get("policy_id")
             if policy is not None:
                 _text(policy, "policy_id", 150)
-            normalized.append({"name": name, "decision": decision,
-                               "payload_digest": payload, "policy_id": policy})
-        known = {s["decision"] for s in normalized if s["decision"] != "unknown"}
-        digests = {s["payload_digest"] for s in normalized if s["payload_digest"] is not None}
-        policies = {s["policy_id"] for s in normalized if s["policy_id"] is not None}
+            normalized.append({
+                "name": name, "decision": decision,
+                "payload_digest_fingerprint": hashlib.sha256(
+                    payload.encode("utf-8")).hexdigest() if payload is not None else None,
+                "policy_id_fingerprint": hashlib.sha256(
+                    policy.encode("utf-8")).hexdigest() if policy is not None else None,
+            })
+        known = {step["decision"] for step in normalized if step["decision"] != "unknown"}
+        digests = {step["payload_digest_fingerprint"] for step in normalized
+                   if step["payload_digest_fingerprint"] is not None}
+        policies = {step["policy_id_fingerprint"] for step in normalized
+                    if step["policy_id_fingerprint"] is not None}
         types = []
         if len(known) > 1:
             types.append("DECISION_DIVERGENCE")
