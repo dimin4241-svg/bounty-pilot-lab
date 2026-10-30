@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          fetch-depth: 1
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -30,8 +30,6 @@ jobs:
           BASELINE_SHA: '651f46eedb904ac2f738843ae0413e1eb3cf638a'
           CANDIDATE_SHA: 'cd00a9d64dc341ef6ab9b5c32947ebf00d4cf5a1'
         run: |
-          git -c core.hooksPath=/dev/null fetch --no-tags --depth=1 origin "$BASELINE_SHA"
-          git -c core.hooksPath=/dev/null fetch --no-tags --depth=1 origin "$CANDIDATE_SHA"
           git cat-file -e "$BASELINE_SHA^{commit}"
           git cat-file -e "$CANDIDATE_SHA^{commit}"
       - name: Clone EVMbench at immutable audited upstream revision
