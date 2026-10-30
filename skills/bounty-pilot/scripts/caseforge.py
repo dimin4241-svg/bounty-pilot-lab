@@ -47,7 +47,8 @@ def _read(path):
 
 def validate(data):
     """Fail closed: unknown revisions cannot be used for historical rediscovery."""
-    if not isinstance(data, dict) or data.get("schema_version") != 1:
+    if (not isinstance(data, dict) or type(data.get("schema_version")) is not int
+            or data["schema_version"] != 1):
         raise ValueError("catalog schema_version must be 1")
     cases = data.get("cases")
     if not isinstance(cases, list) or len(cases) > MAX_CASES:
@@ -140,7 +141,6 @@ def blind_queue(data):
          "pinned_commit": commit,
          "protocol": "Use separate checkout; run existing backtest init, hunt, seal, then score."}
         for index, (repository, commit) in enumerate(snapshots)],
-        "unavailable_without_pin": len(data["cases"]) - len(cases),
         "leak_warning": "Never expose the source catalog, its filenames, or the truth to "
                         "the hunting agent. A task list alone does not prove blinded isolation.",
         "measured_rediscoveries": 0}
