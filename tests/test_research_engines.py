@@ -168,6 +168,46 @@ class PhaseDifferentialTests(unittest.TestCase):
                     {'name': 'a', 'decision': 'deny'}]}]})
 
 
+class ByteTupleTests(unittest.TestCase):
+    def test_real_byte_collision_and_length_framed_negative_control(self):
+        result = research.byte_tuple({'schema_version': 1, 'pairs': [
+            {'id': 'ambiguous', 'left_fields': ['0x61', '0x6263'],
+             'right_fields': ['0x6162', '0x63']},
+            {'id': 'separate', 'left_fields': ['0x61', '0x6263'],
+             'right_fields': ['0x61', '0x6264']},
+        ]})
+        self.assertEqual(result['mode'], 'byte-tuple')
+        self.assertEqual(result['candidate_count'], 1)
+        self.assertEqual(result['non_collision_pairs'], 1)
+        hit = result['leads'][0]
+        self.assertEqual(hit['signal'], 'UNFRAMED_TUPLE_COLLISION')
+        self.assertEqual(hit['framed_negative_control'], 'DISTINCT')
+        self.assertNotEqual(hit['framed_sha256'][0], hit['framed_sha256'][1])
+        self.assertEqual(result['confirmed_vulnerabilities'], 0)
+
+    def test_single_field_odd_length_and_many_fields_rejected(self):
+        for left in (['0x61'], ['0x6'], ['0x00'] * 17):
+            with self.subTest(fields=left):
+                with self.assertRaises(ValueError):
+                    research.byte_tuple({'schema_version': 1, 'pairs': [
+                        {'id': 'bad', 'left_fields': left,
+                         'right_fields': ['0x62', '0x63']} ]})
+
+    def test_cli_byte_tuple_writes_no_raw_field_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            file = Path(temp) / 'pair.json'
+            file.write_text(json.dumps({'schema_version': 1, 'pairs': [
+                {'id': 'collision', 'left_fields': ['0x61', '0x6263'],
+                 'right_fields': ['0x6162', '0x63']}]}))
+            result = subprocess.run([
+                'python3', str(SCRIPTS / 'bounty.py'), 'research-diff',
+                'byte-tuple', '--input', str(file)
+            ], capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+            self.assertEqual(data['candidate_count'], 1)
+            self.assertNotIn('0x6162', result.stdout)
+
+
 class LocalCodeAndCLITests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
