@@ -73,6 +73,13 @@ def map_spec(spec, repository):
     if not (root / ".git").exists():
         raise ValueError("a local git checkout is required")
     tracked = _files(root)
+    head = subprocess.run(["git", *GIT_OPTS, "-C", str(root), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True, timeout=10).stdout.strip()
+    if not re.fullmatch(r"[a-f0-9]{40,64}", head):
+        raise ValueError("unable to pin a checkout revision")
+    dirty = bool(subprocess.run(
+        ["git", *GIT_OPTS, "-C", str(root), "status", "--porcelain"],
+        capture_output=True, check=True, timeout=10).stdout.strip())
     seen = set()
     report = []
     for req in requirements:
@@ -136,6 +143,7 @@ def map_spec(spec, repository):
             "notice": "Lexical presence does not prove enforcement; lexical absence "
                       "does not establish a vulnerability or code coverage."})
     return {"schema_version": 1, "classification": "RESEARCH_LEADS",
+            "source_revision": head, "working_tree_dirty": dirty,
             "requirements": report, "confirmed_vulnerabilities": 0,
             "notice": "No target code executed. An explicit documented requirement and "
                       "an independent native experiment are mandatory for a finding."}
