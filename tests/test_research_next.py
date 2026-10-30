@@ -155,6 +155,46 @@ class NativeCycleTests(CheckoutFixture):
                              allow_exec=True, isolated_confirmed=True,
                              evidence_dir=Path(self.tmp.name) / "modified")
 
+    def test_actual_native_unittest_pair_runs_twice_in_disposable_fixture(self):
+        # Real local subprocesses rather than mocked scenario_runner output.
+        # Each case asserts a simple generic property; this is NOT a target PoC.
+        fixture = self.root / "test_local_native.py"
+        fixture.write_text(
+            "import unittest\\n"
+            "class LocalNative(unittest.TestCase):\\n"
+            "    def test_candidate(self):\\n"
+            "        self.assertEqual(2 * 3, 6)\\n"
+            "    def test_control(self):\\n"
+            "        self.assertNotEqual(2 * 3, 7)\\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add",
+                        "test_local_native.py"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm",
+                        "add synthetic native fixture"], check=True)
+        self.sha = subprocess.run(["git", "-C", str(self.root),
+                                   "rev-parse", "HEAD"], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+        spec = self.pair_spec()
+        spec["cases"][0]["candidate"] = "test_local_native.LocalNative.test_candidate"
+        spec["cases"][0]["control"] = "test_local_native.LocalNative.test_control"
+        report = native.cycle(spec, "unittest", self.root,
+                              allow_exec=True, isolated_confirmed=True,
+                              evidence_dir=Path(self.tmp.name) / "native-real")
+        self.assertEqual(report["status"], "NATIVE_PAIR_RAN_NEEDS_INDEPENDENT_REVIEW")
+        self.assertEqual(len(report["rounds"]), 2)
+        self.assertTrue(all(len(r["cases"]) == 2 for r in report["rounds"]))
+        self.assertTrue(all(c["tests_ran"] for r in report["rounds"]
+                            for c in r["cases"]))
+        self.assertEqual(report["confirmed_vulnerabilities"], 0)
+
+    def test_empty_mocked_native_result_cannot_claim_conformance(self):
+        with mock.patch.object(native.scenario_runner, "execute",
+                               return_value={"result": "experiments-conformed",
+                                             "cases": []}):
+            report = native.cycle(self.pair_spec(), "pytest", self.root,
+                                  allow_exec=True, isolated_confirmed=True,
+                                  evidence_dir=Path(self.tmp.name) / "empty-results")
+        self.assertEqual(report["status"], "INCOMPLETE_OR_NOT_EXECUTED")
+
     def test_two_independent_synthetic_runs_are_only_harness_evidence(self):
         pairs = [{"pair_id": "withdraw-pair", "role": role, "executed": True,
                   "tests_ran": True, "status": "ran", "matched_expected_exit": True,
