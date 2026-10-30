@@ -110,7 +110,15 @@ def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False,
     after = _git(checkout, "status", "--porcelain", "--untracked-files=no")
     unchanged = before == after and before_diff == _tracked_diff_fingerprint(checkout)
     performed = allow_exec and len(snapshots) == 2
-    conforming = (performed and unchanged and
+    expected_roles = {(x["pair_id"], x["role"]) for x in plan["cases"]}
+    complete_pairs = (bool(expected_roles) and
+        all({(x["pair_id"], x["role"]) for x in round_["cases"]} == expected_roles
+            and len(round_["cases"]) == len(expected_roles)
+            and all(x["executed"] and x["tests_ran"] and
+                    x["matched_expected_exit"] and x["status"] == "ran"
+                    for x in round_["cases"])
+            for round_ in snapshots))
+    conforming = (performed and unchanged and complete_pairs and
                   all(row["result"] == "experiments-conformed" for row in snapshots))
     fingerprint = [tuple((x["pair_id"], x["role"], x["matched_expected_exit"],
                            x["tests_ran"], x["status"]) for x in round_["cases"])
@@ -131,7 +139,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", required=True)
     parser.add_argument("--stack", required=True,
-                        choices=("foundry", "cargo", "pytest", "go"))
+                        choices=("foundry", "cargo", "pytest", "go", "unittest"))
     parser.add_argument("--repo", required=True)
     parser.add_argument("--allow-exec", action="store_true")
     parser.add_argument("--isolated-workspace-confirmed", action="store_true")
