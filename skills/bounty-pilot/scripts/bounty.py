@@ -11653,6 +11653,8 @@ def build_parser():
     rd.add_argument('operation', choices=('identity', 'phases', 'scan'))
     rd.add_argument('--input', default=None, help='local JSON observations for identity or phases')
     rd.add_argument('--repo', default=None, help='local tracked checkout for passive lexical scan')
+    rd.add_argument('--scope', action='append', default=None,
+                    help='required in-scope relative path prefix for scan; repeatable')
 
     route_parser = sub.add_parser('route', help='recommend native adapters from tracked manifests (heuristic)')
     route_parser.add_argument('--repo', required=True)
@@ -11929,10 +11931,10 @@ def main(argv=None):
             if args.operation == 'scan':
                 if not args.repo or args.input:
                     raise ValueError('scan requires --repo and no --input')
-                result = rd.source_scan(args.repo)
+                result = rd.source_scan(args.repo, args.scope)
             else:
-                if not args.input or args.repo:
-                    raise ValueError('identity/phases requires --input and no --repo')
+                if not args.input or args.repo or args.scope:
+                    raise ValueError('identity/phases requires --input and no --repo/--scope')
                 observations = rd._json(args.input)
                 result = rd.identity(observations) if args.operation == 'identity' else rd.phases(observations)
             print(json.dumps(result, indent=2, ensure_ascii=False))
