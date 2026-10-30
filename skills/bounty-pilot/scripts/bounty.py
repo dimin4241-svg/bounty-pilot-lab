@@ -11661,7 +11661,7 @@ def build_parser():
     rn.add_argument('operation', choices=('spec', 'native', 'memory-record', 'memory-lookup'))
     rn.add_argument('--repo', default=None)
     rn.add_argument('--spec', default=None)
-    rn.add_argument('--stack', choices=('foundry', 'cargo', 'pytest', 'go'))
+    rn.add_argument('--stack', choices=('foundry', 'cargo', 'pytest', 'go', 'unittest'))
     rn.add_argument('--allow-exec', action='store_true')
     rn.add_argument('--isolated-workspace-confirmed', action='store_true')
     rn.add_argument('--evidence-dir', default=None, help='new private path outside checkout for both executed native rounds')
