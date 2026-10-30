@@ -27,6 +27,10 @@ def _string(value, label, maxlen=1000):
         raise ValueError(label + ": expected nonempty short text")
     if any(ord(c) < 32 for c in value):
         raise ValueError(label + ": control character")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(label + ": invalid Unicode text") from exc
     return value
 
 
@@ -42,7 +46,19 @@ def _read(path):
     p = Path(path)
     if p.is_symlink() or not p.is_file() or p.stat().st_size > 3_000_000:
         raise ValueError("catalog must be a regular non-symlink JSON file under 3 MB")
-    return json.loads(p.read_text(encoding="utf-8"))
+    try:
+        return json.loads(p.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+    except RecursionError as exc:
+        raise ValueError("catalog JSON nesting exceeds the parser limit") from exc
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("catalog JSON contains a duplicate object key")
+        result[key] = value
+    return result
 
 
 def validate(data):
@@ -68,13 +84,13 @@ def validate(data):
         _string(case.get("invariant"), tag + ".invariant")
         _url(case.get("source_url"), tag + ".source_url")
         source_type = case.get("source_type")
-        if source_type not in TYPES:
+        if not isinstance(source_type, str) or source_type not in TYPES:
             raise ValueError(tag + ": invalid source_type")
         family = case.get("family")
-        if family not in FAMILIES:
+        if not isinstance(family, str) or family not in FAMILIES:
             raise ValueError(tag + ": invalid family")
         state = case.get("status")
-        if state not in STATUSES:
+        if not isinstance(state, str) or state not in STATUSES:
             raise ValueError(tag + ": invalid status")
         sha = case.get("vulnerable_commit")
         repo = case.get("repository_url")
@@ -114,7 +130,7 @@ def validate(data):
 
 def index(data, family=None):
     validate(data)
-    if family is not None and family not in FAMILIES:
+    if family is not None and (not isinstance(family, str) or family not in FAMILIES):
         raise ValueError("invalid family filter")
     entries = []
     for case in data["cases"]:

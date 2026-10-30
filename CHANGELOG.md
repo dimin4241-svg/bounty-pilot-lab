@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.41.1
+
+### Research-engine validation and local controls
+
+- Rejected duplicate JSON object keys, malformed enum types, duplicate observation IDs,
+  unpaired Unicode surrogates, oversized inputs and symlinks with bounded error responses.
+- Expanded identity observations to fingerprint verified-message versus executed-operation
+  outputs, encoded bytes and domain context. Phase reports preserve stage order and fingerprint
+  policy identity, chain, epoch, nonce, state and attacker-permission context; missing or changed
+  context blocks comparability.
+- Added `research-diff quorum` for supplied authenticated signer observations. It requires a
+  valid unique-signer negative control and reports duplicate-signature quorum leads without
+  verifying signatures or claiming target impact.
+- Added synthetic Foundry and Rust candidate/control tests to the existing native-smoke plan.
+  They exercise generic byte framing and signer uniqueness, not historical rediscovery.
+- Corrected the Monad H-02 catalog identifier and tested that H-01 through H-04 stay unique
+  and grouped under the single cited pre-fix audit snapshot.
+- Confirmed AVRE already owns sequence generation, economic metamorphic plans, exact integer
+  measurements and sequence minimization; no parallel generator was added.
+
 ## 0.41.0
 
 ### CaseForge + Semantic Identity + Cross-Phase Differential

@@ -123,6 +123,12 @@ Preserve these invariants when editing:
   `NEEDS_EVIDENCE` hypothesis. Scan only in-scope tracked local source. Different
   policy versions block phase comparability. Reuse the existing native
   candidate/control evidence gate before any impact claim.
+- **Identity fingerprints and signer observations stay unverified inputs.** A
+  supplied decoded-message digest, execution digest, chain context, or recovered
+  signer ID does not attest which native code produced it. Quorum comparisons
+  require the paired unique-signer control; missing or mismatched phase context
+  blocks comparability. The synthetic Foundry/Rust fixtures are harness checks,
+  never target findings or historical rediscoveries.
 
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.

@@ -24,7 +24,7 @@
       "invariant": "A cache hit must only reuse proof validity under an equivalent complete verification context."
     },
     {
-      "id": "MONAD-2026-STAGE",
+      "id": "MONAD-2026-H02",
       "project": "Monad",
       "family": "cross-phase",
       "source_type": "audited-finding",

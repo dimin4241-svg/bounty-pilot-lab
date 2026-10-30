@@ -92,6 +92,81 @@ class CaseForgeTests(unittest.TestCase):
         self.assertEqual(result['tasks'][0]['pinned_commit'], '1' * 40)
         self.assertEqual(result['measured_rediscoveries'], 0)
 
+    def test_monad_truths_have_unique_report_ids_and_one_verified_snapshot(self):
+        catalog = caseforge._read(caseforge.CATALOG)
+        monad = [row for row in catalog['cases'] if row['project'] == 'Monad']
+        self.assertEqual({row['id'] for row in monad}, {
+            'MONAD-2026-H01', 'MONAD-2026-H02',
+            'MONAD-2026-H03', 'MONAD-2026-H04'})
+        self.assertEqual(len({(row['repository_url'], row['vulnerable_commit'])
+                              for row in monad}), 1)
+        self.assertEqual(len(caseforge.blind_queue(catalog)['tasks']), 1)
+        expected_paths = {
+            'MONAD-2026-H01': {'monad-eth-block-policy/src/lib.rs'},
+            'MONAD-2026-H02': {'monad-eth-txpool/src/pool/transaction.rs',
+                               'monad-eth-block-validator/src/lib.rs'},
+            'MONAD-2026-H03': {'monad-eth-txpool/src/pool/mod.rs',
+                               'monad-eth-block-policy/src/lib.rs'},
+            'MONAD-2026-H04': {'monad-eth-txpool/src/pool/tracked/sequencer.rs',
+                               'monad-eth-block-policy/src/lib.rs'},
+        }
+        for row in monad:
+            self.assertTrue(row['scope_paths'])
+            self.assertEqual(len(row['scope_paths']), len(set(row['scope_paths'])))
+            self.assertEqual(row['vulnerable_commit'],
+                             '6aaccc2ec51eac66a2cf18ec64ab0df2c1448990')
+            self.assertEqual(set(row['scope_paths']), expected_paths[row['id']])
+
+    def test_schema_types_duplicate_json_keys_and_unicode_fail_closed(self):
+        original = caseforge._read(caseforge.CATALOG)['cases'][0]
+        for field, value in (('source_type', []), ('family', {}), ('status', [])):
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError):
+                    caseforge.validate({'schema_version': 1,
+                                        'cases': [dict(original, **{field: value})]})
+        with self.assertRaisesRegex(ValueError, 'Unicode'):
+            caseforge.validate({'schema_version': 1,
+                                'cases': [dict(original, project='\ud800')]})
+        with tempfile.TemporaryDirectory() as temp:
+            duplicate = Path(temp) / 'duplicate.json'
+            duplicate.write_text('{"schema_version":1,"schema_version":1,"cases":[]}',
+                                 encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'duplicate object key'):
+                caseforge._read(duplicate)
+
+    def test_catalog_cli_returns_validation_error_without_traceback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'invalid.json'
+            source = caseforge._read(caseforge.CATALOG)['cases'][0]
+            path.write_text(json.dumps({'schema_version': 1,
+                                        'cases': [dict(source, source_type=[])]}),
+                            encoding='utf-8')
+            result = subprocess.run(['python3', str(SCRIPTS / 'caseforge.py'),
+                                     'validate', '--catalog', str(path)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('Error:', result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+
+    def test_catalog_reader_rejects_symlinks_malformed_json_and_oversize(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / 'catalog.json'
+            source.write_text('{bad json', encoding='utf-8')
+            with self.assertRaises(json.JSONDecodeError):
+                caseforge._read(source)
+            source.unlink()
+            target = root / 'target.json'
+            target.write_text('{"schema_version":1,"cases":[]}', encoding='utf-8')
+            link = root / 'link.json'
+            link.symlink_to(target)
+            with self.assertRaisesRegex(ValueError, 'non-symlink'):
+                caseforge._read(link)
+            oversized = root / 'oversized.json'
+            oversized.write_bytes(b' ' * 3_000_001)
+            with self.assertRaisesRegex(ValueError, 'under 3 MB'):
+                caseforge._read(oversized)
+
 
 class IdentityDifferentialTests(unittest.TestCase):
     def test_collision_split_and_negative_controls(self):
@@ -136,6 +211,48 @@ class IdentityDifferentialTests(unittest.TestCase):
              'right': {'identity_key': 'b'}}]})
         self.assertEqual(result['leads'][0]['basis_status'], 'MISSING')
         self.assertEqual(result['leads'][0]['classification'], 'NEEDS_EVIDENCE')
+
+    def test_native_message_execution_and_encoding_observations_are_fingerprinted(self):
+        result = research.identity({'schema_version': 1, 'pairs': [{
+            'id': 'native-boundary', 'expected_semantic_relation': 'same',
+            'equivalence_basis': 'native decoder produced the same canonical message',
+            'left': {'identity_key': 'key-a', 'encoded_payload_hex': '0x61',
+                     'verified_message_fingerprint': 'message-a',
+                     'executed_operation_fingerprint': 'operation-drift',
+                     'domain': 'chain:1/bridge', 'chain_id': '1', 'nonce': '7'},
+            'right': {'identity_key': 'key-b', 'encoded_payload_hex': '0x6162',
+                      'verified_message_fingerprint': 'message-a',
+                      'executed_operation_fingerprint': 'message-a',
+                      'domain': 'chain:1/bridge', 'chain_id': '1', 'nonce': '7'},
+        }]})
+        lead = result['leads'][0]
+        self.assertIn('SAME_ACTION_DISTINCT_KEY', lead['signals'])
+        self.assertIn('VERIFIED_MESSAGE_EXECUTION_MISMATCH', lead['signals'])
+        self.assertFalse(lead['encoded_payloads_equal'])
+        self.assertEqual(lead['message_execution_mismatch_sides'], ['left'])
+        self.assertIn('SEMANTICALLY_EQUIVALENT_DIFFERENT_BYTES', lead['signals'])
+        self.assertEqual(len(lead['security_context_fingerprints']['left']['chain_id']), 64)
+        self.assertNotIn('operation-drift', json.dumps(result))
+        self.assertEqual(result['confirmed_vulnerabilities'], 0)
+
+    def test_identity_repeated_pair_id_is_rejected(self):
+        pair = {'id': 'same', 'expected_semantic_relation': 'different',
+                'equivalence_basis': '', 'left': {'identity_key': 'a'},
+                'right': {'identity_key': 'b'}}
+        with self.assertRaisesRegex(ValueError, 'unique'):
+            research.identity({'schema_version': 1, 'pairs': [pair, pair]})
+
+    def test_valid_unicode_is_supported_and_unpaired_surrogates_are_rejected(self):
+        result = research.identity({'schema_version': 1, 'pairs': [{
+            'id': 'идентичность', 'expected_semantic_relation': 'same',
+            'equivalence_basis': 'одна операция 🔐',
+            'left': {'identity_key': 'ключ-A'}, 'right': {'identity_key': 'ключ-B'}}]})
+        self.assertEqual(result['leads'][0]['id'], 'идентичность')
+        with self.assertRaisesRegex(ValueError, 'Unicode'):
+            research.identity({'schema_version': 1, 'pairs': [{
+                'id': 'bad', 'expected_semantic_relation': 'same',
+                'equivalence_basis': '', 'left': {'identity_key': '\ud800'},
+                'right': {'identity_key': 'b'}}]})
 
     def test_wrong_shape_and_large_sets_fail(self):
         with self.assertRaises(ValueError):
@@ -205,6 +322,131 @@ class PhaseDifferentialTests(unittest.TestCase):
                 {'id': 'dup', 'stages': [
                     {'name': 'a', 'decision': 'allow'},
                     {'name': 'a', 'decision': 'deny'}]}]})
+
+    def test_order_and_security_context_drift_block_phase_comparison(self):
+        report = research.phases({'schema_version': 1, 'cases': [{
+            'id': 'worker-context', 'same_policy_expected': True,
+            'equivalence_basis': 'same signed operation and policy',
+            'required_context_fields': ['chain_id', 'epoch', 'nonce', 'state_digest',
+                                        'attacker_permissions'],
+            'stages': [
+                {'name': 'api', 'decision': 'allow', 'policy_id': 'v1',
+                 'chain_id': '1', 'epoch': '8', 'nonce': '4', 'state_digest': 's0',
+                 'attacker_permissions': 'submit'},
+                {'name': 'worker', 'decision': 'deny', 'policy_id': 'v1',
+                 'chain_id': '1', 'epoch': '9', 'nonce': '4', 'state_digest': 's1',
+                 'attacker_permissions': 'admin'},
+            ]}]})
+        lead = report['leads'][0]
+        self.assertEqual([step['order_index'] for step in lead['stages']], [0, 1])
+        self.assertFalse(lead['comparable'])
+        self.assertIn('EPOCH_DRIFT', lead['signals'])
+        self.assertIn('ATTACKER_PERMISSIONS_DRIFT', lead['signals'])
+        self.assertIn('STATE_CONTEXT_DRIFT', lead['signals'])
+        self.assertIn('EPOCH_MISMATCH', lead['comparison_blockers'])
+        self.assertNotIn('admin', json.dumps(report))
+
+    def test_expected_state_transition_is_reported_and_still_blocks_equivalence(self):
+        report = research.phases({'schema_version': 1, 'cases': [{
+            'id': 'stateful-flow', 'same_policy_expected': True,
+            'equivalence_basis': 'same request across ordered state transition',
+            'state_transition_expected': True,
+            'stages': [
+                {'name': 'admission', 'decision': 'allow', 'policy_id': 'v1',
+                 'chain_id': '1', 'epoch': '2', 'nonce': '3', 'state_digest': 'before'},
+                {'name': 'execution', 'decision': 'deny', 'policy_id': 'v1',
+                 'chain_id': '1', 'epoch': '2', 'nonce': '3', 'state_digest': 'after'},
+            ]}]})
+        lead = report['leads'][0]
+        self.assertIn('EXPECTED_STATE_TRANSITION', lead['context_observations'])
+        self.assertIn('STATE_TRANSITION_CONTEXT', lead['comparison_blockers'])
+        self.assertFalse(lead['comparable'])
+
+    def test_partial_policy_context_and_duplicate_case_ids_fail_closed(self):
+        result = research.phases({'schema_version': 1, 'cases': [{
+            'id': 'partial', 'same_policy_expected': True, 'equivalence_basis': 'same request',
+            'stages': [{'name': 'api', 'decision': 'allow', 'policy_id': 'v1'},
+                       {'name': 'worker', 'decision': 'deny'}]}]})
+        self.assertIn('INCOMPLETE_POLICY_CONTEXT', result['leads'][0]['comparison_blockers'])
+        self.assertFalse(result['leads'][0]['comparable'])
+        case = {'id': 'duplicate', 'stages': [{'name': 'a', 'decision': 'allow'},
+                                               {'name': 'b', 'decision': 'deny'}]}
+        with self.assertRaisesRegex(ValueError, 'unique'):
+            research.phases({'schema_version': 1, 'cases': [case, case]})
+
+    def test_missing_policy_context_blocks_comparison_even_when_all_stages_omit_it(self):
+        report = research.phases({'schema_version': 1, 'cases': [{
+            'id': 'missing-policy', 'same_policy_expected': True,
+            'equivalence_basis': 'same request and intended policy',
+            'stages': [
+                {'name': 'api', 'decision': 'allow'},
+                {'name': 'worker', 'decision': 'allow'},
+            ]}]})
+        self.assertEqual(report['candidate_count'], 0)
+        self.assertEqual(report['non_comparable_count'], 1)
+        self.assertIn('MISSING_POLICY_CONTEXT',
+                      report['non_comparable_cases'][0]['comparison_blockers'])
+
+    def test_incomplete_context_is_reported_even_when_decisions_match(self):
+        report = research.phases({'schema_version': 1, 'cases': [{
+            'id': 'missing-chain', 'same_policy_expected': True,
+            'equivalence_basis': 'same request',
+            'required_context_fields': ['chain_id'],
+            'stages': [
+                {'name': 'api', 'decision': 'allow', 'policy_id': 'v1', 'chain_id': '1'},
+                {'name': 'worker', 'decision': 'allow', 'policy_id': 'v1'},
+            ]}]})
+        self.assertEqual(report['candidate_count'], 0)
+        self.assertEqual(report['non_comparable_count'], 1)
+        self.assertIn('MISSING_CHAIN_ID_CONTEXT',
+                      report['non_comparable_cases'][0]['comparison_blockers'])
+
+
+class SignerQuorumTests(unittest.TestCase):
+    def test_duplicate_signers_are_compared_with_valid_unique_signer_control(self):
+        report = research.quorum({'schema_version': 1, 'cases': [
+            {'id': 'candidate', 'pair_id': 'quorum', 'role': 'candidate',
+             'threshold': 2, 'authorized_signers': ['alice', 'bob'],
+             'authenticated_signers': ['alice', 'alice'],
+             'context': {'chain_id': '1', 'epoch': '4', 'policy_id': 'v1',
+                         'attacker_permissions': 'public-relayer'}},
+            {'id': 'control', 'pair_id': 'quorum', 'role': 'negative-control',
+             'threshold': 2, 'authorized_signers': ['alice', 'bob'],
+             'authenticated_signers': ['alice', 'bob'],
+             'context': {'chain_id': '1', 'epoch': '4', 'policy_id': 'v1',
+                         'attacker_permissions': 'public-relayer'}},
+        ]})
+        self.assertEqual(report['candidate_count'], 1)
+        lead = report['leads'][0]
+        self.assertEqual(lead['signal'], 'INSUFFICIENT_UNIQUE_AUTHORIZED_SIGNERS')
+        self.assertEqual(lead['authenticated_signature_count'], 2)
+        self.assertEqual(lead['unique_authorized_signer_count'], 1)
+        self.assertEqual(len(lead['context_fingerprints']['policy_id']), 64)
+        self.assertNotIn('alice', json.dumps(report))
+        self.assertEqual(report['confirmed_vulnerabilities'], 0)
+
+    def test_quorum_requires_paired_control_and_rejects_bad_threshold_or_duplicates(self):
+        candidate = {'id': 'candidate', 'pair_id': 'q', 'role': 'candidate',
+                     'threshold': 2, 'authorized_signers': ['alice', 'bob'],
+                     'authenticated_signers': ['alice', 'alice']}
+        with self.assertRaisesRegex(ValueError, 'negative-control'):
+            research.quorum({'schema_version': 1, 'cases': [candidate]})
+        control = {'id': 'control', 'pair_id': 'q', 'role': 'negative-control',
+                   'threshold': 2, 'authorized_signers': ['alice', 'bob'],
+                   'authenticated_signers': ['alice', 'bob']}
+        with self.assertRaisesRegex(ValueError, 'threshold'):
+            research.quorum({'schema_version': 1, 'cases': [
+                dict(candidate, threshold=True), control]})
+        with self.assertRaisesRegex(ValueError, 'unique'):
+            research.quorum({'schema_version': 1, 'cases': [
+                dict(candidate, authorized_signers=['alice', 'alice']),
+                dict(control, authorized_signers=['alice', 'alice'])]})
+        with self.assertRaisesRegex(ValueError, 'schema_version'):
+            research.quorum({'schema_version': True, 'cases': [candidate, control]})
+        with self.assertRaisesRegex(ValueError, 'same security context'):
+            research.quorum({'schema_version': 1, 'cases': [
+                dict(candidate, context={'policy_id': 'v1'}),
+                dict(control, context={'policy_id': 'v2'})]})
 
 
 class ByteTupleTests(unittest.TestCase):
@@ -295,6 +537,46 @@ class LocalCodeAndCLITests(unittest.TestCase):
         self.assertEqual(absent['scanned_files'], 0)
         self.assertTrue(any('not a clean scan' in note for note in absent['notes']))
 
+    def test_scan_skips_symlinks_oversized_files_and_preserves_unicode_paths(self):
+        external = self.root / 'external.py'
+        external.write_text('keccak256(abi.encodePacked(a, b))\n', encoding='utf-8')
+        source = self.repo / 'src' / 'проверка.py'
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('keccak256(abi.encodePacked(a, b))\n', encoding='utf-8')
+        oversized = self.repo / 'src' / 'large.py'
+        oversized.write_bytes(b'x' * (research.MAX_SOURCE_BYTES + 1))
+        link = self.repo / 'src' / 'link.py'
+        link.symlink_to(external)
+        subprocess.run(['git', '-C', str(self.repo), 'add', '-A'], check=True)
+        result = research.source_scan(self.repo, ['src'])
+        self.assertTrue(any(lead['path'] == 'src/проверка.py' for lead in result['leads']))
+        self.assertEqual(result['skipped']['oversized'], 1)
+        self.assertEqual(result['skipped']['unreadable'], 1)
+        self.assertFalse(any(lead['path'] == 'src/link.py' for lead in result['leads']))
+
+    def test_json_reader_rejects_duplicate_keys_symlinks_and_oversize(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            duplicate = root / 'duplicate.json'
+            duplicate.write_text('{"schema_version":1,"schema_version":1,"pairs":[]}',
+                                 encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'duplicate object key'):
+                research._json(duplicate)
+            target = root / 'target.json'
+            target.write_text('{"schema_version":1,"pairs":[]}', encoding='utf-8')
+            link = root / 'link.json'
+            link.symlink_to(target)
+            with self.assertRaisesRegex(ValueError, 'non-symlink'):
+                research._json(link)
+            oversized = root / 'oversized.json'
+            oversized.write_bytes(b' ' * 2_000_001)
+            with self.assertRaisesRegex(ValueError, 'under 2 MB'):
+                research._json(oversized)
+            malformed = root / 'malformed.json'
+            malformed.write_text('{broken', encoding='utf-8')
+            with self.assertRaises(json.JSONDecodeError):
+                research._json(malformed)
+
     def test_direct_clis_output_json(self):
         inp = self.root / 'input.json'
         inp.write_text(json.dumps({'schema_version': 1, 'pairs': []}))
@@ -314,6 +596,17 @@ class LocalCodeAndCLITests(unittest.TestCase):
                                  'scan', '--repo', str(self.repo), '--scope', 'src'],
                                 capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout)['mode'], 'source-scan')
+        quorum = {'schema_version': 1, 'cases': [
+            {'id': 'candidate', 'pair_id': 'q', 'role': 'candidate', 'threshold': 2,
+             'authorized_signers': ['a', 'b'], 'authenticated_signers': ['a', 'a']},
+            {'id': 'control', 'pair_id': 'q', 'role': 'negative-control', 'threshold': 2,
+             'authorized_signers': ['a', 'b'], 'authenticated_signers': ['a', 'b']}]}
+        input_path = self.root / 'quorum.json'
+        input_path.write_text(json.dumps(quorum), encoding='utf-8')
+        result = subprocess.run(['python3', str(SCRIPTS / 'bounty.py'), 'research-diff',
+                                 'quorum', '--input', str(input_path)],
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout)['mode'], 'signer-quorum')
 
 
 if __name__ == '__main__':
