@@ -178,6 +178,81 @@ def phases(data):
                     "Even comparable divergences are hypotheses until native reproduction."])
 
 
+
+def _hex_fields(value, label):
+    """Decode only explicit bounded bytes fields; never infer Solidity ABI types."""
+    if not isinstance(value, list) or not 2 <= len(value) <= 16:
+        raise ValueError(label + " needs 2..16 explicit byte fields")
+    output = []
+    for i, field in enumerate(value):
+        if (not isinstance(field, str) or not field.startswith("0x")
+                or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2}){0,4096}", field)):
+            raise ValueError(label + "[%d] must be bounded even-length 0x hex" % i)
+        output.append(bytes.fromhex(field[2:]))
+    if sum(len(x) for x in output) > 4096:
+        raise ValueError(label + " exceeds 4096 total bytes")
+    return output
+
+
+def byte_tuple(data):
+    """Executable byte-framing counterexample on supplied *owned* synthetic tuples.
+
+    Demonstrates injectivity of plain concatenation against length-prefixed framing.
+    This is NOT a full Solidity abi.encodePacked encoder or real target PoC.
+    """
+    if not isinstance(data, dict) or data.get("schema_version") != 1:
+        raise ValueError("byte-tuple input needs schema_version 1")
+    pairs = data.get("pairs")
+    if not isinstance(pairs, list) or len(pairs) > 200:
+        raise ValueError("pairs must be a list of at most 200")
+    leads = []
+    controls = 0
+    for index, row in enumerate(pairs):
+        if not isinstance(row, dict):
+            raise ValueError("pair must be an object")
+        ident = _text(row.get("id"), "id", 100)
+        left = _hex_fields(row.get("left_fields"), "left_fields")
+        right = _hex_fields(row.get("right_fields"), "right_fields")
+        if len(left) != len(right):
+            raise ValueError("field count differs across tuple pair")
+        unpacked_distinct = left != right
+        packed_left, packed_right = b"".join(left), b"".join(right)
+        # Explicit length framing prevents ambiguity for sequences of byte fields.
+        framed = lambda fields: b"".join(len(x).to_bytes(4, "big") + x
+                                        for x in fields)
+        control_distinct = framed(left) != framed(right)
+        if not control_distinct and unpacked_distinct:
+            raise AssertionError("length framing did not preserve tuple distinction")
+        if unpacked_distinct and packed_left == packed_right:
+            leads.append({
+                "id": ident, "index": index, "signal": "UNFRAMED_TUPLE_COLLISION",
+                "field_count": len(left),
+                "left_lengths": [len(x) for x in left],
+                "right_lengths": [len(x) for x in right],
+                "unframed_sha256": hashlib.sha256(packed_left).hexdigest(),
+                "framed_sha256": [hashlib.sha256(framed(f)).hexdigest()
+                                 for f in (left, right)],
+                "framed_negative_control": "DISTINCT",
+                "classification": "SYNTHETIC_COUNTEREXAMPLE",
+                "next_experiment": "Show that a target's *actual* dynamic-field encoding "
+                                   "and replay/cache verification consumes this ambiguous byte "
+                                   "sequence. Run candidate and control with native codec, "
+                                   "explicitly scoped caller and pinned revision.",
+                "falsifier": "The real target uses fixed-width typed fields, length framing, "
+                             "an independent semantic check, or no security-relevant hash key.",
+            })
+        else:
+            controls += 1
+    result = _report("byte-tuple", leads, [
+        "Actual byte computations executed here; target-specific vulnerability and "
+        "the semantics of those fields remain UNVERIFIED.",
+        "Generic raw-byte concatenation only. Solidity ABI packed encoding of "
+        "fixed-width types, arrays, strings and nested tuples needs a native codec."
+    ])
+    result["non_collision_pairs"] = controls
+    return result
+
+
 def source_scan(repo, scope_prefixes):
     """Tracked local source only, with symlink/size/extension bounds and safe git config."""
     if not isinstance(scope_prefixes, (list, tuple)) or not scope_prefixes:
@@ -239,7 +314,7 @@ def source_scan(repo, scope_prefixes):
 def main(argv=None):
     cli = argparse.ArgumentParser(description=__doc__)
     subs = cli.add_subparsers(dest="command", required=True)
-    for action in ("identity", "phases"):
+    for action in ("identity", "phases", "byte-tuple"):
         sub = subs.add_parser(action)
         sub.add_argument("--input", required=True)
     scan = subs.add_parser("scan")
@@ -252,6 +327,8 @@ def main(argv=None):
             result = identity(_json(args.input))
         elif args.command == "phases":
             result = phases(_json(args.input))
+        elif args.command == "byte-tuple":
+            result = byte_tuple(_json(args.input))
         else:
             result = source_scan(args.repo, args.scope)
         print(json.dumps(result, indent=2, ensure_ascii=False))
