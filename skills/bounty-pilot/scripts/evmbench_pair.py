@@ -96,8 +96,12 @@ def _stage_skill(repo, sha, dst):
     with tarfile.open(fileobj=io.BytesIO(cp.stdout), mode="r:") as archive:
         for member in archive:
             path = Path(member.name)
-            if (path.is_absolute() or ".." in path.parts or
-                    not member.name.startswith(SKILL + "/")):
+            if path.is_absolute() or ".." in path.parts:
+                raise ValueError("unsafe archived skill path")
+            # Git archive includes explicit parent directory headers.
+            if member.isdir() and path.as_posix() in ("skills", SKILL):
+                continue
+            if not member.name.startswith(SKILL + "/"):
                 raise ValueError("unsafe archived skill path")
             rel = path.relative_to(SKILL).as_posix()
             if rel in BANNED or rel.endswith("-catalog.json") or rel.startswith("tests/"):
