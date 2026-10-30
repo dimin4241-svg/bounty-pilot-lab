@@ -259,7 +259,8 @@ def source_scan(repo, scope_prefixes):
         raise ValueError("scan requires explicit --scope path prefixes")
     for prefix in scope_prefixes:
         if (not isinstance(prefix, str) or not prefix or prefix.startswith("/")
-                or ".." in Path(prefix).parts or chr(0) in prefix):
+                or ".." in Path(prefix).parts or chr(0) in prefix
+                or "\\" in prefix or prefix.rstrip("/") in (".", "")):
             raise ValueError("scope must be a relative checkout path prefix")
     root = Path(repo).resolve()
     if not (root / ".git").exists():
@@ -268,13 +269,14 @@ def source_scan(repo, scope_prefixes):
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                        timeout=25, check=True, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
     names = sorted(x for x in p.stdout.decode("utf-8", "replace").split("\0") if x)
+    scoped = [name for name in names
+              if any(name == prefix.rstrip("/") or
+                     name.startswith(prefix.rstrip("/") + "/")
+                     for prefix in scope_prefixes)]
     found = []
     skipped = {"non_source": 0, "oversized": 0, "unreadable": 0}
     scanned = 0
-    for name in names[:MAX_SOURCE_FILES]:
-        if not any(name == prefix.rstrip("/") or name.startswith(prefix.rstrip("/") + "/")
-                   for prefix in scope_prefixes):
-            continue
+    for name in scoped[:MAX_SOURCE_FILES]:
         path = Path(name)
         if path.suffix.lower() not in SOURCE_EXTENSIONS or EXCLUDE_PARTS.intersection(path.parts):
             skipped["non_source"] += 1
@@ -305,10 +307,14 @@ def source_scan(repo, scope_prefixes):
                                            ["Scan capped at 200 lexical signals."]),
                                     truncated=True,
                                     scanned_files=scanned, skipped=skipped,
-                                    files_over_cap=max(0, len(names) - MAX_SOURCE_FILES))
-    return dict(_report("source-scan", found),
+                                    files_over_cap=max(0, len(scoped) - MAX_SOURCE_FILES),
+                                    in_scope_tracked_files=len(scoped))
+    notes = (["No tracked source file matched the declared scope; not a clean scan."]
+             if not scoped or scanned == 0 else [])
+    return dict(_report("source-scan", found, notes),
                 scanned_files=scanned, skipped=skipped,
-                files_over_cap=max(0, len(names) - MAX_SOURCE_FILES))
+                in_scope_tracked_files=len(scoped),
+                files_over_cap=max(0, len(scoped) - MAX_SOURCE_FILES))
 
 
 def main(argv=None):
