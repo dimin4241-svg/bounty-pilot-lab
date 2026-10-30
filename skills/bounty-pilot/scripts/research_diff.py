@@ -184,7 +184,7 @@ def source_scan(repo, scope_prefixes):
         raise ValueError("scan requires explicit --scope path prefixes")
     for prefix in scope_prefixes:
         if (not isinstance(prefix, str) or not prefix or prefix.startswith("/")
-                or ".." in Path(prefix).parts or "\\x00" in prefix):
+                or ".." in Path(prefix).parts or chr(0) in prefix):
             raise ValueError("scope must be a relative checkout path prefix")
     root = Path(repo).resolve()
     if not (root / ".git").exists():
