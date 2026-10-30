@@ -46,6 +46,17 @@ class CaseForgeTests(unittest.TestCase):
                           'MONAD-2026-H04', 'signatures', 'block policy'):
             self.assertNotIn(forbidden, content)
 
+    def test_bool_schema_does_not_pass_integer_version_check(self):
+        bad = dict(caseforge._read(caseforge.CATALOG), schema_version=True)
+        with self.assertRaisesRegex(ValueError, 'schema_version'):
+            caseforge.validate(bad)
+        with self.assertRaisesRegex(ValueError, 'schema_version'):
+            research.byte_tuple({'schema_version': True, 'pairs': []})
+        with self.assertRaisesRegex(ValueError, 'schema_version'):
+            research.identity({'schema_version': True, 'pairs': []})
+        with self.assertRaisesRegex(ValueError, 'schema_version'):
+            research.phases({'schema_version': True, 'cases': []})
+
     def test_invalid_revision_and_duplicate_refused(self):
         item = dict(caseforge._read(caseforge.CATALOG)['cases'][0])
         bad = {'schema_version': 1, 'cases': [dict(item, status='revision-pinned',
