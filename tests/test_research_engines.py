@@ -109,7 +109,8 @@ class PhaseDifferentialTests(unittest.TestCase):
         self.assertEqual(report['candidate_count'], 1)
         self.assertEqual(report['findings'][0]['signals'],
                          ['DECISION_DIVERGENCE', 'PAYLOAD_DRIFT', 'POLICY_VERSION_DRIFT'])
-        self.assertTrue(report['findings'][0]['comparable'])
+        self.assertFalse(report['findings'][0]['comparable'])
+        self.assertEqual(report['findings'][0]['comparison_blocker'], 'POLICY_VERSION_MISMATCH')
         self.assertEqual(report['confirmed_vulnerabilities'], 0)
 
     def test_no_basis_makes_signal_not_comparable(self):
@@ -143,11 +144,17 @@ class LocalCodeAndCLITests(unittest.TestCase):
         source.write_text(
             'contract Proof { bytes32 x = keccak256(abi.encodePacked(left, right)); }\n')
         subprocess.run(['git', '-C', str(self.repo), 'add', '-A'], check=True)
-        result = research.source_scan(self.repo)
+        result = research.source_scan(self.repo, ['src'])
         self.assertTrue(any(x['signal'] == 'packed_dynamic' for x in result['findings']))
         self.assertEqual(result['confirmed_vulnerabilities'], 0)
         self.assertTrue(all(x['classification'] == 'LEXICAL_LEAD'
                             for x in result['findings']))
+
+    def test_scan_scope_is_required(self):
+        with self.assertRaisesRegex(ValueError, 'scope'):
+            research.source_scan(self.repo, None)
+        with self.assertRaisesRegex(ValueError, 'scope'):
+            research.source_scan(self.repo, ['../other'])
 
     def test_direct_clis_output_json(self):
         inp = self.root / 'input.json'
@@ -165,7 +172,7 @@ class LocalCodeAndCLITests(unittest.TestCase):
                                  'validate'], capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout)['total_cases'], 4)
         result = subprocess.run(['python3', str(SCRIPTS / 'bounty.py'), 'research-diff',
-                                 'scan', '--repo', str(self.repo)],
+                                 'scan', '--repo', str(self.repo), '--scope', 'src'],
                                 capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout)['mode'], 'source-scan')
 
