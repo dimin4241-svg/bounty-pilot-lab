@@ -20,10 +20,10 @@
 
 ## What changed in 0.41
 
-- **CaseForge (seven sourced retrospective cases)** records published incidents,
+- **CaseForge (ten sourced retrospective cases)** records published incidents,
   disclosure reviews and contest findings separately, without fabricated vulnerable
-  revisions or misleading benchmark scores. One Monad audit snapshot is now
-  pinned and source-checked for blind benchmark preparation; no hunt is scored.
+  revisions or misleading benchmark scores. Four distinct Monad High findings share one verified audit snapshot and one
+  opaque blind benchmark task; no hunt has executed or been scored.
 - **Semantic Identity and Cross-Phase Differential research.** New `research-diff`
   commands passively scan explicitly in-scope local source, compute synthetic
   byte-framing controls, and compare user-supplied native-test observations for

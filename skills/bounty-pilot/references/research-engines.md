@@ -12,20 +12,25 @@ python3 <skill-dir>/scripts/bounty.py caseforge index --family semantic-identity
 python3 <skill-dir>/scripts/bounty.py caseforge blind-queue
 ```
 
-The seed corpus is `references/caseforge-catalog.json`, presently **seven**
+The seed corpus is `references/caseforge-catalog.json`, presently **ten**
 sourced, retrospective cases: Polygon Plasma, Liquid/Elements, Monad, Wormhole,
 Balancer V2, Euler V1 and KelpDAO/LayerZero. Each has an HTTPS publication,
 the mechanism, a safety invariant and a source type. A publication can be an
 official incident post-mortem, a paid-disclosure review or a judged audit;
 the categories must not be conflated.
 
-Six are `documented`; the Monad H-02 case is `revision-pinned` at
+Six are `documented`; four separate Monad findings (H-01 through H-04)
+share the same `revision-pinned` source snapshot at
 `category-labs/monad-bft@6aaccc2ec51eac66a2cf18ec64ab0df2c1448990`.
-The Code4rena report identifies this audit snapshot, and the two affected
-source paths were independently confirmed in that revision. There is **one
-prepared pinned benchmark task but no executed blind rediscovery**.
+The Code4rena report identifies this audit snapshot, and the affected
+source paths for all four findings were independently confirmed in that
+revision. CaseForge groups all four truths into **one opaque benchmark task**;
+there is no executed blind rediscovery or evidence of improved bug discovery.
 Never infer a vulnerable revision from a publish date, fix commit, repository
 HEAD, tag or project name.
+
+All findings sharing one repository and pinned commit become a single opaque
+blind benchmark task; the hunter must not learn how many findings it contains.
 
 To enroll additional historical benchmark cases, a maintainer must independently
 prove the vulnerable commit, affected source paths and revision citation; set
@@ -171,7 +176,7 @@ compromised privileged infrastructure. Review program exclusions first.
 - Native encoders and verifiers are **not** automatically executed. Pair JSON
   compares outputs that an investigator obtains through separately authorized
   local, paired tests.
-- The corpus is curated, not comprehensive; seven retrospective cases prove
+- The corpus is curated, not comprehensive; ten retrospective cases prove
   only that citations and structure were captured. There is no measured
   rediscovery or uplift.
 - Economic sequence search remains part of AVRE. A future extension should

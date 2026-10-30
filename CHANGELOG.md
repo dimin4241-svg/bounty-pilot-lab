@@ -4,10 +4,11 @@
 
 ### CaseForge + Semantic Identity + Cross-Phase Differential
 
-- Added an explicitly sourced retrospective CaseForge catalog (7 public cases).
-  One Monad H-02 commit and its two affected source paths have now been independently
-  verified against the judged report; the blind queue exposes one opaque task,
-  but no benchmark has run or scored. Unverified source revisions still fail closed.
+- Added an explicitly sourced retrospective CaseForge catalog (10 public cases).
+  Four Monad High findings and their affected paths have been independently
+  matched to one pinned Code4rena audit snapshot. The blind queue emits one
+  opaque task for the shared checkout, without leaking the number of truths;
+  no benchmark has run or been scored. Unverified source revisions still fail closed.
 - Added stdlib-only `research_diff.py` with an opt-in, in-scope tracked-source
   lexical scan, bounded real byte-framing counterexample experiments, and
   comparisons of investigator-provided identity/phase observations.
