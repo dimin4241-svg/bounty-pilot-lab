@@ -41,25 +41,29 @@ _R = r"(?![A-Za-z0-9])"
 PATTERNS = (
     ("packed_dynamic",
      re.compile(r"\b(?:abi\.encodePacked|encodePacked|solidityPacked|encode_packed)\s*\("),
-     "Compare tuple identity with packed ABI encoding; multiple dynamic arguments may be ambiguous."),
+     "Compare tuple identity with packed ABI encoding; multiple dynamic arguments may be ambiguous.",
+     False),
     ("cache_context",
      re.compile(r"(?i)" + _L + r"(?:cache_key|cachekey|proof_cache|proofcache|cache_hash"
                 r"|cachehash|cache_id|cacheid)" + _R),
-     "Check that cache identity includes all verification context and unambiguous framing."),
+     "Check that cache identity includes all verification context and unambiguous framing.",
+     False),
     ("cache_key_builder",
      re.compile(r"\b(?:key|prefix)[A-Z][A-Za-z0-9]*"),
      "Identifier shape only: check what this key or prefix is built from, and whether "
-     "unnormalised caller input can reach it."),
+     "unnormalised caller input can reach it.", True),
     ("signature_quorum",
      re.compile(r"(?i)" + _L + r"(?:signer_count|signercount|signatures\.length"
                 r"|signatures\.len|num_signers|numsigners|signer_threshold"
                 r"|signerthreshold|quorum|quorum_size|quorumsize|threshold)" + _R),
-     "Review whether quorum counts unique authenticated signers rather than signatures."),
+     "Review whether quorum counts unique authenticated signers rather than signatures.",
+     False),
     ("phase_boundary",
      re.compile(r"(?i)" + _L + r"(?:mempool|mem_pool|txpool|tx_pool|validate_block"
                 r"|validateblock|sign_transaction|signtransaction|execute_job|executejob"
                 r"|withdrawal_worker|withdrawalworker)" + _R),
-     "Compare the admission policy, authorized payload, and execution decision."),
+     "Compare the admission policy, authorized payload, and execution decision.",
+     False),
 )
 
 
@@ -95,7 +99,7 @@ def compile_cues(extra=None):
         except re.error as exc:
             raise ValueError("cue regex for %s does not compile: %s" % (kind, exc)) from exc
         cues.append((kind, compiled,
-                     "Investigator-supplied cue; the same evidence burden applies."))
+                     "Investigator-supplied cue; the same evidence burden applies.", False))
     return cues
 
 
@@ -567,8 +571,9 @@ def source_scan(repo, scope_prefixes, cues=None):
         raise ValueError("scan requires explicit --scope path prefixes")
     patterns = compile_cues(cues)
     vocabulary = {
-        "cue_kinds": sorted({kind for kind, _, _ in patterns}),
-        "default_cue_kinds": sorted({kind for kind, _, _ in PATTERNS}),
+        "cue_kinds": sorted({cue[0] for cue in patterns}),
+        "default_cue_kinds": sorted({cue[0] for cue in PATTERNS}),
+        "shape_only_cue_kinds": sorted({cue[0] for cue in patterns if cue[3]}),
         "custom_cues": max(0, len(patterns) - len(PATTERNS)),
     }
     for prefix in scope_prefixes:
@@ -608,15 +613,32 @@ def source_scan(repo, scope_prefixes, cues=None):
             skipped["unreadable"] += 1
             continue
         scanned += 1
+        shape_leads = {}
         for number, line in enumerate(lines, 1):
-            for kind, pattern, question in patterns:
-                if pattern.search(line):
+            for kind, pattern, question, shape_only in patterns:
+                if not pattern.search(line):
+                    continue
+                if shape_only:
+                    # One lead per file: a shape cue matches identifiers, so reporting
+                    # every line buries the precise families under one key-builder file.
+                    lead = shape_leads.get(kind)
+                    if lead is not None:
+                        lead["matched_lines"] += 1
+                        continue
+                    lead = {"signal": kind, "path": name, "line": number,
+                            "classification": "LEXICAL_LEAD", "shape_only": True,
+                            "matched_lines": 1, "review_question": question,
+                            "next_experiment": "Trace actual data dependencies and native "
+                                               "caller/validation behavior with a control."}
+                    shape_leads[kind] = lead
+                    found.append(lead)
+                else:
                     found.append({"signal": kind, "path": name, "line": number,
-                                  "classification": "LEXICAL_LEAD",
+                                  "classification": "LEXICAL_LEAD", "shape_only": False,
                                   "review_question": question,
                                   "next_experiment": "Trace actual data dependencies and native "
                                                      "caller/validation behavior with a control."})
-                    if len(found) >= MAX_FINDINGS:
+                if len(found) >= MAX_FINDINGS:
                         return dict(_report("source-scan", found,
                                            ["Scan capped at 200 lexical signals."]),
                                     truncated=True,

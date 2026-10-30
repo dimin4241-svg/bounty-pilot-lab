@@ -31,6 +31,10 @@
   74 files returned `leads: 0` with all four old families at zero hits, while the same
   construct written as `keyCacheGetHeaderResponse` is the site a finding came from.
   Single-word camelCase already matched through `(?i)` and is covered by a regression test.
+- `cache_key_builder` is shape-only and collapses to one lead per file with a
+  `matched_lines` count, listed in `shape_only_cue_kinds`; unbounded it produced 143 leads
+  on that 74-file checkout, 132 of them in one file, which buried the precise families.
+  Word cues still report every line.
 
 ## 0.41.0
 

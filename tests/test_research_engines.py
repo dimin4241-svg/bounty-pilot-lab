@@ -640,13 +640,32 @@ class ScanVocabularyTests(unittest.TestCase):
         self.assertEqual(signals, {'phase_boundary', 'cache_context', 'signature_quorum',
                                    'packed_dynamic'})
 
-    def test_key_builder_shape_is_its_own_kind(self):
-        # The exact construct that read as clean on a Go relay checkout.
+    def test_key_builder_shape_is_its_own_kind_and_one_lead_per_file(self):
+        # The exact construct that read as clean on a Go relay checkout. A shape cue
+        # matches identifiers, not constructs, so an unbounded one reported 143 leads
+        # on a 74-file checkout with 132 in this single file, burying every precise
+        # family. It must collapse to one lead per file and carry the count.
         self.write('redis.go', 'func keyCacheGetHeaderResponse(slot uint64) string {\n'
-                               '\treturn prefixGetHeaderResponse + itoa(slot)\n}\n')
+                               '\treturn prefixGetHeaderResponse + itoa(slot)\n}\n'
+                               'func keyFloorBid() string { return prefixFloorBid }\n')
         signals, report = self.signals()
         self.assertEqual(signals, {'cache_key_builder'})
         self.assertIn('cache_key_builder', report['default_cue_kinds'])
+        self.assertIn('cache_key_builder', report['shape_only_cue_kinds'])
+        leads = [lead for lead in report['leads'] if lead['signal'] == 'cache_key_builder']
+        self.assertEqual(len(leads), 1, 'one lead per file for a shape-only cue')
+        self.assertEqual(leads[0]['line'], 1)
+        # Three lines match: the two builders and the prefix return.
+        self.assertEqual(leads[0]['matched_lines'], 3)
+        self.assertTrue(leads[0]['shape_only'])
+
+    def test_word_cues_still_report_every_line(self):
+        # Only shape cues collapse; a precise cue must keep naming each site.
+        self.write('two.go', 'var a = cacheKey\nvar b = cacheKey\n')
+        _, report = self.signals()
+        leads = [lead for lead in report['leads'] if lead['signal'] == 'cache_context']
+        self.assertEqual([lead['line'] for lead in leads], [1, 2])
+        self.assertTrue(all(lead['shape_only'] is False for lead in leads))
 
     def test_single_word_camel_case_still_matches(self):
         # (?i) already bridged these; the fix must not regress them.

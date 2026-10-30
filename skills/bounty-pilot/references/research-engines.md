@@ -92,6 +92,12 @@ as written. A cue that does not compile, repeats, or exceeds the 16-cue bound is
 rather than skipped. Custom hits are labelled with their kind and carry the same evidence
 burden as every other lead.
 
+`cache_key_builder` is a **shape-only** family: it matches the `keyXxx` / `prefixXxx`
+identifier shape rather than a construct, so it collapses to **one lead per file**
+carrying `matched_lines`, and the report lists it in `shape_only_cue_kinds`. Unbounded it
+reported 143 leads on a 74-file checkout with 132 in a single key-builder file, which
+buried every precise family. Word cues still name every line.
+
 The defaults bound on alphanumerics rather than `\b`, because `_` is a word character:
 `\bcache_key\b` never matched `build_cache_key` or `cache_key_prefix`. They also carry the
 multi-word camelCase spelling beside the snake_case one — `(?i)` bridges
