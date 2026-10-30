@@ -78,7 +78,8 @@ def _open(path):
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(str(p), flags, 0o600)
-    os.fchmod(fd, 0o600) if hasattr(os, "fchmod") else None
+    if hasattr(os, "fchmod"):
+        os.fchmod(fd, 0o600)
     return os.fdopen(fd, "r+", encoding="utf-8")
 
 
@@ -95,7 +96,8 @@ def _read_locked(fh):
         if not line.strip():
             raise ValueError("ledger contains an empty record")
         row = json.loads(line)
-        if (not isinstance(row, dict) or row.get("schema_version") != 1
+        if (not isinstance(row, dict) or type(row.get("schema_version")) is not int
+                or row["schema_version"] != 1
                 or not HEX.fullmatch(str(row.get("target_sha256", "")))
                 or not HEX.fullmatch(str(row.get("mechanism_sha256", "")))):
             raise ValueError("invalid ledger record")
