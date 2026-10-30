@@ -105,6 +105,8 @@ def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False,
                           "cases": case_results})
         if _git(checkout, "rev-parse", "HEAD") != plan["source_revision"]:
             raise ValueError("checkout revision changed during experiment")
+        if _tracked_diff_fingerprint(checkout) != before_diff:
+            raise ValueError("tracked source changed during native experiment")
     after = _git(checkout, "status", "--porcelain", "--untracked-files=no")
     unchanged = before == after and before_diff == _tracked_diff_fingerprint(checkout)
     performed = allow_exec and len(snapshots) == 2
