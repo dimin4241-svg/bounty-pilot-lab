@@ -7,6 +7,7 @@ Execution is opt-in, requires an explicitly confirmed disposable workspace.
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -44,7 +45,8 @@ def plan_native(spec, stack, root):
     return plan
 
 
-def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False):
+def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False,
+          evidence_dir=None):
     checkout = Path(repository).resolve()
     plan = plan_native(spec, stack, checkout)
     if allow_exec and not isolated_confirmed:
@@ -52,10 +54,27 @@ def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False):
                          "the Pilot runner is not a network sandbox")
     if allow_exec and (checkout == Path.home().resolve() or checkout == Path("/")):
         raise ValueError("refusing execution from home directory or filesystem root")
+    evidence = None
+    if allow_exec:
+        if evidence_dir is None:
+            raise ValueError("execution requires a NEW private --evidence-dir for native logs")
+        evidence = Path(evidence_dir).expanduser().resolve()
+        if evidence == checkout or checkout in evidence.parents:
+            raise ValueError("native evidence must be outside the target checkout")
+        evidence.mkdir(mode=0o700, parents=False, exist_ok=False)
     before = _git(checkout, "status", "--porcelain", "--untracked-files=no")
     snapshots = []
     for round_number in range(1, 3 if allow_exec else 2):
         report = scenario_runner.execute(plan, checkout, allow_exec=allow_exec)
+        if evidence is not None:
+            log_path = evidence / ("round-%d.json" % round_number)
+            scenario_runner.write_case_logs(report, log_path)
+            fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(report, handle, indent=2, ensure_ascii=False)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
         case_results = []
         for case in report["cases"]:
             case_results.append({
@@ -69,6 +88,8 @@ def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False):
                 ).hexdigest() if case.get("executed") else None,
             })
         snapshots.append({"round": round_number, "result": report["result"],
+                          "evidence_manifest": ("round-%d.json" % round_number)
+                                               if evidence is not None else None,
                           "cases": case_results})
         if _git(checkout, "rev-parse", "HEAD") != plan["source_revision"]:
             raise ValueError("checkout revision changed during experiment")
@@ -100,19 +121,21 @@ def main(argv=None):
     parser.add_argument("--repo", required=True)
     parser.add_argument("--allow-exec", action="store_true")
     parser.add_argument("--isolated-workspace-confirmed", action="store_true")
-    parser.add_argument("--out", help="private result JSON; must not already exist")
+    parser.add_argument("--evidence-dir", help="new private directory outside the checkout (mandatory for execution)")
     args = parser.parse_args(argv)
     try:
         p = Path(args.spec)
         if p.is_symlink() or not p.is_file() or p.stat().st_size > 100_000:
             raise ValueError("spec must be regular and under 100kB")
         result = cycle(json.loads(p.read_text(encoding="utf-8")), args.stack,
-                       args.repo, args.allow_exec, args.isolated_workspace_confirmed)
-        if args.out:
-            dest = Path(args.out)
-            if dest.exists() or dest.is_symlink():
-                raise ValueError("refusing to overwrite experiment output")
-            dest.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+                       args.repo, args.allow_exec, args.isolated_workspace_confirmed,
+                       args.evidence_dir)
+        if args.evidence_dir and args.allow_exec:
+            report_path = Path(args.evidence_dir).expanduser().resolve() / "summary.json"
+            fd = os.open(str(report_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(result, handle, indent=2)
+                handle.write("\n")
         print(json.dumps(result, indent=2))
         return 0 if not args.allow_exec or result["status"].startswith("NATIVE_PAIR") else 1
     except (ValueError, OSError, subprocess.SubprocessError, UnicodeError) as exc:
