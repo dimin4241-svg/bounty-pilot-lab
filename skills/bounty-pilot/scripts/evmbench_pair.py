@@ -206,9 +206,11 @@ def prepare(repo, official, output, audits):
     return manifest
 
 
-def run(manifest_path, model, timeout, confirmed):
+def run(manifest_path, model, timeout, confirmed, external_cap=False):
     if not confirmed:
         raise ValueError("explicit --authorize-provider-spend is required")
+    if not external_cap:
+        raise ValueError("an independent hard provider budget must be configured; pass --external-spend-cap-confirmed only after doing so")
     if not os.environ.get("OPENAI_API_KEY"):
         raise ValueError("OPENAI_API_KEY not set; do not embed API credentials in args")
     if model not in ("codex-gpt-5.3-codex", "codex-default"):
@@ -298,13 +300,14 @@ def main(argv=None):
     b.add_argument("--model", default="codex-gpt-5.3-codex")
     b.add_argument("--timeout", type=int, default=900)
     b.add_argument("--authorize-provider-spend", action="store_true")
+    b.add_argument("--external-spend-cap-confirmed", action="store_true")
     args = p.parse_args(argv)
     try:
         if args.command == "prepare":
             result = prepare(args.repo, args.official_root, args.out, args.audit)
         else:
             result = run(args.manifest, args.model, args.timeout,
-                         args.authorize_provider_spend)
+                         args.authorize_provider_spend, args.external_spend_cap_confirmed)
         print(json.dumps(result, indent=2))
         return 0
     except (OSError, ValueError, subprocess.SubprocessError, RuntimeError, json.JSONDecodeError) as exc:
