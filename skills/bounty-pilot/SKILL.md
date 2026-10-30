@@ -265,7 +265,10 @@ Read `references/passes.md`; it settles lens selection, dispatch and stop rules.
    `recommended` (non-EVM or mixed, from `stack_route.py`) — then add what the shape calls for:
    `config`, `logic`, `cross-stack`, `anchor-account`, `web` when a website or app is in scope,
    `node` for a client, runtime, precompile or prover, `artifacts` whenever the project ships a
-   built bundle, package or image, and `wallet-app` for anything that signs on a user's behalf.
+   built bundle, package or image, `wallet-app` for a user-facing wallet, and `signing` for
+   an in-scope off-chain signer, HSM/MPC adapter, withdrawal API or worker. This lens
+   is also in `cross-stack` and conditionally in `recommended` when local source
+   suggests signing infrastructure.
    The last three are where this skill's own confirmed Highs and six of the seven largest public
    bounties came from, and none of them is reached by a contract lens (`lenses.md`).
 3. **Classic classes.** The `attack` group includes `classic`: Part A (post-2023 EVM semantics —

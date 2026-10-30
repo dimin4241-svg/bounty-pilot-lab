@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.40.0
+
+### Signing-control-plane authorization research
+
+- Added `signing-control-plane` and `--lens signing` for in-scope signing/withdrawal
+  APIs, queues, workers, HSM/MPC signers, and EIP-7702 policy boundaries.
+- Included the lens in `cross-stack`; a bounded passive source router prioritizes
+  it in `recommended` only when off-chain signing clues exist.
+  Solidity-only projects are not automatically classified as signing backends.
+- Added synthetic routing/bundle tests and linked the 29–30 October Binance incident
+  as a provisional research precedent. No actual key use, live testing or
+  measured vulnerability-discovery improvement is claimed.
+
 ## 0.39.0
 
 ### `--renderer`, because a zero is only as good as what the check could see
