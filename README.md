@@ -18,6 +18,15 @@
 
 ---
 
+## What changed in 0.40
+
+- **Signing-control-plane lens.** `bundle --lens signing` traces approved intent
+  across in-scope signing/withdrawal APIs, queues, workers and HSM/MPC/EOA policies,
+  including EIP-7702 delegations. Included in `cross-stack` and conditionally
+  prioritized by `recommended` on off-chain signing source signals.
+  Its output is a research lead until the normal proof gates pass.
+  [Instructions](skills/bounty-pilot/references/hunt-agents/signing-control-plane-agent.md).
+
 ## What changed in 0.33
 
 - **State-transition and trust-handoff research.** `ecosystem-intel` now flags source-anchored

@@ -58,6 +58,7 @@ or justified in `scope.md`. Pick by shape, and say in `coverage.md` which you ch
 | Move / Cairo / CosmWasm | `business-logic`, `temporal-logic`, `privileged-path` | `composition`, stack-native adapter |
 | Cross-language relayer + contracts | `semantic-mismatch`, `recovery-failure`, `integration-auth` | `composition`, `coverage-gap` |
 | Go / Python / TypeScript backend | `privileged-path`, `recovery-failure`, `business-logic` | `semantic-mismatch`, `composition` |
+| In-scope signing API / withdrawal worker / HSM-MPC adapter | `signing-control-plane` (`--lens signing`) | `privileged-path`, `semantic-mismatch`; local mock tests only |
 | A website or dApp listed in scope | `web-frontend` (`--lens web`) | the program's web exclusions first |
 | Any EVM target | `classic` (Part A always; Part B unless `solidity-auditor` ran) | — |
 
@@ -97,6 +98,7 @@ found in bundled source are redacted and listed in the result's `redacted_secret
 Then add only what the target's shape calls for: `config` when there are deployed addresses,
 `logic` when several actions change the same asset, privilege, reward or epoch, `cross-stack` when a
 keeper, relayer, signer, API or watcher shares a trust boundary with on-chain code,
+`signing` when an in-scope off-chain service requests signatures or withdrawals,
 `anchor-account` for Solana, and `web` when a website or app is in scope. Lenses named in the shape table but absent from your groups can be
 added individually with `--lens <name>`.
 
@@ -150,8 +152,11 @@ lenses when target facts warrant it, and document omitted necessary analyses.
 
 Use `--lens logic` for `business-logic`, `temporal-logic`, and `composition`.
 These independently inspect source, even when earlier lenses produced **zero** candidates.
-Use `--lens cross-stack` for `semantic-mismatch` and `recovery-failure` whenever
-multiple runtimes or asynchronous components participate. Apply adapter guidance
+Use `--lens cross-stack` for `semantic-mismatch`, `recovery-failure` and
+`signing-control-plane` whenever multiple runtimes or asynchronous components participate.
+The last applies only when a signer/withdrawal service is evidenced; otherwise mark N/A.
+For standalone signer backends use `--lens signing`. The conservative router
+selects the lens on tracked off-chain signing clues, not merely on Solidity names. Apply adapter guidance
 (`adapters/`) for the **actual** runtime. `seam` remains a separate recombination
 pass over earlier records; it does not replace independent composition search.
 
