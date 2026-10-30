@@ -77,12 +77,30 @@ def validate(data):
             raise ValueError(tag + ": invalid status")
         sha = case.get("vulnerable_commit")
         repo = case.get("repository_url")
+        scope_paths = case.get("scope_paths")
+        if scope_paths is not None:
+            if (not isinstance(scope_paths, list) or not scope_paths
+                    or len(scope_paths) > 30):
+                raise ValueError(tag + ": scope_paths must be 1..30 relative paths")
+            for scope in scope_paths:
+                if (not isinstance(scope, str) or not scope
+                        or scope.startswith("/") or chr(0) in scope
+                        or ".." in Path(scope).parts or "\\" in scope):
+                    raise ValueError(tag + ": invalid scope path")
+        revision_source_url = case.get("revision_source_url")
+        if revision_source_url is not None:
+            _url(revision_source_url, tag + ".revision_source_url")
+        snapshot_note = case.get("snapshot_note")
+        if snapshot_note is not None:
+            _string(snapshot_note, tag + ".snapshot_note", 500)
         if state == "revision-pinned":
             _url(repo, tag + ".repository_url")
             if not isinstance(sha, str) or not SHA.fullmatch(sha):
                 raise ValueError(tag + ": revision-pinned case requires 40-hex commit")
-        elif sha is not None:
-            raise ValueError(tag + ": documented case cannot assert a pinned commit")
+            if not revision_source_url or not scope_paths:
+                raise ValueError(tag + ": pinned case needs source revision citation and paths")
+        elif sha is not None or repo is not None or revision_source_url is not None:
+            raise ValueError(tag + ": documented case cannot assert pinned revision metadata")
         summary[state] += 1
     return {"schema_version": 1, "total_cases": len(cases), "by_status": summary,
             "measurement_ready": summary["revision-pinned"],
