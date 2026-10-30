@@ -155,6 +155,17 @@ class NativeCycleTests(CheckoutFixture):
                              allow_exec=True, isolated_confirmed=True,
                              evidence_dir=Path(self.tmp.name) / "modified")
 
+    def test_dirty_checkout_is_rejected_before_any_native_execution(self):
+        (self.root / "src/Vault.sol").write_text("contract V { function changed() external {} }\\n")
+        evidence = Path(self.tmp.name) / "dirty-should-not-create"
+        with mock.patch.object(native.scenario_runner, "execute") as execute:
+            with self.assertRaisesRegex(ValueError, "pre-existing tracked changes"):
+                native.cycle(self.pair_spec(), "pytest", self.root,
+                             allow_exec=True, isolated_confirmed=True,
+                             evidence_dir=evidence)
+            execute.assert_not_called()
+        self.assertFalse(evidence.exists())
+
     def test_actual_native_unittest_pair_runs_twice_in_disposable_fixture(self):
         # Real local subprocesses rather than mocked scenario_runner output.
         # Each case asserts a simple generic property; this is NOT a target PoC.
@@ -185,6 +196,19 @@ class NativeCycleTests(CheckoutFixture):
         self.assertTrue(all(c["tests_ran"] for r in report["rounds"]
                             for c in r["cases"]))
         self.assertEqual(report["confirmed_vulnerabilities"], 0)
+
+    def test_missing_control_or_zero_executed_cases_cannot_claim_conformance(self):
+        only_candidate = [{"pair_id": "withdraw-pair", "role": "candidate",
+                           "executed": True, "tests_ran": True, "status": "ran",
+                           "matched_expected_exit": True, "stdout": "1 passed",
+                           "stderr": ""}]
+        with mock.patch.object(native.scenario_runner, "execute",
+                               return_value={"result": "experiments-conformed",
+                                             "cases": only_candidate}):
+            report = native.cycle(self.pair_spec(), "pytest", self.root,
+                                  allow_exec=True, isolated_confirmed=True,
+                                  evidence_dir=Path(self.tmp.name) / "missing-control")
+        self.assertEqual(report["status"], "INCOMPLETE_OR_NOT_EXECUTED")
 
     def test_empty_mocked_native_result_cannot_claim_conformance(self):
         with mock.patch.object(native.scenario_runner, "execute",
