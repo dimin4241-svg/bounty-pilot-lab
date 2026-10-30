@@ -102,9 +102,13 @@ def validate(data):
         elif sha is not None or repo is not None or revision_source_url is not None:
             raise ValueError(tag + ": documented case cannot assert pinned revision metadata")
         summary[state] += 1
+    snapshots = {(c["repository_url"], c["vulnerable_commit"]) for c in cases
+                 if c["status"] == "revision-pinned"}
     return {"schema_version": 1, "total_cases": len(cases), "by_status": summary,
-            "measurement_ready": summary["revision-pinned"],
-            "notice": "Documented incidents are retrospective leads, not measured rediscoveries."}
+            "pinned_finding_truths": summary["revision-pinned"],
+            "measurement_ready": len(snapshots),
+            "notice": "A pinned snapshot is only ready for benchmark preparation. "
+                      "No historical case is counted as rediscovered until a sealed blind run."}
 
 
 def index(data, family=None):
@@ -125,14 +129,17 @@ def index(data, family=None):
 def blind_queue(data):
     validate(data)
     cases = [row for row in data["cases"] if row["status"] == "revision-pinned"]
-    # NEVER leak ids, titles, root-cause descriptions or source URLs to hunters.
-    # All pinned cases should be imported into an isolated backtest. This queue is
-    # a preparation aid only and has no scoring/coverage permissions.
+    # Group by source snapshot so multiple findings in one audit cannot leak
+    # the answer count or cause repeated non-blind hunts against the same revision.
+    snapshots = sorted({(row["repository_url"], row["vulnerable_commit"])
+                        for row in cases})
+    # NEVER leak ids, titles, affected paths, root causes or source report URLs.
+    # This opaque preparation queue cannot measure rediscovery.
     return {"schema_version": 1, "tasks": [
-        {"case": "CASE-%04d" % (index + 1), "repository_url": row["repository_url"],
-         "pinned_commit": row["vulnerable_commit"],
+        {"case": "CASE-%04d" % (index + 1), "repository_url": repository,
+         "pinned_commit": commit,
          "protocol": "Use separate checkout; run existing backtest init, hunt, seal, then score."}
-        for index, row in enumerate(cases)],
+        for index, (repository, commit) in enumerate(snapshots)],
         "unavailable_without_pin": len(data["cases"]) - len(cases),
         "leak_warning": "Never expose the source catalog, its filenames, or the truth to "
                         "the hunting agent. A task list alone does not prove blinded isolation.",
