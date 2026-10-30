@@ -6,6 +6,7 @@ use investigator-supplied expected equivalence; they are never exploit proofs.
 Python 3.9+ and stdlib only.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -93,7 +94,8 @@ def identity(data):
             output.append({
                 "id": label, "index": pos,
                 "signal": "DISTINCT_CONTEXT_SHARED_KEY" if collision else "SAME_ACTION_DISTINCT_KEY",
-                "identity_keys": [left, right],
+                "identity_key_sha256": [hashlib.sha256(x.encode("utf-8")).hexdigest()
+                                        for x in (left, right)],
                 "expected_semantic_relation": relation,
                 "equivalence_basis": basis,
                 "basis_status": "PROVIDED" if basis.strip() else "MISSING",
@@ -124,7 +126,7 @@ def phases(data):
         basis = case.get("equivalence_basis", "")
         if not isinstance(basis, str) or len(basis) > 500:
             raise ValueError("equivalence_basis must be short text or empty")
-        comparable = case.get("same_policy_expected") is True and bool(basis.strip())
+        declared_comparable = case.get("same_policy_expected") is True and bool(basis.strip())
         stages = case.get("stages")
         if not isinstance(stages, list) or not 2 <= len(stages) <= 20:
             raise ValueError("stages must contain 2..20 objects")
@@ -158,9 +160,13 @@ def phases(data):
         if len(policies) > 1:
             types.append("POLICY_VERSION_DRIFT")
         if types:
+            comparable = declared_comparable and len(policies) <= 1
             signals.append({
                 "id": ident, "index": idx, "signals": types,
                 "comparable": comparable, "stages": normalized,
+                "comparison_blocker": ("POLICY_VERSION_MISMATCH" if len(policies) > 1
+                                       else "NO_EQUIVALENCE_BASIS" if not declared_comparable
+                                       else None),
                 "equivalence_basis": basis, "classification": "NEEDS_EVIDENCE",
                 "next_experiment": "Pin the same request, policy epoch and authorized input; "
                                    "run each native stage locally with a paired normal control.",
@@ -172,8 +178,14 @@ def phases(data):
                     "Even comparable divergences are hypotheses until native reproduction."])
 
 
-def source_scan(repo):
+def source_scan(repo, scope_prefixes):
     """Tracked local source only, with symlink/size/extension bounds and safe git config."""
+    if not isinstance(scope_prefixes, (list, tuple)) or not scope_prefixes:
+        raise ValueError("scan requires explicit --scope path prefixes")
+    for prefix in scope_prefixes:
+        if (not isinstance(prefix, str) or not prefix or prefix.startswith("/")
+                or ".." in Path(prefix).parts or "\\x00" in prefix):
+            raise ValueError("scope must be a relative checkout path prefix")
     root = Path(repo).resolve()
     if not (root / ".git").exists():
         raise ValueError("scan requires a local git checkout")
@@ -185,6 +197,9 @@ def source_scan(repo):
     skipped = {"non_source": 0, "oversized": 0, "unreadable": 0}
     scanned = 0
     for name in names[:MAX_SOURCE_FILES]:
+        if not any(name == prefix.rstrip("/") or name.startswith(prefix.rstrip("/") + "/")
+                   for prefix in scope_prefixes):
+            continue
         path = Path(name)
         if path.suffix.lower() not in SOURCE_EXTENSIONS or EXCLUDE_PARTS.intersection(path.parts):
             skipped["non_source"] += 1
@@ -228,6 +243,8 @@ def main(argv=None):
         sub.add_argument("--input", required=True)
     scan = subs.add_parser("scan")
     scan.add_argument("--repo", required=True)
+    scan.add_argument("--scope", action="append", required=True,
+                      help="repeatable in-scope relative path prefix; never scan all by default")
     args = cli.parse_args(argv)
     try:
         if args.command == "identity":
@@ -235,7 +252,7 @@ def main(argv=None):
         elif args.command == "phases":
             result = phases(_json(args.input))
         else:
-            result = source_scan(args.repo)
+            result = source_scan(args.repo, args.scope)
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
     except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
