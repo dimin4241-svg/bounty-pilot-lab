@@ -27,6 +27,17 @@ def _git(root, *args):
     return cp.stdout.decode("utf-8", "replace").strip()
 
 
+def _tracked_diff_fingerprint(root):
+    """Fingerprint staged+unstaged tracked changes, not just changed filenames."""
+    cp = subprocess.run(
+        ["git", *GIT_OPTS, "-C", str(root), "diff", "--binary", "--no-ext-diff",
+         "--no-textconv", "HEAD", "--"], stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, timeout=20, check=True)
+    if len(cp.stdout) > 8_000_000:
+        raise ValueError("tracked source diff exceeds 8 MB cap")
+    return hashlib.sha256(cp.stdout).hexdigest()
+
+
 def plan_native(spec, stack, root):
     if not isinstance(spec, dict):
         raise ValueError("native spec must be an object")
@@ -63,6 +74,7 @@ def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False,
             raise ValueError("native evidence must be outside the target checkout")
         evidence.mkdir(mode=0o700, parents=False, exist_ok=False)
     before = _git(checkout, "status", "--porcelain", "--untracked-files=no")
+    before_diff = _tracked_diff_fingerprint(checkout)
     snapshots = []
     for round_number in range(1, 3 if allow_exec else 2):
         report = scenario_runner.execute(plan, checkout, allow_exec=allow_exec)
@@ -94,7 +106,7 @@ def cycle(spec, stack, repository, allow_exec=False, isolated_confirmed=False,
         if _git(checkout, "rev-parse", "HEAD") != plan["source_revision"]:
             raise ValueError("checkout revision changed during experiment")
     after = _git(checkout, "status", "--porcelain", "--untracked-files=no")
-    unchanged = before == after
+    unchanged = before == after and before_diff == _tracked_diff_fingerprint(checkout)
     performed = allow_exec and len(snapshots) == 2
     conforming = (performed and unchanged and
                   all(row["result"] == "experiments-conformed" for row in snapshots))
