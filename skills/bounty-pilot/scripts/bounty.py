@@ -8080,7 +8080,7 @@ LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence', 'privileg
           'live-reality', 'anchor-account', 'seam', 'business-logic',
           'temporal-logic', 'recovery-failure', 'semantic-mismatch', 'composition',
           'impact-first', 'classic', 'web-frontend', 'node-client', 'secrets-artifacts',
-          'wallet')
+          'wallet', 'signing-control-plane')
 TRIAGE = 'triage'
 # Aiming lenses produce a reading order, not findings: spec-divergence reads what the project
 # promised in its own documentation and says where to go looking for the promise being broken.
@@ -8093,7 +8093,8 @@ ATTACK_LENSES = ('privileged-path', 'accounting', 'integration-auth', 'external-
                  'economics', 'liveness', 'classic')
 CONFIG_LENSES = ('live-reality', 'upgrade')
 LOGIC_LENSES = ('business-logic', 'temporal-logic', 'composition')
-CROSS_STACK_LENSES = ('semantic-mismatch', 'recovery-failure')
+CROSS_STACK_LENSES = ('semantic-mismatch', 'recovery-failure', 'signing-control-plane')
+SIGNING_LENSES = ('signing-control-plane',)
 HIGH_IMPACT_LENSES = ('impact-first', 'privileged-path', 'business-logic',
                       'economics', 'composition', 'accounting', 'external-call',
                       'integration-auth')
@@ -8666,6 +8667,8 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
             chosen.extend(LOGIC_LENSES)
         elif lens == 'cross-stack':
             chosen.extend(CROSS_STACK_LENSES)
+        elif lens == 'signing':
+            chosen.extend(SIGNING_LENSES)
         elif lens == 'recommended':
             chosen.extend(routed['prioritization']['selected'])
         elif lens == 'high-impact':
@@ -8683,8 +8686,8 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
         else:
             raise ValueError(f'unknown lens {lens!r}; choose from ' + ', '.join(LENSES)
                              + f', {TRIAGE}, or the groups aim / attack / config / logic / '
-                               'cross-stack / high-impact / web / node / artifacts / '
-                               'wallet-app / recommended / all')
+                               'cross-stack / signing / high-impact / web / node / artifacts / '
+                                'wallet-app / recommended / all')
     chosen = list(dict.fromkeys(chosen))
     for lens in chosen:
         source_file = (references / f'{TRIAGE}.md' if lens == TRIAGE
@@ -11627,7 +11630,7 @@ def build_parser():
     bnd.add_argument('--repo', required=True)
     bnd.add_argument('--run', required=True)
     bnd.add_argument('--lens', action='append', required=True,
-                     help='lens name, or a group: aim, attack, config, logic, cross-stack, high-impact, web, recommended, all. Repeatable.')
+                     help='lens name, or a group: aim, attack, config, logic, cross-stack, signing, high-impact, web, recommended, all. Repeatable.')
     bnd.add_argument('--scope', action='append', default=None, help='path prefix to keep')
     bnd.add_argument('--include', action='append', default=None,
                      help='extra context file to append, e.g. a delta ranking. Repeatable.')
