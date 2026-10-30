@@ -53,7 +53,7 @@ def _json(path):
 
 def _report(mode, items, notes=()):
     return {"schema_version": 1, "mode": mode, "classification": "RESEARCH_LEADS",
-            "findings": items[:MAX_FINDINGS], "candidate_count": len(items),
+            "leads": items[:MAX_FINDINGS], "candidate_count": len(items),
             "truncated": len(items) > MAX_FINDINGS, "notes": list(notes),
             "confirmed_vulnerabilities": 0,
             "notice": "Source and supplied observations are clues, not native PoCs, "
