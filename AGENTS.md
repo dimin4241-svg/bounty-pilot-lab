@@ -114,6 +114,16 @@ Preserve these invariants when editing:
   session and the skill is missing something, say so to the user and let the maintaining session
   land it in git — a lesson that is not committed is a lesson that will be lost.
 
+- **CaseForge is a retrospective research catalog, never a benchmark truth leak.**
+  No historical case is eligible for `blind-queue` without a verified, pinned
+  vulnerable commit. Never give researchers the unblinded catalog during a sealed
+  backtest, and never count catalog entries as discoveries.
+- **Differential observations have an external equivalence premise.** Identity
+  keys and phase decisions are compared only as provided; a disagreement is a
+  `NEEDS_EVIDENCE` hypothesis. Scan only in-scope tracked local source. Different
+  policy versions block phase comparability. Reuse the existing native
+  candidate/control evidence gate before any impact claim.
+
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.
 Bump `VERSION` and `skills/bounty-pilot/VERSION` together; `.claude-plugin/plugin.json` carries the

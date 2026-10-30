@@ -18,6 +18,18 @@
 
 ---
 
+## What changed in 0.41
+
+- **CaseForge (seven sourced retrospective cases)** records published incidents,
+  disclosure reviews and contest findings separately, without fabricated vulnerable
+  revisions or misleading benchmark scores. `caseforge blind-queue` fails closed
+  until a real vulnerable commit is pinned.
+- **Semantic Identity and Cross-Phase Differential research.** New `research-diff`
+  commands passively scan explicitly in-scope local source and compare user-supplied
+  native-test observations for replay/cache identity splits and policy/payload
+  disagreements. Every output is a lead, not exploit verification.
+  [Usage and limits](skills/bounty-pilot/references/research-engines.md).
+
 ## What changed in 0.40
 
 - **Signing-control-plane lens.** `bundle --lens signing` traces approved intent

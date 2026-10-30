@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.41.0
+
+### CaseForge + Semantic Identity + Cross-Phase Differential
+
+- Added an explicitly sourced retrospective CaseForge catalog (7 public cases).
+  The schema refuses invented pinned revisions; blind queue hides all answer data
+  and yields zero tasks until historical vulnerable commits are independently proven.
+- Added stdlib-only `research_diff.py` with an opt-in, in-scope tracked-source
+  lexical scan and comparison of investigator-provided identity/phase observations.
+  It detects semantic identity splits, shared cache IDs, decision divergence,
+  payload drift and policy epoch mismatch as unverified leads only.
+- Exposed both via `bounty.py caseforge` and `bounty.py research-diff`.
+  Native verification is not simulated or claimed; the existing AVRE,
+  Evidence-First and backtest gates remain the source of truth.
+- Added synthetic tests and negative controls; no measured rediscovery uplift
+  or claim of running the full suite.
+
 ## 0.40.0
 
 ### Signing-control-plane authorization research
