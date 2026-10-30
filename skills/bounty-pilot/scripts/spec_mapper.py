@@ -25,7 +25,7 @@ def _path(value):
     if not isinstance(value, str) or not value or len(value) > 240:
         raise ValueError("path must be a short relative checkout path")
     p = Path(value)
-    if p.is_absolute() or ".." in p.parts or "\\" in value or "\x00" in value or p.parts[0] == ".":
+    if p.is_absolute() or ".." in p.parts or "\\" in value or "\x00" in value or not p.parts or p.as_posix() == ".":
         raise ValueError("path traversal or unsupported relative path")
     if any(x in EXCLUDED or x.startswith(".env") or "secret" in x.lower()
            for x in p.parts):
