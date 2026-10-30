@@ -72,6 +72,25 @@ class IdentityDifferentialTests(unittest.TestCase):
                          ['SAME_ACTION_DISTINCT_KEY', 'DISTINCT_CONTEXT_SHARED_KEY'])
         self.assertEqual(result['confirmed_vulnerabilities'], 0)
 
+    def test_synthetic_unframed_boundary_collision_and_framed_control(self):
+        # A controlled teaching fixture, not a live Elements or Polygon exploit.
+        left_parts, right_parts = (b'a', b'bc'), (b'ab', b'c')
+        raw = lambda parts: b''.join(parts)
+        framed = lambda parts: b''.join(len(p).to_bytes(2, 'big') + p for p in parts)
+        self.assertEqual(raw(left_parts), raw(right_parts))
+        self.assertNotEqual(framed(left_parts), framed(right_parts))
+        compare = research.identity({'schema_version': 1, 'pairs': [
+            {'id': 'unsafe', 'expected_semantic_relation': 'different',
+             'equivalence_basis': 'distinct two-field tuples',
+             'left': {'identity_key': raw(left_parts).hex()},
+             'right': {'identity_key': raw(right_parts).hex()}},
+            {'id': 'framed-control', 'expected_semantic_relation': 'different',
+             'equivalence_basis': 'distinct two-field tuples',
+             'left': {'identity_key': framed(left_parts).hex()},
+             'right': {'identity_key': framed(right_parts).hex()}}
+        ]})
+        self.assertEqual([r['id'] for r in compare['findings']], ['unsafe'])
+
     def test_missing_basis_stays_unverified(self):
         result = research.identity({'schema_version': 1, 'pairs': [
             {'id': 'unproven', 'expected_semantic_relation': 'same',
@@ -113,6 +132,23 @@ class PhaseDifferentialTests(unittest.TestCase):
         self.assertFalse(report['findings'][0]['comparable'])
         self.assertEqual(report['findings'][0]['comparison_blocker'], 'POLICY_VERSION_MISMATCH')
         self.assertEqual(report['confirmed_vulnerabilities'], 0)
+
+    def test_synthetic_two_stage_rule_disagreement_with_normal_control(self):
+        # A crafted local policy mismatch; a disagreement alone proves no exploit.
+        admission = lambda nonce: nonce >= 0
+        execution = lambda nonce: nonce > 0
+        def stage_case(ident, nonce):
+            return {'id': ident, 'same_policy_expected': True,
+                    'equivalence_basis': 'two implementations of one stated nonce rule',
+                    'stages': [
+                        {'name': 'admission', 'decision': 'allow' if admission(nonce) else 'deny',
+                         'policy_id': 'epoch-1'},
+                        {'name': 'execution', 'decision': 'allow' if execution(nonce) else 'deny',
+                         'policy_id': 'epoch-1'}]}
+        report = research.phases({'schema_version': 1, 'cases': [
+            stage_case('edge-case', 0), stage_case('normal-control', 1)]})
+        self.assertEqual([r['id'] for r in report['findings']], ['edge-case'])
+        self.assertTrue(report['findings'][0]['comparable'])
 
     def test_no_basis_makes_signal_not_comparable(self):
         report = research.phases({'schema_version': 1, 'cases': [
