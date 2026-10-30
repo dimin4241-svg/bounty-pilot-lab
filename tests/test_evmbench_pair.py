@@ -112,9 +112,11 @@ class PreparedPairTests(unittest.TestCase):
         manifest = self.result / "manifest.json"
         with self.assertRaisesRegex(ValueError, "authorize-provider-spend"):
             bp.run(manifest, "codex-default", 300, False)
+        with self.assertRaisesRegex(ValueError, "hard provider budget"):
+            bp.run(manifest, "codex-default", 300, True)
         with mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             with self.assertRaisesRegex(ValueError, "OPENAI_API_KEY"):
-                bp.run(manifest, "codex-default", 300, True)
+                bp.run(manifest, "codex-default", 300, True, True)
         self.assertFalse((self.result / "STARTED").exists())
 
     def test_explicit_audit_name_is_rejected_from_agent_materials(self):
