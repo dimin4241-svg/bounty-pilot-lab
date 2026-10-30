@@ -145,6 +145,16 @@ class NativeCycleTests(CheckoutFixture):
                          allow_exec=True, isolated_confirmed=True,
                          evidence_dir=self.root / "results")
 
+    def test_native_runner_detects_tracked_source_mutation(self):
+        def mutate(plan, root, allow_exec=False):
+            (self.root / "src/Vault.sol").write_text("contract Changed {}\n")
+            return {"result": "experiments-conformed", "cases": []}
+        with mock.patch.object(native.scenario_runner, "execute", side_effect=mutate):
+            with self.assertRaisesRegex(ValueError, "tracked source changed"):
+                native.cycle(self.pair_spec(), "pytest", self.root,
+                             allow_exec=True, isolated_confirmed=True,
+                             evidence_dir=Path(self.tmp.name) / "modified")
+
     def test_two_independent_synthetic_runs_are_only_harness_evidence(self):
         pairs = [{"pair_id": "withdraw-pair", "role": role, "executed": True,
                   "tests_ran": True, "status": "ran", "matched_expected_exit": True,
