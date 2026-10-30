@@ -160,12 +160,12 @@ class NativeCycleTests(CheckoutFixture):
         # Each case asserts a simple generic property; this is NOT a target PoC.
         fixture = self.root / "test_local_native.py"
         fixture.write_text(
-            "import unittest\\n"
-            "class LocalNative(unittest.TestCase):\\n"
-            "    def test_candidate(self):\\n"
-            "        self.assertEqual(2 * 3, 6)\\n"
-            "    def test_control(self):\\n"
-            "        self.assertNotEqual(2 * 3, 7)\\n", encoding="utf-8")
+            "import unittest\n"
+            "class LocalNative(unittest.TestCase):\n"
+            "    def test_candidate(self):\n"
+            "        self.assertEqual(2 * 3, 6)\n"
+            "    def test_control(self):\n"
+            "        self.assertNotEqual(2 * 3, 7)\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(self.root), "add",
                         "test_local_native.py"], check=True)
         subprocess.run(["git", "-C", str(self.root), "commit", "-qm",
