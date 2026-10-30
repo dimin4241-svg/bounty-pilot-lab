@@ -19,15 +19,19 @@ the mechanism, a safety invariant and a source type. A publication can be an
 official incident post-mortem, a paid-disclosure review or a judged audit;
 the categories must not be conflated.
 
-All seven are `documented`, not `revision-pinned`. No pre-fix checkout SHA
-has been established and **there are zero measurement-ready blind cases**.
+Six are `documented`; the Monad H-02 case is `revision-pinned` at
+`category-labs/monad-bft@6aaccc2ec51eac66a2cf18ec64ab0df2c1448990`.
+The Code4rena report identifies this audit snapshot, and the two affected
+source paths were independently confirmed in that revision. There is **one
+prepared pinned benchmark task but no executed blind rediscovery**.
 Never infer a vulnerable revision from a publish date, fix commit, repository
 HEAD, tag or project name.
 
-To enroll a historical benchmark case, a maintainer must independently prove the
-vulnerable commit and source revision, set `status: revision-pinned`, fill
-`repository_url` and `vulnerable_commit`, and isolate the hunting agent from this
-catalog and the published write-up. `caseforge blind-queue` includes only an
+To enroll additional historical benchmark cases, a maintainer must independently
+prove the vulnerable commit, affected source paths and revision citation; set
+`status: revision-pinned`, `repository_url`, `vulnerable_commit`,
+`revision_source_url` and `scope_paths`, then isolate the hunting agent from
+this catalog and the published write-up. `caseforge blind-queue` includes only an
 opaque task ID, repository and pinned SHA; it intentionally withholds source URLs,
 titles and mechanisms. It is only a preparation aid and **not** a benchmark run.
 Use the existing sealed procedure:
@@ -63,6 +67,24 @@ terms, quorum counting, or phase boundaries. It does not parse full data flow,
 claim a bug, run target code, read network state or scan directories outside the
 explicit relative `--scope` prefixes. No hit is a finding; no hit is an
 assurance of safety either.
+
+For a directly executable **synthetic raw-byte framing experiment**,
+compare two different byte-field tuples. This computes an actual unframed
+byte collision and a framed negative control, without importing target code:
+
+```json
+{
+  "schema_version": 1,
+  "pairs": [{"id": "byte-boundary",
+             "left_fields": ["0x61", "0x6263"],
+             "right_fields": ["0x6162", "0x63"]}]
+}
+```
+
+Run `bounty.py research-diff byte-tuple --input <private-pairs.json>`.
+The output is `SYNTHETIC_COUNTEREXAMPLE`, not a target vulnerability:
+the native target's actual typed codec, authorization and use of the key
+still must be confirmed. This is **not a Solidity ABI encoder**.
 
 For a native parser/proof test, supply an **investigator-created JSON observation**
 file rather than executing an untrusted checkout inside the scanner:
@@ -123,7 +145,8 @@ API approval, signer and queued worker execution.
 Run `bounty.py research-diff phases --input <private-observations.json>`.
 It reports separate leads for `DECISION_DIVERGENCE`, `PAYLOAD_DRIFT`, and
 `POLICY_VERSION_DRIFT`. If the policies differ, or no equivalence basis is
-given, `comparable=false` and the reason is recorded. Different admission
+given, `comparable=false` and the reason is recorded. Supplied payload and
+policy identifiers are hashed before being included in the emitted report. Different admission
 requirements may be **intentional** even under the same policy, so native
 candidate/negative-control runs and documented guarantees are necessary.
 
@@ -143,6 +166,8 @@ compromised privileged infrastructure. Review program exclusions first.
 ### Current limits and next work
 
 - Passively scanned cues are not AST or a semantic call graph.
+- A generic byte-join and framed negative control are executable, but do **not**
+  model a real target's typed encoder or prove a vulnerability.
 - Native encoders and verifiers are **not** automatically executed. Pair JSON
   compares outputs that an investigator obtains through separately authorized
   local, paired tests.

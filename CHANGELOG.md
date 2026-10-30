@@ -5,15 +5,19 @@
 ### CaseForge + Semantic Identity + Cross-Phase Differential
 
 - Added an explicitly sourced retrospective CaseForge catalog (7 public cases).
-  The schema refuses invented pinned revisions; blind queue hides all answer data
-  and yields zero tasks until historical vulnerable commits are independently proven.
+  One Monad H-02 commit and its two affected source paths have now been independently
+  verified against the judged report; the blind queue exposes one opaque task,
+  but no benchmark has run or scored. Unverified source revisions still fail closed.
 - Added stdlib-only `research_diff.py` with an opt-in, in-scope tracked-source
-  lexical scan and comparison of investigator-provided identity/phase observations.
+  lexical scan, bounded real byte-framing counterexample experiments, and
+  comparisons of investigator-provided identity/phase observations.
   It detects semantic identity splits, shared cache IDs, decision divergence,
   payload drift and policy epoch mismatch as unverified leads only.
 - Exposed both via `bounty.py caseforge` and `bounty.py research-diff`.
   Native verification is not simulated or claimed; the existing AVRE,
   Evidence-First and backtest gates remain the source of truth.
+- Hardened scan budgets after scope filtering, zero-coverage warnings, pinned
+  case metadata validation and output fingerprints instead of raw stage IDs.
 - Added synthetic tests and negative controls; no measured rediscovery uplift
   or claim of running the full suite.
 

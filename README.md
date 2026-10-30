@@ -22,12 +22,12 @@
 
 - **CaseForge (seven sourced retrospective cases)** records published incidents,
   disclosure reviews and contest findings separately, without fabricated vulnerable
-  revisions or misleading benchmark scores. `caseforge blind-queue` fails closed
-  until a real vulnerable commit is pinned.
+  revisions or misleading benchmark scores. One Monad audit snapshot is now
+  pinned and source-checked for blind benchmark preparation; no hunt is scored.
 - **Semantic Identity and Cross-Phase Differential research.** New `research-diff`
-  commands passively scan explicitly in-scope local source and compare user-supplied
-  native-test observations for replay/cache identity splits and policy/payload
-  disagreements. Every output is a lead, not exploit verification.
+  commands passively scan explicitly in-scope local source, compute synthetic
+  byte-framing controls, and compare user-supplied native-test observations for
+  replay/cache identity splits and policy/payload disagreements. Every output is a lead, not exploit verification.
   [Usage and limits](skills/bounty-pilot/references/research-engines.md).
 
 ## What changed in 0.40
