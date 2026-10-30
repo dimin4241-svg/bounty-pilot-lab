@@ -26,7 +26,7 @@ class CaseForgeTests(unittest.TestCase):
     def test_seed_catalog_has_published_references_but_no_fabricated_revisions(self):
         catalog = caseforge._read(caseforge.CATALOG)
         summary = caseforge.validate(catalog)
-        self.assertEqual(summary['total_cases'], 4)
+        self.assertEqual(summary['total_cases'], 7)
         self.assertEqual(summary['measurement_ready'], 0)
         self.assertEqual(caseforge.blind_queue(catalog)['tasks'], [])
         self.assertIn('source_url', caseforge.index(catalog)['cases'][0])
@@ -165,12 +165,12 @@ class LocalCodeAndCLITests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['candidate_count'], 0)
         command = ['python3', str(SCRIPTS / 'caseforge.py'), 'validate']
         result = subprocess.run(command, capture_output=True, text=True, check=True)
-        self.assertEqual(json.loads(result.stdout)['total_cases'], 4)
+        self.assertEqual(json.loads(result.stdout)['total_cases'], 7)
 
     def test_bounty_cli_registration(self):
         result = subprocess.run(['python3', str(SCRIPTS / 'bounty.py'), 'caseforge',
                                  'validate'], capture_output=True, text=True, check=True)
-        self.assertEqual(json.loads(result.stdout)['total_cases'], 4)
+        self.assertEqual(json.loads(result.stdout)['total_cases'], 7)
         result = subprocess.run(['python3', str(SCRIPTS / 'bounty.py'), 'research-diff',
                                  'scan', '--repo', str(self.repo), '--scope', 'src'],
                                 capture_output=True, text=True, check=True)
