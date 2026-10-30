@@ -34,6 +34,7 @@ class CaseForgeTests(unittest.TestCase):
     def test_invalid_revision_and_duplicate_refused(self):
         item = dict(caseforge._read(caseforge.CATALOG)['cases'][0])
         bad = {'schema_version': 1, 'cases': [dict(item, status='revision-pinned',
+                                                   repository_url='https://github.com/example/project',
                                                    vulnerable_commit='not-a-sha')]}
         with self.assertRaisesRegex(ValueError, 'requires 40-hex commit'):
             caseforge.validate(bad)
