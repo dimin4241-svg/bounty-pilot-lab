@@ -65,7 +65,8 @@ def identity(data):
 
     'same' and 'different' are user-supplied assumptions, not our conclusions.
     """
-    if not isinstance(data, dict) or data.get("schema_version") != 1:
+    if (not isinstance(data, dict) or type(data.get("schema_version")) is not int
+            or data["schema_version"] != 1):
         raise ValueError("identity input needs schema_version 1")
     pairs = data.get("pairs")
     if not isinstance(pairs, list) or len(pairs) > MAX_OBSERVATIONS:
@@ -113,7 +114,8 @@ def identity(data):
 
 def phases(data):
     """Find contradictory stage decisions only within a declared comparable policy."""
-    if not isinstance(data, dict) or data.get("schema_version") != 1:
+    if (not isinstance(data, dict) or type(data.get("schema_version")) is not int
+            or data["schema_version"] != 1):
         raise ValueError("phase input needs schema_version 1")
     cases = data.get("cases")
     if not isinstance(cases, list) or len(cases) > MAX_OBSERVATIONS:
@@ -207,7 +209,8 @@ def byte_tuple(data):
     Demonstrates injectivity of plain concatenation against length-prefixed framing.
     This is NOT a full Solidity abi.encodePacked encoder or real target PoC.
     """
-    if not isinstance(data, dict) or data.get("schema_version") != 1:
+    if (not isinstance(data, dict) or type(data.get("schema_version")) is not int
+            or data["schema_version"] != 1):
         raise ValueError("byte-tuple input needs schema_version 1")
     pairs = data.get("pairs")
     if not isinstance(pairs, list) or len(pairs) > 200:
