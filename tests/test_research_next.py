@@ -136,16 +136,29 @@ class NativeCycleTests(CheckoutFixture):
         with self.assertRaisesRegex(ValueError, "HEAD differs"):
             native.cycle(bad, "pytest", self.root)
 
+    def test_execution_refuses_missing_private_evidence_destination(self):
+        with self.assertRaisesRegex(ValueError, "NEW private"):
+            native.cycle(self.pair_spec(), "pytest", self.root,
+                         allow_exec=True, isolated_confirmed=True)
+        with self.assertRaisesRegex(ValueError, "outside the target checkout"):
+            native.cycle(self.pair_spec(), "pytest", self.root,
+                         allow_exec=True, isolated_confirmed=True,
+                         evidence_dir=self.root / "results")
+
     def test_two_independent_synthetic_runs_are_only_harness_evidence(self):
         pairs = [{"pair_id": "withdraw-pair", "role": role, "executed": True,
                   "tests_ran": True, "status": "ran", "matched_expected_exit": True,
                   "stdout": "1 passed", "stderr": ""}
                  for role in ("candidate", "negative-control")]
+        evidence = Path(self.tmp.name) / "evidence"
         with mock.patch.object(native.scenario_runner, "execute",
                                return_value={"result": "experiments-conformed",
                                              "cases": pairs}) as execute:
             report = native.cycle(self.pair_spec(), "pytest", self.root,
-                                  allow_exec=True, isolated_confirmed=True)
+                                  allow_exec=True, isolated_confirmed=True,
+                                  evidence_dir=evidence)
+        self.assertTrue((evidence / "round-1.json").exists())
+        self.assertTrue((evidence / "round-2.json").exists())
         self.assertEqual(execute.call_count, 2)
         self.assertEqual(report["status"], "NATIVE_PAIR_RAN_NEEDS_INDEPENDENT_REVIEW")
         self.assertEqual(report["confirmed_vulnerabilities"], 0)
