@@ -1,0 +1,69 @@
+name: evmbench-pair-preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/evmbench-pair-preflight.yml'
+      - 'skills/bounty-pilot/scripts/evmbench_pair.py'
+      - 'tests/test_evmbench_pair.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Unit tests (no model credentials)
+        run: python3 -m unittest discover -s tests -p test_evmbench_pair.py -v
+      - name: Retrieve pinned Lab 0.41/0.42 skill commits
+        env:
+          BASELINE_SHA: '651f46eedb904ac2f738843ae0413e1eb3cf638a'
+          CANDIDATE_SHA: 'cd00a9d64dc341ef6ab9b5c32947ebf00d4cf5a1'
+        run: |
+          git -c core.hooksPath=/dev/null fetch --no-tags --depth=1 origin "$BASELINE_SHA"
+          git -c core.hooksPath=/dev/null fetch --no-tags --depth=1 origin "$CANDIDATE_SHA"
+          git cat-file -e "$BASELINE_SHA^{commit}"
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
+      - name: Clone EVMbench at immutable audited upstream revision
+        env:
+          OFFICIAL_SHA: 'b78dab1da774a6456b1ed9c48c9ff194ee3ff36d'
+        run: |
+          mkdir -p "$RUNNER_TEMP/official"
+          git -C "$RUNNER_TEMP/official" init -q
+          git -C "$RUNNER_TEMP/official" remote add origin https://github.com/openai/frontier-evals.git
+          timeout 240 git -C "$RUNNER_TEMP/official" -c core.hooksPath=/dev/null fetch --no-tags --depth=1 --filter=blob:none origin "$OFFICIAL_SHA"
+          git -C "$RUNNER_TEMP/official" checkout --detach "$OFFICIAL_SHA"
+      - name: Stage both real Pilot versions and inject instructions only
+        run: |
+          python3 skills/bounty-pilot/scripts/evmbench_pair.py prepare \
+            --repo "$GITHUB_WORKSPACE" --official-root "$RUNNER_TEMP/official" \
+            --out "$RUNNER_TEMP/paired-preflight" \
+            --audit 2024-04-noya \
+            --audit 2024-06-size \
+            --audit 2024-07-basin \
+            --audit 2024-08-wildcat \
+            --audit 2025-06-panoptic
+          python3 -m py_compile "$RUNNER_TEMP/official/project/evmbench/evmbench/nano/solver.py"
+          python3 - <<'PY'
+          import json, os, pathlib
+          p = pathlib.Path(os.environ['RUNNER_TEMP']) / 'paired-preflight'
+          m = json.loads((p/'manifest.json').read_text())
+          assert m['model_runs'] == 0 and m['kind'] == 'PREPARED_NOT_EXECUTED'
+          assert len(m['audits']) == 5
+          for arm in ('baseline','candidate'):
+              d = p/'skills'/arm
+              assert (d/'SKILL.md').exists() and (d/'scripts/bounty.py').exists()
+              assert not (d/'references/caseforge-catalog.json').exists()
+              assert not (d/'references/research-engines.md').exists()
+          print('PREPARED ONLY: two pinned skill versions, five tasks, no API key, no paid inference')
+          PY
