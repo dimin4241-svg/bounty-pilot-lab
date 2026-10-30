@@ -11644,6 +11644,16 @@ def build_parser():
                                     'Repeatable. Without it a build-info file drags in lib/ and test/ '
                                     'and the truncated queue can hold no in-scope sink at all.')
 
+    cf = sub.add_parser('caseforge', help='provenance-checked retrospective research cases; never a benchmark result')
+    cf.add_argument('operation', choices=('validate', 'index', 'blind-queue'))
+    cf.add_argument('--catalog', default=None)
+    cf.add_argument('--family', default=None)
+
+    rd = sub.add_parser('research-diff', help='passive identity/cross-phase hypotheses from local data')
+    rd.add_argument('operation', choices=('identity', 'phases', 'scan'))
+    rd.add_argument('--input', default=None, help='local JSON observations for identity or phases')
+    rd.add_argument('--repo', default=None, help='local tracked checkout for passive lexical scan')
+
     route_parser = sub.add_parser('route', help='recommend native adapters from tracked manifests (heuristic)')
     route_parser.add_argument('--repo', required=True)
 
@@ -11900,6 +11910,32 @@ def main(argv=None):
         if args.action == 'impact-plan':
             print(json.dumps(impact_plan(args.repo, args.solc, args.out,
                                          getattr(args, 'scope', None)), indent=2))
+            return 0
+        if args.action == 'caseforge':
+            cf = load_impact_helper('caseforge')
+            catalog = cf._read(args.catalog or cf.CATALOG)
+            if args.operation == 'validate':
+                result = cf.validate(catalog)
+            elif args.operation == 'index':
+                result = cf.index(catalog, args.family)
+            else:
+                if args.family is not None:
+                    raise ValueError('--family applies to index only')
+                result = cf.blind_queue(catalog)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        if args.action == 'research-diff':
+            rd = load_impact_helper('research_diff')
+            if args.operation == 'scan':
+                if not args.repo or args.input:
+                    raise ValueError('scan requires --repo and no --input')
+                result = rd.source_scan(args.repo)
+            else:
+                if not args.input or args.repo:
+                    raise ValueError('identity/phases requires --input and no --repo')
+                observations = rd._json(args.input)
+                result = rd.identity(observations) if args.operation == 'identity' else rd.phases(observations)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0
         if args.action == 'route':
             print(json.dumps(load_stack_route().route(args.repo), indent=2))
