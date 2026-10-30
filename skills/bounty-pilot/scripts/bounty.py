@@ -11664,6 +11664,7 @@ def build_parser():
     rn.add_argument('--stack', choices=('foundry', 'cargo', 'pytest', 'go'))
     rn.add_argument('--allow-exec', action='store_true')
     rn.add_argument('--isolated-workspace-confirmed', action='store_true')
+    rn.add_argument('--evidence-dir', default=None, help='new private path outside checkout for both executed native rounds')
     rn.add_argument('--ledger', default=None)
     rn.add_argument('--input', default=None)
     rn.add_argument('--target', default=None)
@@ -11974,7 +11975,7 @@ def main(argv=None):
                     raise ValueError('native spec must be a non-symlink JSON file under 100kB')
                 result = cycle.cycle(json.loads(source.read_text(encoding='utf-8')),
                                      args.stack, args.repo, args.allow_exec,
-                                     args.isolated_workspace_confirmed)
+                                     args.isolated_workspace_confirmed, args.evidence_dir)
             elif args.operation == 'memory-record':
                 if not args.ledger or not args.input:
                     raise ValueError('memory-record requires --ledger and --input')
