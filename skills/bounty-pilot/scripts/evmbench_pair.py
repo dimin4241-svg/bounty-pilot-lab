@@ -127,8 +127,7 @@ def _stage_skill(repo, sha, dst):
               " Results must be supported by native reproducible evidence.\\n")
     (dst / "BENCHMARK.md").write_text(marker, encoding="utf-8")
     return {"commit": sha, "staged_files": count,
-            "staged_tree_sha256": hashlib.sha256(
-                json.dumps(sorted(signatures), separators=(",", ":")).encode()).hexdigest(),
+            "staged_tree_sha256": _staged_integrity(dst),
             "answer_corpus_excluded": True}
 
 
@@ -139,10 +138,20 @@ def _staged_integrity(root):
     for p in sorted(root.rglob("*")):
         if p.is_symlink():
             raise ValueError("symlink found in staged skill")
-        if not p.is_file() or p.name == "BENCHMARK.md":
+        if not p.is_file():
             continue
         rows.append((p.relative_to(root).as_posix(), _hash(p)))
     return hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
+
+
+def _check_task_leakage(staged, audits):
+    """Block explicit task-ID leakage in packaged skill content."""
+    for p in staged.rglob("*"):
+        if not p.is_file() or p.suffix not in {".md", ".py", ".json", ".yaml", ".txt"}:
+            continue
+        raw = p.read_text(encoding="utf-8", errors="replace").lower()
+        if any(audit.lower() in raw for audit in audits):
+            raise ValueError("selected audit name leaked into staged research skill")
 
 
 def _inject(official):
@@ -176,7 +185,9 @@ def prepare(repo, official, output, audits):
     try:
         stages = {}
         for arm, sha in zip(ARM_IDS, (BASELINE, CANDIDATE)):
-            stages[arm] = _stage_skill(repo, sha, output / "skills" / arm)
+            staged = output / "skills" / arm
+            stages[arm] = _stage_skill(repo, sha, staged)
+            _check_task_leakage(staged, audits)
         injection = _inject(official)
         manifest = {
             "schema_version": 1, "kind": "PREPARED_NOT_EXECUTED",
