@@ -247,6 +247,27 @@ class LocalCodeAndCLITests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'scope'):
             research.source_scan(self.repo, ['../other'])
 
+    def test_scan_caps_only_after_scope_filter_and_discloses_empty_scope(self):
+        # A leading out-of-scope file must not consume the entire scan budget.
+        (self.repo / 'aardvark.py').write_text('print(1)\n')
+        scoped = self.repo / 'src' / 'proof.sol'
+        scoped.parent.mkdir(parents=True, exist_ok=True)
+        scoped.write_text('contract P { bytes32 a = keccak256(abi.encodePacked(x, y)); }\n')
+        subprocess.run(['git', '-C', str(self.repo), 'add', '-A'], check=True)
+        original = research.MAX_SOURCE_FILES
+        try:
+            research.MAX_SOURCE_FILES = 1
+            report = research.source_scan(self.repo, ['src'])
+            self.assertEqual(report['in_scope_tracked_files'], 1)
+            self.assertEqual(report['scanned_files'], 1)
+            self.assertEqual(report['files_over_cap'], 0)
+            self.assertGreaterEqual(report['candidate_count'], 1)
+        finally:
+            research.MAX_SOURCE_FILES = original
+        absent = research.source_scan(self.repo, ['missing'])
+        self.assertEqual(absent['scanned_files'], 0)
+        self.assertTrue(any('not a clean scan' in note for note in absent['notes']))
+
     def test_direct_clis_output_json(self):
         inp = self.root / 'input.json'
         inp.write_text(json.dumps({'schema_version': 1, 'pairs': []}))
