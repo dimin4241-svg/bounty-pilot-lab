@@ -78,7 +78,7 @@ def _open(path):
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(str(p), flags, 0o600)
-    os.chmod(str(p), 0o600)
+    os.fchmod(fd, 0o600) if hasattr(os, "fchmod") else None
     return os.fdopen(fd, "r+", encoding="utf-8")
 
 
