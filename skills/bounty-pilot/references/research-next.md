@@ -73,6 +73,13 @@ python3 skills/bounty-pilot/scripts/bounty.py research-next native \
   --evidence-dir /private/native-cycle-001
 ```
 
+The launcher supports Foundry, Cargo, pytest, Go and standard-library
+`unittest` (exact dotted module.Class.test selectors) via the existing
+native test planner. The native-cycle regression suite includes a real
+local `unittest` candidate/control subprocess fixture; no published
+target bug is claimed. Always reject pre-existing changes to tracked
+source, even if `git rev-parse HEAD` matches the requested revision.
+
 The launcher runs both native tests twice, rejects zero-test/ignored runs
 through the existing native runner, checks pinned HEAD and tracked-file status,
 and rejects changed tracked-source diffs between rounds. It preserves the runner's **sanitized** per-round output in private

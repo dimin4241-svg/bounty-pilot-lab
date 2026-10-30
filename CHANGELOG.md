@@ -13,7 +13,9 @@
   SHA-256 hypothesis fingerprints and falsification protocols.
 - Added `belief_ledger.py` for hashed, private, revision-bound observation
   memory with reviewable evidence requirements and no auto-dismissal.
-- Added 15 synthetic regression test methods plus reference docs.
+- Added 19 synthetic and controlled-local regression test methods, including
+  an actual stdlib unittest candidate/control subprocess fixture, strict complete-pair
+  detection, rejection of dirty tracked sources, and unchanged diff fingerprints.
 - No measured bounty uplift or independent historical rediscovery is claimed.
   Never merge before real tests execute.
 
