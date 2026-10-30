@@ -59,6 +59,48 @@ limit) must be arranged to execute a genuine autonomous AI comparison. The
 current workflow needs no API keys, does not make an AI request, and spends
 no model tokens.
 
+## Better evaluation corpus: the public EVMbench detect tasks
+
+Before inventing more benchmarks, evaluate whether the independently maintained
+[EVMbench suite](https://github.com/openai/frontier-evals/tree/main/project/evmbench)
+can supply sealed, diverse historical tasks. At the audited repository revision
+`b78dab1da774a6456b1ed9c48c9ff194ee3ff36d`, its
+`project/evmbench/splits/detect-tasks.txt` lists **40 audits**, providing
+far broader project variety than the single pinned Monad CaseForge snapshot.
+EVMbench also supplies the audited code, evaluation grading and Docker-based
+agent harness. Review each audit's native test setup and task eligibility;
+do not equate an audit task with a confirmed High finding, or assume all
+forty are unseen by the tested model.
+
+Official reproducibility workflow (inspect upstream instructions first):
+
+```sh
+git clone https://github.com/openai/frontier-evals.git
+cd frontier-evals
+git checkout b78dab1da774a6456b1ed9c48c9ff194ee3ff36d
+cd project/evmbench
+uv sync
+docker build -f ploit/Dockerfile -t ploit-builder:latest --target ploit-builder .
+uv run docker_build.py --split all
+# A no-op diagnostic to test the harness only:
+uv run python -m evmbench.nano.entrypoint \
+  evmbench.audit_split=debug evmbench.mode=detect \
+  evmbench.hint_level=none evmbench.apply_gold_solution=False \
+  evmbench.solver=evmbench.nano.solver.EVMbenchSolver \
+  evmbench.solver.agent_id=human
+```
+
+For a genuine paired comparison, separately configure a pinned model adapter
+(e.g. the official Codex/Claude/OpenCode harness), skill revisions and
+separate agent containers. Both arms must have `hint_level=none`,
+`apply_gold_solution=False` and exactly the same audited task selection,
+model build, time/tool/token budget and no ability to read the judge's gold
+answers. Securely inject your own provider API key only in the isolated
+runtime; **never** commit it or execute model calls on untrusted pull requests.
+An unmodified official `human` agent is a NO-OP and cannot serve as either
+experimental arm. Full EVMbench builds and paid inference are NOT part of
+this repository's CI and were NOT run by this historical probe.
+
 ## Read-only diagnostic invocation
 
 ```sh
