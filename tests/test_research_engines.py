@@ -146,6 +146,9 @@ class PhaseDifferentialTests(unittest.TestCase):
         self.assertFalse(report['leads'][0]['comparable'])
         self.assertEqual(report['leads'][0]['comparison_blocker'], 'POLICY_VERSION_MISMATCH')
         self.assertEqual(report['confirmed_vulnerabilities'], 0)
+        self.assertNotIn('"policy_id": "v1"', json.dumps(report))
+        self.assertNotIn('"payload_digest": "a"', json.dumps(report))
+        self.assertEqual(len(report['leads'][0]['stages'][0]['policy_id_fingerprint']), 64)
 
     def test_synthetic_two_stage_rule_disagreement_with_normal_control(self):
         # A crafted local policy mismatch; a disagreement alone proves no exploit.
