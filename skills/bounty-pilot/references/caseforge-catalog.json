@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "POLYGON-PLASMA-2021",
+      "project": "Polygon Plasma Bridge",
+      "family": "semantic-identity",
+      "source_type": "paid-disclosure",
+      "source_url": "https://immunefi.com/blog/bug-fix-reviews/polygon-double-spend-bugfix-review-2m-bounty/",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Multiple HP branch-mask representations have equivalent proof semantics but produce distinct withdrawal exit identifiers.",
+      "invariant": "One semantic withdrawal must have one replay identity across all admissible representations."
+    },
+    {
+      "id": "LIQUID-2026-CACHE",
+      "project": "Liquid / Elements",
+      "family": "semantic-identity",
+      "source_type": "incident-postmortem",
+      "source_url": "https://blog.liquid.net/liquid-network-security-incident-assessment/",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Unframed concatenation of variable-width cache-key fields permitted different proof contexts to share one cache identity.",
+      "invariant": "A cache hit must only reuse proof validity under an equivalent complete verification context."
+    },
+    {
+      "id": "MONAD-2026-H02",
+      "project": "Monad",
+      "family": "cross-phase",
+      "source_type": "audited-finding",
+      "source_url": "https://code4rena.com/reports/2025-09-monad",
+      "status": "revision-pinned",
+      "vulnerable_commit": "6aaccc2ec51eac66a2cf18ec64ab0df2c1448990",
+      "mechanism": "EIP-7702 admission and downstream block validity policy can disagree on the same transaction.",
+      "invariant": "Transaction admission must not create an unintended permanently invalid block or recurrent no-cost processing loop.",
+      "repository_url": "https://github.com/category-labs/monad-bft",
+      "scope_paths": [
+        "monad-eth-txpool/src/pool/transaction.rs",
+        "monad-eth-block-validator/src/lib.rs"
+      ],
+      "revision_source_url": "https://code4rena.com/reports/2025-09-monad",
+      "snapshot_note": "Verified GitHub API commit contents for both H-02 source files on 2026-10-30; the published C4 report names this exact pre-fix source commit. No blind rediscovery run yet."
+    },
+    {
+      "id": "WORMHOLE-UUPS-2022",
+      "project": "Wormhole",
+      "family": "lifecycle",
+      "source_type": "paid-disclosure",
+      "source_url": "https://immunefi.com/blog/bug-fix-reviews/wormhole-uninitialized-proxy-bugfix-review/",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "An uninitialized UUPS implementation had upgrade privileges separate from its initialized proxy.",
+      "invariant": "No lower-privilege user may acquire implementation-side authority to alter or destroy the deployed bridge logic."
+    },
+    {
+      "id": "BALANCER-CSP-2025",
+      "project": "Balancer V2",
+      "family": "stateful-economics",
+      "source_type": "incident-postmortem",
+      "source_url": "https://medium.com/balancer-protocol/nov-3-exploit-post-mortem-51dcbeb6b020",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Exact-out upscaling rounded toward the wrong side of the stable-swap invariant; rate-provider imprecision and low balances amplified an underpayment in batched swaps.",
+      "invariant": "Exact-out settlement must collect enough assets to preserve the pool invariant under supported rate scales and boundary states."
+    },
+    {
+      "id": "EULER-2023-DONATION",
+      "project": "Euler V1",
+      "family": "stateful-economics",
+      "source_type": "incident-postmortem",
+      "source_url": "https://www.euler.finance/blog/war-peace-behind-the-scenes-of-eulers-240m-exploit-recovery",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Leveraged position creation combined with reserve donation and subsequent liquidation exposed an accounting/collateralization inconsistency.",
+      "invariant": "Every operation sequence must maintain debt/collateral accounting constraints before and after liquidation."
+    },
+    {
+      "id": "KELP-2026-TRUST",
+      "project": "KelpDAO / LayerZero",
+      "family": "authorization",
+      "source_type": "incident-postmortem",
+      "source_url": "https://layerzero.network/blog/layerzero-labs-kelpdao-incident-report",
+      "status": "documented",
+      "vulnerable_commit": null,
+      "mechanism": "Poisoned RPC observations and single-DVN configuration allowed a cryptographically valid attestation to describe an event that did not occur.",
+      "invariant": "Valid attestations must correspond to independently verified source-chain facts, not only authentic signatures from an incorrectly trusted observer."
+    },
+    {
+      "project": "Monad",
+      "family": "cross-phase",
+      "source_type": "audited-finding",
+      "source_url": "https://code4rena.com/reports/2025-09-monad",
+      "status": "revision-pinned",
+      "repository_url": "https://github.com/category-labs/monad-bft",
+      "vulnerable_commit": "6aaccc2ec51eac66a2cf18ec64ab0df2c1448990",
+      "revision_source_url": "https://code4rena.com/reports/2025-09-monad",
+      "snapshot_note": "Code4rena report independently specifies this pre-fix monad-bft source snapshot. All affected paths checked against pinned commit. No blind benchmark executed.",
+      "id": "MONAD-2026-H01",
+      "mechanism": "Block policy applies EIP-1559 gas-bid discount to legacy transactions while native execution does not, underestimating required gas and producing invalid blocks.",
+      "invariant": "Consensus block policy and execution must agree on transaction affordability across transaction formats.",
+      "scope_paths": [
+        "monad-eth-block-policy/src/lib.rs"
+      ]
+    },
+    {
+      "project": "Monad",
+      "family": "cross-phase",
+      "source_type": "audited-finding",
+      "source_url": "https://code4rena.com/reports/2025-09-monad",
+      "status": "revision-pinned",
+      "repository_url": "https://github.com/category-labs/monad-bft",
+      "vulnerable_commit": "6aaccc2ec51eac66a2cf18ec64ab0df2c1448990",
+      "revision_source_url": "https://code4rena.com/reports/2025-09-monad",
+      "snapshot_note": "Code4rena report independently specifies this pre-fix monad-bft source snapshot. All affected paths checked against pinned commit. No blind benchmark executed.",
+      "id": "MONAD-2026-H03",
+      "mechanism": "Mempool admission ignores transaction priority fee in affordability checks whereas block policy accounts for it, allowing repeatedly rejected transactions to clog proposal sampling.",
+      "invariant": "Admission and proposal policy must either agree on solvency or reject/evict permanently non-includable transactions.",
+      "scope_paths": [
+        "monad-eth-txpool/src/pool/mod.rs",
+        "monad-eth-block-policy/src/lib.rs"
+      ]
+    },
+    {
+      "project": "Monad",
+      "family": "cross-phase",
+      "source_type": "audited-finding",
+      "source_url": "https://code4rena.com/reports/2025-09-monad",
+      "status": "revision-pinned",
+      "repository_url": "https://github.com/category-labs/monad-bft",
+      "vulnerable_commit": "6aaccc2ec51eac66a2cf18ec64ab0df2c1448990",
+      "revision_source_url": "https://code4rena.com/reports/2025-09-monad",
+      "snapshot_note": "Code4rena report independently specifies this pre-fix monad-bft source snapshot. All affected paths checked against pinned commit. No blind benchmark executed.",
+      "id": "MONAD-2026-H04",
+      "mechanism": "Txpool updates delegated EOA status in inclusion order while block policy pre-marks all EIP-7702 authorities across the whole block, creating an order-dependent policy mismatch.",
+      "invariant": "Delegation state and reserve requirements must be evaluated with identical order semantics across proposal and block validation.",
+      "scope_paths": [
+        "monad-eth-txpool/src/pool/tracked/sequencer.rs",
+        "monad-eth-block-policy/src/lib.rs"
+      ]
+    }
+  ]
+}

@@ -18,6 +18,20 @@
 
 ---
 
+## What changed in 0.41.1
+
+- **CaseForge (ten sourced retrospective cases)** records published incidents,
+  disclosure reviews and contest findings separately, without fabricated vulnerable
+  revisions or misleading benchmark scores. Four distinct Monad High findings share one verified audit snapshot and one
+  opaque blind benchmark task; no hunt has executed or been scored.
+- **Semantic Identity and Cross-Phase Differential research.** New `research-diff`
+  commands passively scan explicitly in-scope local source, compute synthetic
+  byte-framing controls, fingerprint verified versus executed payloads, compare
+  chain/epoch/nonce/state/policy/permission context, and check supplied unique signer
+  quorums with a required negative control. Every output remains a lead.
+  Local Foundry and Rust fixtures demonstrate only generic synthetic controls.
+  [Usage and limits](skills/bounty-pilot/references/research-engines.md).
+
 ## What changed in 0.40
 
 - **Signing-control-plane lens.** `bundle --lens signing` traces approved intent

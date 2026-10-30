@@ -25,6 +25,7 @@ impl Ledger {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use super::Ledger;
 
     #[test]
@@ -42,5 +43,29 @@ mod tests {
         ledger.issue(10);
         assert!(ledger.safe_claim(10));
         assert!(!ledger.safe_claim(10));
+    }
+
+    #[test]
+    fn test_candidate_duplicate_signer_quorum() {
+        let authorized = HashSet::from(["alice", "bob"]);
+        let authenticated = ["alice", "alice"];
+        let raw_count = authenticated.len();
+        let unique_authorized = authenticated.iter().copied()
+            .filter(|signer| authorized.contains(signer))
+            .collect::<HashSet<_>>().len();
+        assert_eq!(raw_count, 2);
+        assert_eq!(unique_authorized, 1);
+        assert!(raw_count >= 2 && unique_authorized < 2);
+    }
+
+    #[test]
+    fn test_negative_control_unique_signer_quorum() {
+        let authorized = HashSet::from(["alice", "bob"]);
+        let authenticated = ["alice", "bob"];
+        let unique_authorized = authenticated.iter().copied()
+            .filter(|signer| authorized.contains(signer))
+            .collect::<HashSet<_>>().len();
+        assert_eq!(unique_authorized, 2);
+        assert!(unique_authorized >= 2);
     }
 }

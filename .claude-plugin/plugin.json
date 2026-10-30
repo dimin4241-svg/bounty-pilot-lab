@@ -1,7 +1,7 @@
 {
   "name": "bounty-pilot-lab",
   "description": "Evidence-driven Web3 bug bounty workflow for on-chain and mixed off-chain projects, with passive scope-bound ecosystem intelligence, bounded AVRE research, deployment verification, independent hunt passes, adversarial triage and reproducible PoCs.",
-  "version": "0.40.0",
+  "version": "0.41.1",
   "author": {
     "name": "dimin4241-svg"
   },

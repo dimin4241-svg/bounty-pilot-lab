@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.41.1
+
+### Research-engine validation and local controls
+
+- Rejected duplicate JSON object keys, malformed enum types, duplicate observation IDs,
+  unpaired Unicode surrogates, oversized inputs and symlinks with bounded error responses.
+- Expanded identity observations to fingerprint verified-message versus executed-operation
+  outputs, encoded bytes and domain context. Phase reports preserve stage order and fingerprint
+  policy identity, chain, epoch, nonce, state and attacker-permission context; missing or changed
+  context blocks comparability.
+- Added `research-diff quorum` for supplied authenticated signer observations. It requires a
+  valid unique-signer negative control and reports duplicate-signature quorum leads without
+  verifying signatures or claiming target impact.
+- Added synthetic Foundry and Rust candidate/control tests to the existing native-smoke plan.
+  They exercise generic byte framing and signer uniqueness, not historical rediscovery.
+- Corrected the Monad H-02 catalog identifier and tested that H-01 through H-04 stay unique
+  and grouped under the single cited pre-fix audit snapshot.
+- Confirmed AVRE already owns sequence generation, economic metamorphic plans, exact integer
+  measurements and sequence minimization; no parallel generator was added.
+- `research-diff scan` takes repeatable `--cue kind=regex` so a project's own vocabulary can be
+  scanned, and every report now names the vocabulary behind it (`cue_kinds`,
+  `default_cue_kinds`, `custom_cues`), with an explicit note when it read files and matched
+  nothing. A cue that does not compile, repeats or exceeds the bound is rejected, not skipped.
+- Closed four spellings the word-only cue set could not reach, each proven blind before and
+  caught after: multi-word camelCase (`validateBlock`), a cue inside a longer snake_case
+  identifier (`build_cache_key`, missed because `\b` treats `_` as a word character),
+  `signatures.len()`, and `encodePacked(` without the `abi.` prefix. Added the
+  `cache_key_builder` shape family for `keyXxx` / `prefixXxx` builders: a Go relay checkout of
+  74 files returned `leads: 0` with all four old families at zero hits, while the same
+  construct written as `keyCacheGetHeaderResponse` is the site a finding came from.
+  Single-word camelCase already matched through `(?i)` and is covered by a regression test.
+- `cache_key_builder` is shape-only and collapses to one lead per file with a
+  `matched_lines` count, listed in `shape_only_cue_kinds`; unbounded it produced 143 leads
+  on that 74-file checkout, 132 of them in one file, which buried the precise families.
+  Word cues still report every line.
+
+## 0.41.0
+
+### CaseForge + Semantic Identity + Cross-Phase Differential
+
+- Added an explicitly sourced retrospective CaseForge catalog (10 public cases).
+  Four Monad High findings and their affected paths have been independently
+  matched to one pinned Code4rena audit snapshot. The blind queue emits one
+  opaque task for the shared checkout, without leaking the number of truths;
+  no benchmark has run or been scored. Unverified source revisions still fail closed.
+- Added stdlib-only `research_diff.py` with an opt-in, in-scope tracked-source
+  lexical scan, bounded real byte-framing counterexample experiments, and
+  comparisons of investigator-provided identity/phase observations.
+  It detects semantic identity splits, shared cache IDs, decision divergence,
+  payload drift and policy epoch mismatch as unverified leads only.
+- Exposed both via `bounty.py caseforge` and `bounty.py research-diff`.
+  Native verification is not simulated or claimed; the existing AVRE,
+  Evidence-First and backtest gates remain the source of truth.
+- Hardened scan budgets after scope filtering, zero-coverage warnings, pinned
+  case metadata validation and output fingerprints instead of raw stage IDs.
+- Added synthetic tests and negative controls; no measured rediscovery uplift
+  or claim of running the full suite.
+
 ## 0.40.0
 
 ### Signing-control-plane authorization research

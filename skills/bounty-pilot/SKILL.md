@@ -196,6 +196,18 @@ known chain ID and only when program rules permit pinned, read-only RPC. Treat u
 or networks as blocked. The report does not assert that an explorer's source is the live
 implementation or that code equality proves the active roles and permissions.
 
+For new retrospective case research or comparisons across representations/phases, also
+read `references/research-engines.md`. The optional `caseforge` command indexes
+sourced incidents without pretending they are benchmark cases; `research-diff scan`
+requires an explicit in-scope source prefix and reports the cue vocabulary behind its
+result, so calibrate it with `--cue kind=regex` in the project's own naming before reading
+a zero as a clean scan; `research-diff identity/phases/quorum`
+compare investigator-supplied local observations, including ordered security context
+and unique signer counts. Output is `RESEARCH_LEADS`, never a verified PoC or impact.
+Do not feed the unblinded
+CaseForge answer catalog into a hunt or blind backtest; use the existing backtest
+seal/score workflow instead. These tools complement, not duplicate, AVRE.
+
 For mixed-stack projects or targets with control planes, storage, CI/CD, identity, support, update,
 or worker services, also read `references/ecosystem-attack-chains.md`. Review all twelve patterns
 against the explicit scope and fill a private copy of `templates/attack-chain-review.md`. Record
