@@ -27,8 +27,10 @@ class CaseForgeTests(unittest.TestCase):
         catalog = caseforge._read(caseforge.CATALOG)
         summary = caseforge.validate(catalog)
         self.assertEqual(summary['total_cases'], 7)
-        self.assertEqual(summary['measurement_ready'], 0)
-        self.assertEqual(caseforge.blind_queue(catalog)['tasks'], [])
+        self.assertEqual(summary['measurement_ready'], 1)
+        self.assertEqual(len(caseforge.blind_queue(catalog)['tasks']), 1)
+        self.assertEqual(caseforge.blind_queue(catalog)['tasks'][0]['pinned_commit'],
+                         '6aaccc2ec51eac66a2cf18ec64ab0df2c1448990')
         self.assertIn('source_url', caseforge.index(catalog)['cases'][0])
 
     def test_invalid_revision_and_duplicate_refused(self):
