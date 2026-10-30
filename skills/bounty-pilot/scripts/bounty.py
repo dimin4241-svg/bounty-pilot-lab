@@ -11650,7 +11650,7 @@ def build_parser():
     cf.add_argument('--family', default=None)
 
     rd = sub.add_parser('research-diff', help='passive identity/cross-phase hypotheses from local data')
-    rd.add_argument('operation', choices=('identity', 'phases', 'scan'))
+    rd.add_argument('operation', choices=('identity', 'phases', 'byte-tuple', 'scan'))
     rd.add_argument('--input', default=None, help='local JSON observations for identity or phases')
     rd.add_argument('--repo', default=None, help='local tracked checkout for passive lexical scan')
     rd.add_argument('--scope', action='append', default=None,
@@ -11934,9 +11934,11 @@ def main(argv=None):
                 result = rd.source_scan(args.repo, args.scope)
             else:
                 if not args.input or args.repo or args.scope:
-                    raise ValueError('identity/phases requires --input and no --repo/--scope')
+                    raise ValueError('identity/phases/byte-tuple requires --input and no --repo/--scope')
                 observations = rd._json(args.input)
-                result = rd.identity(observations) if args.operation == 'identity' else rd.phases(observations)
+                result = (rd.identity(observations) if args.operation == 'identity'
+                          else rd.phases(observations) if args.operation == 'phases'
+                          else rd.byte_tuple(observations))
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0
         if args.action == 'route':
