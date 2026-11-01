@@ -8,6 +8,8 @@
   contradicts failed nested items under an explicit completion policy.
 - Added `reality-diff context`: compares authorized, verified and executed
   field bindings and cache keys reused across distinct verification contexts.
+- Added a dedicated `reality-boundary` source-grounded hunt lens to cross-stack
+  and high-impact bundles, with bounded candidate/control experiment plans.
 - Added bounded JSON input, duplicate-ID/key refusal, Unicode checks, private
   no-overwrite output, 25 synthetic candidate/control regression tests and
   `bounty.py` CLI routing.
