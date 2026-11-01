@@ -18,6 +18,25 @@
 
 ---
 
+## Current release: 0.44.0 — 1 November 2026
+
+- **Research tools:** signing-control-plane lens (0.40), CaseForge and semantic
+  differential leads (0.41), paired native research cycles, spec mapping and
+  reviewer memory (0.42).
+- **Historical diagnostics:** the pinned 0.43 Monad probe produced 54 identical
+  lexical leads in both arms; this is parity, not demonstrated vulnerability
+  rediscovery or an AI-model comparison.
+- **EVMbench preflight (0.44):** two pinned complete skill trees staged in the
+  official five-task EVMbench harness. Preflight and synthetic regressions passed.
+  **No paid model runs or independent vulnerability scores have been obtained.**
+- **Opt-in host-isolated PoC execution:** `sandbox_run.py` wraps existing paired
+  tests in a restricted Docker container (network disabled, capabilities
+  dropped, no host home mount, digest-pinned toolchain). Use a disposable
+  checkout and a dedicated test image; see
+  [sandbox execution](skills/bounty-pilot/references/sandbox-execution.md).
+- **Release validation:** previously green 0.44 preflight and complete Python /
+  Foundry / Rust CI; confirm the new release head CI before relying on it.
+
 ## What changed in 0.42 (experimental)
 
 - **Native two-pass runner:** reuses the existing `experimenter.plan`,
@@ -150,8 +169,8 @@ A passed gate is not proof of an exploit or a payout. See
 
 ### 1. Install it
 
-**This repository is private**, so an agent cannot fetch it from a URL on its own — it needs your
-GitHub access. Three routes, in order of convenience:
+**This repository is public**, and cloning it normally requires no GitHub authentication.
+Three installation routes are available:
 
 **As a Claude Code plugin** (works when your own `git` can already clone this repository — check with
 `git ls-remote https://github.com/dimin4241-svg/bounty-pilot-lab`; if that asks for credentials, run

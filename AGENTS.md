@@ -41,6 +41,12 @@ Preserve these invariants when editing:
   that turns one of these into a warning destroys the only measurement this package can make.
   An unmatched hunt finding is never counted as a false positive.
 - **No benchmark claims** without a reproducible measurement in the repository.
+- **Containerized PoC execution is explicit.** For untrusted targets prefer
+  `scripts/sandbox_run.py` with a trusted SHA-256-pinned toolchain image and
+  disposable checkout. It removes network and host-HOME access but still
+  allows modifying the target checkout and is not a hardened VM. Calling
+  `scenario_runner.py --allow-exec` directly runs on the current host;
+  never describe that as sandboxed or automatically safe.
 
 
 - **Stateful helper evidence levels stay explicit.** `state_graph.py` is only a lexical heuristic; `invariant_check.py` tests supplied JSON snapshots; `scenario_runner.py` is dry-run unless execution is explicitly allowed. Never call any of those outcomes verified exploits. Both candidate and negative-control cases are mandatory for execution plans.

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.44.0 — Lab consolidation and isolated PoC execution
+
+- Consolidated previously tested draft 0.40–0.42 research capabilities and the
+  reproducible 0.43 historical diagnostic / 0.44 EVMbench staging harness.
+- Added `sandbox_run.py`, an opt-in Docker wrapper for paired candidate/control
+  execution: no network, no host HOME mount, no privileged container
+  capabilities, read-only root, process/memory quotas, a pinned image digest
+  and a private evidence directory. The target checkout is writable *inside*
+  the container; it must be disposable and free of secrets. Docker is still
+  an external trust boundary.
+- Added unit checks for sandbox command construction and unsafe inputs.
+- Synchronized skill, plugin and repository versions; updated English/Russian
+  release notes and public-repository installation instructions.
+- Historical scanner parity is not a rediscovery result; the official
+  EVMbench setup has not run paid AI models or been scored.
+- Release CI is required before declaring the new head verified.
+
+
 ## 0.42.0 — Draft research workflows
 
 - Added opt-in source-anchored `research-next spec` mapping, with tracked-code
