@@ -147,6 +147,72 @@ def upper_bound_usd(prompt_text):
             MAX_OUTPUT_TOKENS * PRICE_OUTPUT) / 1_000_000
 
 
+# Strictly limit the provider-controlled error text exposed to the terminal.
+# Do not log request headers, request body, API keys or arbitrary large responses.
+def _http_error(exc, api_key):
+    status = exc.code
+    category = "unknown_error"
+    message = "See Anthropic Console for request validation or spending limits."
+    request_id = ""
+    try:
+        data = exc.read(8193)
+        if len(data) <= 8192:
+            payload = json.loads(data)
+            if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+                err = payload["error"]
+                if err.get("type") in (
+                        "invalid_request_error", "authentication_error",
+                        "permission_error", "not_found_error", "rate_limit_error",
+                        "billing_error", "overloaded_error", "api_error"):
+                    category = err["type"]
+                if isinstance(err.get("message"), str):
+                    message = err["message"]
+            req = payload.get("request_id") if isinstance(payload, dict) else None
+            if isinstance(req, str) and re.fullmatch(r"req_[A-Za-z0-9_-]{6,100}", req):
+                request_id = req
+    except (OSError, UnicodeError, ValueError, TypeError):
+        pass
+    # Service messages are untrusted and may echo supplied input values. Redact
+    # the known key, Anthropic key-like tokens, and bearer authorization values.
+    # Collapse controls and truncate to prevent multiline/log injection.
+    if api_key:
+        message = message.replace(api_key, "[REDACTED]")
+    message = re.sub(r"sk-ant-[A-Za-z0-9_-]{8,}", "[REDACTED_KEY]", message)
+    message = re.sub(r"(?i)Bearer\\s+[^\\s,;]+", "Bearer [REDACTED]", message)
+    message = re.sub(r"[\\x00-\\x1f\\x7f]+", " ", message).strip()[:320]
+    if not message:
+        message = "Provider did not supply safe error detail."
+    parts = ["Anthropic HTTP %s" % status, category, message]
+    if request_id:
+        parts.append("request_id=" + request_id)
+    return ValueError(" | ".join(parts))
+
+
+def check_model(api_key, timeout=20):
+    """Read-only, unbilled lookup for this account's selected model."""
+    if not isinstance(api_key, str) or len(api_key) < 20:
+        raise ValueError("set a NEW ANTHROPIC_API_KEY locally (never in chat or git)")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/models/" + MODEL,
+        method="GET",
+        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                 "user-agent": "bounty-pilot-local-audit/0.2"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read(65537)
+            if len(raw) > 65536:
+                raise ValueError("model metadata response is too large")
+    except urllib.error.HTTPError as exc:
+        raise _http_error(exc, api_key) from None
+    except urllib.error.URLError:
+        raise ValueError("Anthropic model lookup connection failed") from None
+    obj = json.loads(raw)
+    if not isinstance(obj, dict) or obj.get("id") != MODEL:
+        raise ValueError("provider did not confirm expected model")
+    return {"status": "MODEL_AVAILABLE", "model": MODEL,
+            "note": "Model lookup is read-only and does not run Charon analysis."}
+
+
 def request_opus(api_key, prompt_text, timeout=120):
     body = json.dumps({
         "model": MODEL,
@@ -166,9 +232,9 @@ def request_opus(api_key, prompt_text, timeout=120):
             if len(raw) > 1_500_000:
                 raise ValueError("API response exceeds bound")
     except urllib.error.HTTPError as exc:
-        # Do not reveal request headers, API key, provider error body or
-        # account billing details in the exception or output.
-        raise ValueError("Anthropic API request failed (HTTP %d)" % exc.code) from None
+        # Show bounded, redacted provider validation details to distinguish
+        # invalid params, unavailable model, and account usage limit errors.
+        raise _http_error(exc, api_key) from None
     except urllib.error.URLError:
         raise ValueError("Anthropic API connection failed; confirm network access") from None
     obj = json.loads(raw)
@@ -261,13 +327,21 @@ def run(repo, out, passes=2, max_usd=1.0, dry_run=False, requester=request_opus)
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--repo", required=True, help="clean Charon checkout pinned at the documented SHA")
-    ap.add_argument("--out", required=True, help="new, private output directory outside checkout")
+    ap.add_argument("--repo", help="clean Charon checkout pinned at the documented SHA")
+    ap.add_argument("--out", help="new, private output directory outside checkout")
+    ap.add_argument("--check-model", action="store_true",
+                    help="read-only Anthropic model access check; no source scan or token charges")
     ap.add_argument("--passes", type=int, default=2, choices=(1, 2, 3))
     ap.add_argument("--max-usd", type=float, default=1.0)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     try:
+        if args.check_model:
+            result = check_model(os.environ.get("ANTHROPIC_API_KEY", ""))
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if not args.repo or not args.out:
+            ap.error("--repo and --out are required unless --check-model is set")
         result = run(args.repo, args.out, args.passes, args.max_usd, args.dry_run)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["status"] in ("DRY_RUN", "COMPLETE_UNVERIFIED_HYPOTHESES") else 2
