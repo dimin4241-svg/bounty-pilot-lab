@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path, PurePosixPath
 
 import web3_research
@@ -105,8 +106,13 @@ def one_arm(snippets, arm):
         expressions.update({"runtime-" + key: rx for key, rx in web3_advanced.SOURCE_CUES.items()})
     counts = {name: 0 for name in expressions}
     anchors = []
+    start = time.monotonic()
     for path, rows in snippets:
+        if time.monotonic() - start > BUDGET['time_limit_seconds']:
+            raise ValueError('fixed per-arm wall-clock budget exceeded')
         for number, line in enumerate(rows, 1):
+            if number % 256 == 0 and time.monotonic() - start > BUDGET['time_limit_seconds']:
+                raise ValueError('fixed per-arm wall-clock budget exceeded')
             if len(line) > 5000:
                 continue
             for label, rx in expressions.items():
@@ -116,6 +122,7 @@ def one_arm(snippets, arm):
                         anchors.append({"path": path, "line": number, "cue": label})
     return {"arm": arm, "counts": counts,
             "lexical_cues": sum(counts.values()), "sample_anchors": anchors,
+            "elapsed_seconds": round(time.monotonic() - start, 6),
             "finding_count": 0, "verified_root_causes": 0,
             "classification": "SOURCE_TRIAGE_NOT_VULNERABILITY_FINDINGS"}
 
