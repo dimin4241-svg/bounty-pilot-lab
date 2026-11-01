@@ -8080,7 +8080,7 @@ LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence', 'privileg
           'live-reality', 'anchor-account', 'seam', 'business-logic',
           'temporal-logic', 'recovery-failure', 'semantic-mismatch', 'composition',
           'impact-first', 'classic', 'web-frontend', 'node-client', 'secrets-artifacts',
-          'wallet', 'signing-control-plane')
+          'wallet', 'signing-control-plane', 'reality-boundary')
 TRIAGE = 'triage'
 # Aiming lenses produce a reading order, not findings: spec-divergence reads what the project
 # promised in its own documentation and says where to go looking for the promise being broken.
@@ -8093,11 +8093,12 @@ ATTACK_LENSES = ('privileged-path', 'accounting', 'integration-auth', 'external-
                  'economics', 'liveness', 'classic')
 CONFIG_LENSES = ('live-reality', 'upgrade')
 LOGIC_LENSES = ('business-logic', 'temporal-logic', 'composition')
-CROSS_STACK_LENSES = ('semantic-mismatch', 'recovery-failure', 'signing-control-plane')
+CROSS_STACK_LENSES = ('semantic-mismatch', 'recovery-failure', 'signing-control-plane',
+                     'reality-boundary')
 SIGNING_LENSES = ('signing-control-plane',)
 HIGH_IMPACT_LENSES = ('impact-first', 'privileged-path', 'business-logic',
                       'economics', 'composition', 'accounting', 'external-call',
-                      'integration-auth')
+                      'integration-auth', 'reality-boundary')
 # The dApp page that builds the transaction. Its bundle carries the web sources, not contracts.
 WEB_LENSES = ('web-frontend',)
 # The layer under the contracts: node, client, runtime, precompile, prover. Six of the seven
