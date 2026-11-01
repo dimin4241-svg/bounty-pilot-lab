@@ -39,14 +39,16 @@ PLAN = (
     ("beacon-cross-client-boundary", (
         "app/eth2wrap/multi.go",
         "app/eth2wrap/success.go",
-        "app/eth2wrap/cache.go",
-        "app/eth2wrap/eth2wrap.go",
+        "app/eth2wrap/forkreadiness.go",
+        "app/eth2wrap/lazy.go",
+        "app/eth2wrap/utils.go",
     )),
-    ("validator-duties-and-signing", (
-        "core/validatorapi/router.go",
-        "core/validatorapi/validatorapi.go",
-        "core/fetcher/fetcher.go",
+    ("partial-signatures-and-broadcast", (
         "core/parsigex/parsigex.go",
+        "core/parsigex/memory.go",
+        "core/bcast/bcast.go",
+        "core/consensus/controller.go",
+        "core/consensus/qbft/transport.go",
     )),
 )
 SYSTEM = (
