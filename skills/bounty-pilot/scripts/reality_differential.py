@@ -241,12 +241,15 @@ def analyze(data, operation):
             decision = "NO_DIFFERENTIAL"
         signals = []
         if decision == "DIFFERENTIAL_LEAD":
-            signals = {
-                "settlement": ["UNBACKED_FINALIZED_LIABILITY"],
-                "outcome": ["RECORDED_SUCCESS_CONTRADICTS_INNER_OUTCOME"],
-                "context": (["AUTHORIZED_VERIFIED_EXECUTED_MISMATCH"] if a_metrics["different_fields"] else [])
-                           + (["VERIFICATION_CACHE_CONTEXT_COLLISION"] if a_metrics["cache_collision"] else []),
-            }[operation]
+            if operation == "settlement":
+                signals = ["UNBACKED_FINALIZED_LIABILITY"]
+            elif operation == "outcome":
+                signals = ["RECORDED_SUCCESS_CONTRADICTS_INNER_OUTCOME"]
+            else:
+                if a_metrics["different_fields"]:
+                    signals.append("AUTHORIZED_VERIFIED_EXECUTED_MISMATCH")
+                if a_metrics["cache_collision"]:
+                    signals.append("VERIFICATION_CACHE_CONTEXT_COLLISION")
         records.append({
             "id": ident, "decision": decision, "signals": signals,
             "candidate_observation": a_metrics, "control_observation": b_metrics,
