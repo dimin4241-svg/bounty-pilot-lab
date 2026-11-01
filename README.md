@@ -18,6 +18,24 @@
 
 ---
 
+## Current release: 0.49.1 — safe, pinned Claude Opus 5 local trial
+
+A narrowly scoped, opt-in **local** Anthropic Opus 5 audit runner for
+the public ObolNetwork/charon repository (pinned Git SHA). Three small,
+source-numbered passes focus on partial exits, Obol API permissions,
+beacon client trust and partial-signature transport while excluding the
+previously reported relay circuit exhaustion issue.
+
+The runner uses `ANTHROPIC_API_KEY` from the local environment only,
+never writes or displays it, caps the number of chargeable requests and
+estimated USD cost, and saves private outputs labeled **unverified
+hypotheses**. It does not execute target code or report findings.
+
+**No Anthropic request has been run by this release.** Mocked offline
+tests passed; users must rotate any token ever pasted into chat and
+run the tool locally with a fresh key after reviewing the source.
+[Run guide](skills/bounty-pilot/references/opus5-charon-trial.md).
+
 ## Current release: 0.49.0 — fixed-budget historical source A/B diagnostic
 
 - A new GitHub Actions workflow executes a **real six-snapshot** public
