@@ -1,5 +1,13 @@
 # The hunt loop
 
+For locally reproducible Web3 web hypotheses, after generating a source-
+grounded candidate/control plan use `bounty.py web-native-capture` to
+collect structured observations from two real native test rounds.
+Separate historical benchmark cases via `bounty.py web-history-bench`.
+No automated finding status promotion or blind result claim follows
+from these tools. See `references/web-native-history.md`.
+
+
 Passes differ by **what they are aimed at**, not by how hard they try. Repeating one prompt
 produces the same findings under new titles, and that is the main way a multi-pass hunt wastes
 money. This file settles the aiming, the dispatch mechanics, and when to stop.
