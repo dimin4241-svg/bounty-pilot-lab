@@ -22,6 +22,39 @@ to this repository, add it to a shell command or upload it in a log.
 The launcher reads `ANTHROPIC_API_KEY` from the local process environment
 only. It does not log the key or copy it to result files.
 
+## Debug Anthropic 400 errors without spending money
+
+The Messages API can return HTTP 400 for malformed input **or** an
+organization/workspace spending limit. The script now includes the
+provider's redacted, length-limited `error.type` and `error.message`
+in its output; request IDs are shown if they match the expected shape.
+Never send an API key, Authorization headers or raw request payloads
+to a public issue or chat.
+
+After rotating any API key previously pasted into chat, test model
+access without consuming paid model tokens:
+
+```sh
+read -rsp 'Enter your NEW Anthropic API key: ' ANTHROPIC_API_KEY; echo
+export ANTHROPIC_API_KEY
+python3 skills/bounty-pilot/scripts/opus5_charon_audit.py --check-model
+unset ANTHROPIC_API_KEY
+```
+
+Possible results:
+- `MODEL_AVAILABLE`: this key can retrieve Opus 5 model metadata,
+  but it does **not** guarantee successful paid Messages requests.
+- `HTTP 400 | invalid_request_error | You have reached...`:
+  check organization/workspace spending limits in Anthropic Console.
+- `HTTP 401 | authentication_error`: key invalid, revoked or expired.
+- `HTTP 404 | not_found_error`: verify model access for this account.
+- Other 400: use the now-visible redacted validation message and request ID.
+
+`PARTIAL_API_FAILURE` with `passes_completed=0` indicates no
+successful pass and zero locally observed usage; it does NOT provide
+a provider billing statement. Do not retry blindly while HTTP 400
+persists.
+
 ## Run on your machine
 
 Prerequisites: Python 3.9+, Git, internet access to official GitHub

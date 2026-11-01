@@ -1,5 +1,6 @@
 """Opus5 audit launcher: offline tests, no keys, no Anthropic API calls."""
 import importlib.util
+import io
 import json
 import os
 import stat
@@ -132,6 +133,69 @@ class SecureOpusRunnerTests(unittest.TestCase):
         f.write_text("x" * (opus.MAX_FILE_BYTES + 1))
         with self.assertRaisesRegex(ValueError, "per-file budget"):
             opus._source(self.repo, [name])
+
+    def test_http400_shows_safe_provider_reason_and_request_id(self):
+        response = json.dumps({
+            "type": "error",
+            "error": {"type": "invalid_request_error",
+                      "message": "You have reached your specified API usage limits"},
+            "request_id": "req_0123456789"
+        }).encode()
+        err = opus.urllib.error.HTTPError(opus.API_URL, 400, "Bad request",
+                                           {}, io.BytesIO(response))
+        with mock.patch.object(opus.urllib.request, "urlopen", side_effect=err):
+            with self.assertRaisesRegex(ValueError, "usage limits") as ctx:
+                opus.request_opus("secret-key-not-to-echo", "test")
+        self.assertIn("invalid_request_error", str(ctx.exception))
+        self.assertIn("req_0123456789", str(ctx.exception))
+        self.assertNotIn("secret-key-not-to-echo", str(ctx.exception))
+
+    def test_error_body_redacts_keys_and_control_chars(self):
+        secret = "sk-ant-api03-ABCD1234SECRET_DO_NOT_LOG"
+        response = json.dumps({
+            "error": {"type": "invalid_request_error",
+                      "message": "Invalid header " + secret +
+                                 "\\nBearer abc123secret\\r broken"}
+        }).encode()
+        err = opus.urllib.error.HTTPError(opus.API_URL, 400, "Bad request",
+                                           {}, io.BytesIO(response))
+        text = str(opus._http_error(err, secret))
+        self.assertNotIn(secret, text)
+        self.assertNotIn("abc123secret", text)
+        self.assertNotIn("\\n", text)
+        self.assertNotIn("\\r", text)
+        self.assertIn("[REDACTED", text)
+
+    def test_provider_payload_overlimit_is_ignored(self):
+        data = b"x" * 9000
+        err = opus.urllib.error.HTTPError(opus.API_URL, 400, "Bad request",
+                                           {}, io.BytesIO(data))
+        text = str(opus._http_error(err, "secret-not-for-logs"))
+        self.assertIn("HTTP 400", text)
+        self.assertLess(len(text), 500)
+
+    def test_check_model_uses_read_only_model_metadata(self):
+        response = io.BytesIO(json.dumps({
+            "id": opus.MODEL, "type": "model"
+        }).encode())
+        with mock.patch.object(opus.urllib.request, "urlopen",
+                               return_value=response) as run:
+            result = opus.check_model("new-key-" + "x"*30)
+        self.assertEqual(result["status"], "MODEL_AVAILABLE")
+        request = run.call_args[0][0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertTrue(request.full_url.endswith("/v1/models/" + opus.MODEL))
+
+    def test_check_model_does_not_need_source_paths(self):
+        with mock.patch.object(opus, "check_model",
+                               return_value={"status": "MODEL_AVAILABLE",
+                                             "model": opus.MODEL}) as checker:
+            with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "secret"+"0"*30}):
+                with mock.patch("sys.stdout", new_callable=io.StringIO) as sink:
+                    exit_code = opus.main(["--check-model"])
+        self.assertEqual(exit_code, 0)
+        checker.assert_called_once()
+        self.assertNotIn("secret", sink.getvalue())
 
     def test_request_error_does_not_echo_provider_secret(self):
         with mock.patch.object(opus.urllib.request, "urlopen",

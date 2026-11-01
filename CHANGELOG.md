@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.49.2 — Anthropic Messages API 400 diagnostics
+
+- Added free `--check-model` read-only GET of the exact pinned
+  `claude-opus-5` ID for local key access checks.
+- Display strictly bounded/redacted provider error type, message and
+  request ID for otherwise opaque HTTP 400/401/404 failures. Provider
+  bodies, raw keys and request headers remain unlogged.
+- Added mocked spend-limit/auth/model checks and API key redaction tests.
+  No live Anthropic API calls have been performed in this release.
+
+
 ## 0.49.1 — Local Anthropic Opus 5 Charon trial harness
 
 - Added a public-source-only Obol Charon fixed-revision three-pass
