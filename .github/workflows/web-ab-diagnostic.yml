@@ -41,6 +41,13 @@ jobs:
           report = json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'web-ab-run/diagnostic-report.json').read_text())
           assert report['snapshots_executed'] == 6
           assert report['source_windows_identical_between_arms'] is True
+          assert all(item['source']['source_file_count'] > 0 and item['source']['source_lines'] >= 20 for item in report['snapshots'])
+          for item in report['snapshots']:
+              print('SNAPSHOT', item['task_id'], 'files', item['source']['source_file_count'],
+                    'lines', item['source']['source_lines'],
+                    'bytes', item['source']['source_bytes'],
+                    'baseline_cues', item['arms']['baseline']['lexical_cues'],
+                    'extended_cues', item['arms']['extended']['lexical_cues'])
           for name in ('baseline','extended'):
               item = report['arms'][name]['score']
               print(name, 'TP', item['true_positives'], 'FN', item['false_negatives'],
