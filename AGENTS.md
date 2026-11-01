@@ -7,6 +7,21 @@ directories, logs or credentials. The toolkit being public does not make any fin
 
 Preserve these invariants when editing:
 
+- **Capture real test outputs, not operator-filled verdicts.** The web-native
+  collector uses scenario_runner with a pinned Git revision, actual recognized
+  and successful candidate/control test executions and exactly one constrained
+  observation marker per case. Recompute transcript digests; repeat both
+  rounds. Test code may lie, so reviewers must check source asserts.
+  Execution must never be enabled without operator confirmation of an
+  externally enforced isolation and network boundary. No secrets or real
+  chain values should be passed via the environment.
+- **Historically scored ≠ independently blind.** All predictions must be
+  immutable before the evaluator sees them, and every individual candidate
+  claim needs independent reviewer adjudication. Published case labels,
+  patched revisions and source advisories must never enter the model's
+  hunt prompt. Published historical issues may have contaminated training,
+  and a three-case corpus cannot support a measured improvement claim.
+
 - **Advanced Web3 integrity tools stay offline and non-attesting.** Never
   fetch live JS/CDN content, send target requests or promote signed-intent,
   business or artifact drift observations to verified findings. Baseline
