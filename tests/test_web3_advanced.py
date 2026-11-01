@@ -326,7 +326,7 @@ class CliSafetyTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
             subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
             subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test",
-                            "-c", "user.email=test@example.invalid", "-c", "commit",
+                            "-c", "user.email=test@example.invalid", "commit",
                             "-qm", "fixture"], check=True)
             manifest = tmp / "manifest.json"
             manifest.write_text(json.dumps({"schema_version": 1, "baseline_id": "review",
