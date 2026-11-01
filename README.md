@@ -18,6 +18,18 @@
 
 ---
 
+## Current release: 0.49.2 — diagnose Anthropic API 400 without leaking secrets
+
+Adds `--check-model` to the local Charon Opus 5 runner: a read-only
+provider model-availability check with no source analysis or token spend.
+The Messages API now reports bounded/redacted error categories, safe
+validation messages and provider request IDs to identify rejected
+parameters, key errors and spending limits. The exact Opus 5 model ID
+remains `claude-opus-5`. Unit tests use mocked HTTP responses; no paid
+Anthropic API access is attempted in CI.
+
+[Updated local runbook](skills/bounty-pilot/references/opus5-charon-trial.md).
+
 ## Current release: 0.49.1 — safe, pinned Claude Opus 5 local trial
 
 A narrowly scoped, opt-in **local** Anthropic Opus 5 audit runner for
