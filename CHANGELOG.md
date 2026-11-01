@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.48.0 — Native Web3 evidence capture and historical evaluation protocol
+
+- Added `web-native-capture`: exact Git-HEAD-bound, two-round native
+  candidate/negative-control execution using the existing
+  `scenario_runner`; accepts one strictly framed observation marker
+  from each completed test, hashes captured scrubbed transcripts and
+  creates private observation and differential artifacts.
+- Native execution is opt-in and requires confirmation of a real external
+  isolation boundary. The runner itself does NOT enforce network isolation
+  and does not attest that a test's printed observation is truthful.
+- Added `web-history-bench` prepare/verify/seal/score workflow with
+  separated random opaque hunter queues and evaluator-held answer maps,
+  immutable sealed predictions, required human adjudication of all
+  claims and negative patched revision controls.
+- Seeded three externally published historical web bugs at official pinned
+  before/after Git commits (Next.js 2025, CryptoJS 2026 + 2023).
+  The benchmark has not been executed against LLMs or native vulnerable
+  target builds, and the tiny public corpus is contamination-prone.
+- Added focused native execution/benchmarks tests, detailed research guide,
+  and English/Russian release notes. No rediscovery uplift claim.
+
+
 ## 0.47.0 — Advanced Web3 financial and browser integrity
 
 - Added offline `web3-advanced business-invariants` comparisons for
