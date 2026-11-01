@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.49.1 — Local Anthropic Opus 5 Charon trial harness
+
+- Added a public-source-only Obol Charon fixed-revision three-pass
+  Claude Opus 5 runner with source SHA-256 and numbered file anchors.
+- API key is read exclusively from the local environment and never
+  logged or committed. The tool caps calls and estimated USD cost,
+  creates private files and never executes target code.
+- Excludes previously reported Charon relay circuit-cap issue from
+  the intended review and marks responses UNVERIFIED_MODEL_HYPOTHESES.
+- Added offline mocked client, Git pin, secret-hygiene and cost tests,
+  with EN/RU instructions.
+- **No live paid API invocation was made in CI or this environment.**
+
+
 ## 0.49.0 — Historical Web A/B source diagnostic
 
 - Added a GitHub Actions replay fetching six immutable affected/patched
