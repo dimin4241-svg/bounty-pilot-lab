@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.46.0 — Offline Web3 Security Research Engine
+
+- Added offline `web3 scope`: strict exact-origin classification with
+  explicit read-only scope declarations, exclusions, local-only HTTP support,
+  and source-directory policy validation. Never contacts a target.
+- Added `web3 api-map`: bounded, tracked-source-only REST route and
+  Web3 integration cue inventory with file:line anchors. Lexical inventory
+  is not an AST, endpoint list or security verdict.
+- Added `web3 authz`: same-resource paired local authorization observations
+  requiring a non-owner candidate and owner negative control.
+- Added `web3 wallet-intent`: paired, complete signed/displayed/executed
+  binding observations and successful execution after revoked session;
+  rejected or unknown execution is never an exploit lead.
+- Added source-grounded `web-api-boundary` hunt agent in `--lens web`
+  and backend-aware stack routing; 31 new synthetic and bundle tests.
+- Default offline, no HTTP/RPC/target-code execution. Source revisions,
+  native traces and scope declarations are provided but not independently
+  authenticated. No claims of historical rediscovery or payout improvement.
+- Only the first four Web3 research components are implemented; payment,
+  CDN/provenance and multi-version engines remain future work.
+
+
 ## 0.45.0 — Reality differentials
 
 - Added offline `reality-diff settlement`: exact atomic-unit checks for newly
