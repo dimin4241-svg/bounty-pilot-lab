@@ -601,7 +601,8 @@ class BundleInputTests(SearchFixture):
 
     def test_web_frontend_is_a_lens_and_reads_the_web_sources(self):
         result = bounty.bundle(self.repo, self.run, ['web'])
-        self.assertEqual([b['lens'] for b in result['bundles']], ['web-frontend'])
+        self.assertEqual([b['lens'] for b in result['bundles']],
+                         ['web-frontend', 'web-api-boundary'])
         text = (self.run / 'bundles/web-frontend-bundle.md').read_text()
         for name in ('app/src/App.jsx', 'app/src/Swap.tsx', 'app/src/Page.vue', 'app/index.html'):
             self.assertIn('### ' + name, text)
@@ -666,7 +667,7 @@ class LensRegistryTests(unittest.TestCase):
         self.assertIn('web-frontend', bounty.LENSES)
         self.assertEqual(bounty.ATTACK_LENSES[0], 'privileged-path')
         self.assertEqual(bounty.ATTACK_LENSES[-1], 'classic')
-        self.assertEqual(bounty.WEB_LENSES, ('web-frontend',))
+        self.assertEqual(bounty.WEB_LENSES, ('web-frontend', 'web-api-boundary'))
         for lens in bounty.LENSES:
             self.assertTrue((bounty.SKILL_ROOT / 'references/hunt-agents' / f'{lens}-agent.md')
                             .is_file(), lens)
