@@ -1,0 +1,56 @@
+name: web-ab-historical-diagnostic
+
+on:
+  pull_request:
+    paths:
+      - 'skills/bounty-pilot/scripts/web_ab_diagnostic.py'
+      - 'skills/bounty-pilot/scripts/web_historical_bench.py'
+      - 'skills/bounty-pilot/references/web-historical-seeds.json'
+      - '.github/workflows/web-ab-diagnostic.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/bounty-pilot/scripts/web_ab_diagnostic.py'
+      - 'skills/bounty-pilot/scripts/web_historical_bench.py'
+      - 'skills/bounty-pilot/references/web-historical-seeds.json'
+      - '.github/workflows/web-ab-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Exact-source A/B: public GitHub snapshots, bounded lexical-only hunters
+        run: |
+          python3 skills/bounty-pilot/scripts/web_ab_diagnostic.py \
+            --out "${RUNNER_TEMP}/web-ab-run"
+      - name: Print measured A/B totals (not a model benchmark)
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          report = json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'web-ab-run/diagnostic-report.json').read_text())
+          assert report['snapshots_executed'] == 6
+          assert report['source_windows_identical_between_arms'] is True
+          for name in ('baseline','extended'):
+              item = report['arms'][name]['score']
+              print(name, 'TP', item['true_positives'], 'FN', item['false_negatives'],
+                    'FP', item['false_positive_claims'], 'recall', item['recall'])
+          print('CONCLUSION:', report['classification'], '| no model inference | no native historical PoCs')
+          PY
+      - name: Upload immutable source-budget and sealed evaluation summary
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: web-ab-real-source-diagnostic
+          path: ${{ runner.temp }}/web-ab-run/diagnostic-report.json
+          retention-days: 30
