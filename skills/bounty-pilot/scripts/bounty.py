@@ -8080,7 +8080,7 @@ LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence', 'privileg
           'live-reality', 'anchor-account', 'seam', 'business-logic',
           'temporal-logic', 'recovery-failure', 'semantic-mismatch', 'composition',
           'impact-first', 'classic', 'web-frontend', 'node-client', 'secrets-artifacts',
-          'wallet', 'signing-control-plane', 'reality-boundary')
+          'wallet', 'signing-control-plane', 'reality-boundary', 'web-api-boundary')
 TRIAGE = 'triage'
 # Aiming lenses produce a reading order, not findings: spec-divergence reads what the project
 # promised in its own documentation and says where to go looking for the promise being broken.
@@ -8100,7 +8100,7 @@ HIGH_IMPACT_LENSES = ('impact-first', 'privileged-path', 'business-logic',
                       'economics', 'composition', 'accounting', 'external-call',
                       'integration-auth', 'reality-boundary')
 # The dApp page that builds the transaction. Its bundle carries the web sources, not contracts.
-WEB_LENSES = ('web-frontend',)
+WEB_LENSES = ('web-frontend', 'web-api-boundary')
 # The layer under the contracts: node, client, runtime, precompile, prover. Six of the seven
 # largest public bounties were paid here, and no lens read it until 0.25.
 NODE_LENSES = ('node-client',)
