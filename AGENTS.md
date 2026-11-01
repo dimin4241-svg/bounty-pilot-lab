@@ -7,6 +7,18 @@ directories, logs or credentials. The toolkit being public does not make any fin
 
 Preserve these invariants when editing:
 
+- **The Web3 research engine remains offline.** `web3 scope` classifies
+  URL strings only; `web3 api-map` reads tracked local source; `authz`
+  and `wallet-intent` compare untrusted investigator-supplied native
+  observations. Never add live requests, credential use, production
+  fuzzing, wildcard hosts, automatic transaction signing or status
+  promotion to these four commands. Scope evidence, source revisions
+  and trace SHA-256 fields are metadata, not independently verified facts.
+- **Boundaries need negative controls.** An owner must be authorized
+  for the same exact resource and operation, wallet bound fields must be
+  present in every stage, and rejected/unknown execution cannot be
+  treated as a successful revoked-session bypass.
+
 - **Structural validation and exploit verification stay separate.** `check` reports structure;
   `check --submission` reports readiness; neither establishes that a finding is real, and no commit
   may blur that distinction in code or in prose.

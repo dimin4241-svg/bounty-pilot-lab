@@ -18,6 +18,23 @@
 
 ---
 
+## Current release: 0.46.0 — offline Web3 Security Research Engine
+
+- **Scope gate:** exact-origin and explicitly permitted source-prefix validation
+  using a researcher-provided offline policy; does not contact targets.
+- **API map:** bounded, tracked-source inventory of REST declarations and
+  Web3 wallet, authentication, tenant, money, queue and WebSocket clues.
+- **Authorization matrix:** paired nonowner/owner local observations for the
+  same protected object and operation.
+- **Wallet intent:** paired display/sign/execute comparisons and
+  revoked-session observations requiring successful execution.
+- **New hunt lens:** `web-api-boundary` is included in `--lens web` and
+  backend-aware recommendations. All observations remain unverified leads.
+- CLI: `python3 skills/bounty-pilot/scripts/bounty.py web3 --help`.
+  [Examples and limitations](skills/bounty-pilot/references/web3-security.md).
+  No live probing, generated production requests, native exploit verification,
+  or measured detection uplift is claimed.
+
 ## Current release: 0.45.0 — three reality differential engines
 
 - **Settlement Truth:** checks exact atomic-unit changes against newly unbacked finalized liabilities in candidate/control observations.
