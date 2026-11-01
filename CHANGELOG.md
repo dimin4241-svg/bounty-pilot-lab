@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.47.0 — Advanced Web3 financial and browser integrity
+
+- Added offline `web3-advanced business-invariants` comparisons for
+  completed trades that debit the wrong asset, accepted negative fees, and
+  finalized credits without finalized backing. Native candidate/control
+  observations are investigator-supplied.
+- Added `web3-advanced signed-intent-mirror`: compare complete approved
+  multi-leg display, decoded signed payload and successful actual execution;
+  reject partial displays, absent bindings, bad controls or failed execution.
+  This is **not** a signature/ABI decoder or attestation.
+- Added `web3-advanced runtime-provenance`: byte-for-byte SHA-256 checks of
+  tracked local JS/build artifacts against an investigator-provided hash
+  manifest, with bounded lexical wallet/script/address-change cues only
+  when the local artifact differs. This does **not** fetch CDN or prove
+  deployed malicious scripts.
+- Added `web-integrity` hunt lens to the web group and backend routing;
+  a separate technical protocol plus native/synthetic regression tests.
+- All modules are offline and create leads, not validated exploits.
+  No historical rediscovery or bounty-yield improvement was measured.
+
+
 ## 0.46.0 — Offline Web3 Security Research Engine
 
 - Added offline `web3 scope`: strict exact-origin classification with

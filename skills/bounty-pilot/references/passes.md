@@ -59,7 +59,7 @@ or justified in `scope.md`. Pick by shape, and say in `coverage.md` which you ch
 | Cross-language relayer + contracts | `semantic-mismatch`, `recovery-failure`, `integration-auth` | `composition`, `coverage-gap` |
 | Go / Python / TypeScript backend | `privileged-path`, `recovery-failure`, `business-logic` | `semantic-mismatch`, `composition` |
 | In-scope signing API / withdrawal worker / HSM-MPC adapter | `signing-control-plane` (`--lens signing`) | `privileged-path`, `semantic-mismatch`; local mock tests only |
-| A website or dApp listed in scope | `web-frontend` + `web-api-boundary` (`--lens web`) | exact-origin exclusions, offline API inventory and paired local native controls |
+| A website or dApp listed in scope | `web-frontend` + `web-api-boundary` + `web-integrity` (`--lens web`) | exact-origin exclusions, local financial/intent candidate-control, pinned JS artifact comparison |
 | In-scope Web3 backend, payment API or wallet login | `web-api-boundary` + `privileged-path` | `recovery-failure`, `semantic-mismatch`, `reality-boundary` |
 | Any EVM target | `classic` (Part A always; Part B unless `solidity-auditor` ran) | — |
 

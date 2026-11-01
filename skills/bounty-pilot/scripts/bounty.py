@@ -8080,7 +8080,8 @@ LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence', 'privileg
           'live-reality', 'anchor-account', 'seam', 'business-logic',
           'temporal-logic', 'recovery-failure', 'semantic-mismatch', 'composition',
           'impact-first', 'classic', 'web-frontend', 'node-client', 'secrets-artifacts',
-          'wallet', 'signing-control-plane', 'reality-boundary', 'web-api-boundary')
+          'wallet', 'signing-control-plane', 'reality-boundary', 'web-api-boundary',
+          'web-integrity')
 TRIAGE = 'triage'
 # Aiming lenses produce a reading order, not findings: spec-divergence reads what the project
 # promised in its own documentation and says where to go looking for the promise being broken.
@@ -8100,7 +8101,7 @@ HIGH_IMPACT_LENSES = ('impact-first', 'privileged-path', 'business-logic',
                       'economics', 'composition', 'accounting', 'external-call',
                       'integration-auth', 'reality-boundary')
 # The dApp page that builds the transaction. Its bundle carries the web sources, not contracts.
-WEB_LENSES = ('web-frontend', 'web-api-boundary')
+WEB_LENSES = ('web-frontend', 'web-api-boundary', 'web-integrity')
 # The layer under the contracts: node, client, runtime, precompile, prover. Six of the seven
 # largest public bounties were paid here, and no lens read it until 0.25.
 NODE_LENSES = ('node-client',)
@@ -11673,6 +11674,15 @@ def build_parser():
     web3.add_argument('--input', default=None, help='native paired observations for authz/wallet-intent')
     web3.add_argument('--out', default=None, help='private output file, create-only')
 
+    adv = sub.add_parser('web3-advanced',
+                         help='offline paired financial/intent and JS artifact provenance research')
+    adv.add_argument('operation', choices=('business-invariants', 'signed-intent-mirror',
+                                           'runtime-provenance'))
+    adv.add_argument('--input', required=True, help='local paired observations or artifact manifest')
+    adv.add_argument('--repo', default=None, help='local tracked checkout for runtime-provenance')
+    adv.add_argument('--policy', default=None, help='offline scope declaration for runtime-provenance')
+    adv.add_argument('--out', default=None, help='new private JSON output; never overwrite')
+
     rn = sub.add_parser('research-next', help='opt-in spec mapping, native repetitions and private hypothesis memory')
     rn.add_argument('operation', choices=('spec', 'native', 'memory-record', 'memory-lookup'))
     rn.add_argument('--repo', default=None)
@@ -12000,6 +12010,28 @@ def main(argv=None):
             if args.out:
                 module.write_private(args.out, result)
                 print(json.dumps({'saved_to': args.out, 'classification': result['classification']}))
+            else:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        if args.action == 'web3-advanced':
+            engine = load_impact_helper('web3_advanced')
+            if args.operation == 'runtime-provenance':
+                if not args.repo or not args.policy:
+                    raise ValueError('runtime-provenance requires --repo, --policy and --input')
+                result = engine.runtime_provenance(args.repo,
+                                                   engine.json_file(args.policy),
+                                                   engine.json_file(args.input))
+            else:
+                if args.repo or args.policy:
+                    raise ValueError('business/intent observations do not accept --repo/--policy')
+                observations = engine.json_file(args.input)
+                result = (engine.compare_business(observations)
+                          if args.operation == 'business-invariants'
+                          else engine.compare_intent(observations))
+            if args.out:
+                engine.private_write(args.out, result)
+                print(json.dumps({'saved_to': args.out,
+                                  'classification': result['classification']}))
             else:
                 print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0

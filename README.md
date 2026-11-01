@@ -18,6 +18,23 @@
 
 ---
 
+## Current release: 0.47.0 — financial and browser integrity research
+
+- **Web business invariants:** compare native candidate/control records for
+  wrong-asset trades, signed negative fees and credits before finalized backing.
+- **Signed-intent mirror:** compare *all* displayed transaction legs, locally
+  decoded signed legs and observed execution fields. Requires successful
+  candidate/control native observations and explicit bound fields.
+- **Local runtime provenance:** compare tracked build/source bytes against
+  supplied SHA-256 baselines and flag changed JavaScript with relevant
+  script, wallet and address-handling cues.
+- **New hunt agent:** `web-integrity` joins `bundle --lens web` and
+  backend-aware routing. Use `bounty.py web3-advanced --help`.
+  [Full protocol](skills/bounty-pilot/references/web3-advanced-integrity.md).
+- **Limit:** All inputs/decoders/baselines are investigator-supplied. This
+  does not independently decode EIP-712, fetch live CDN code, execute
+  target programs, confirm exploits or demonstrate improved payouts.
+
 ## Current release: 0.46.0 — offline Web3 Security Research Engine
 
 - **Scope gate:** exact-origin and explicitly permitted source-prefix validation

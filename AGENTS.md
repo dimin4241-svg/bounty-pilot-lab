@@ -7,6 +7,14 @@ directories, logs or credentials. The toolkit being public does not make any fin
 
 Preserve these invariants when editing:
 
+- **Advanced Web3 integrity tools stay offline and non-attesting.** Never
+  fetch live JS/CDN content, send target requests or promote signed-intent,
+  business or artifact drift observations to verified findings. Baseline
+  manifests, source revisions, trace digests and decoded payload fields
+  are investigator-supplied assertions only. Require complete candidate
+  and negative control, fixed asset units and actual successful execution.
+  JavaScript cue lines are only manual reading leads.
+
 - **The Web3 research engine remains offline.** `web3 scope` classifies
   URL strings only; `web3 api-map` reads tracked local source; `authz`
   and `wallet-intent` compare untrusted investigator-supplied native
