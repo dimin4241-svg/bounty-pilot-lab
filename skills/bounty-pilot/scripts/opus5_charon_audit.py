@@ -155,7 +155,8 @@ def _http_error(exc, api_key):
     message = "See Anthropic Console for request validation or spending limits."
     request_id = ""
     try:
-        data = exc.read(8193)
+        # Python 3.9 HTTPError may have no response stream (fp=None).
+        data = exc.read(8193) if getattr(exc, "fp", None) is not None else b""
         if len(data) <= 8192:
             payload = json.loads(data)
             if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
