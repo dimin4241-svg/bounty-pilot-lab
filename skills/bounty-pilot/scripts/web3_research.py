@@ -302,10 +302,12 @@ def _access(side):
 
 def _wallet(side, bound_fields):
     _object(side, "wallet observation",
-            ("displayed", "signed", "executed", "session_permission", "trace_sha256"))
+            ("displayed", "signed", "executed", "session_permission", "execution_status", "trace_sha256"))
     _trace(side)
     if side.get("session_permission") not in ("valid", "revoked", "unknown"):
         raise ValueError("session_permission must be valid, revoked or unknown")
+    if side.get("execution_status") not in ("success", "rejected", "unknown"):
+        raise ValueError("wallet execution_status must be success, rejected or unknown")
     stages = {}
     for name in ("displayed", "signed", "executed"):
         value = _object(side.get(name), name)
@@ -345,7 +347,8 @@ def observe(data, mode):
             if "bound_fields" in case:
                 raise ValueError("bound_fields is wallet-only")
             a, b = _access(cand), _access(ctl)
-            comparable = a["resource_id"] == b["resource_id"] and a["operation"] == b["operation"]
+            comparable = (a["resource_id"] == b["resource_id"] and
+                          a["operation"] == b["operation"] and a["owner"] == b["owner"])
             valid_actors = a["actor"] != a["owner"] and b["actor"] == b["owner"]
             a_bad = a["result"] == "allowed" and valid_actors
             b_bad = b["result"] != "allowed"
@@ -360,11 +363,13 @@ def observe(data, mode):
                 raise ValueError("invalid wallet-intent binding fields")
             a, b = _wallet(cand, fields), _wallet(ctl, fields)
             unknown = a is None or b is None or "unknown" in (
-                cand["session_permission"], ctl["session_permission"])
+                cand["session_permission"], ctl["session_permission"],
+                cand["execution_status"], ctl["execution_status"])
             # A revoked candidate still executing is a possible session drift.
-            a_bad = bool(a) or (cand["session_permission"] == "revoked" and
-                                cand["executed"].get("operation_digest") is not None)
-            b_bad = bool(b) or ctl["session_permission"] != "valid"
+            a_bad = cand["execution_status"] == "success" and (
+                bool(a) or cand["session_permission"] == "revoked")
+            b_bad = (bool(b) or ctl["session_permission"] != "valid" or
+                     ctl["execution_status"] != "success")
             comparable = True
             valid_actors = True
             if a is None or b is None:
@@ -385,7 +390,7 @@ def observe(data, mode):
             record["signals"] = (["CROSS_OWNER_OPERATION_ALLOWED"] if mode == "authz" else
                 (["INTENT_FIELD_DIVERGENCE"] if a else []) +
                 (["REVOKED_SESSION_EXECUTION_OBSERVED"] if cand["session_permission"] == "revoked"
-                 and cand["executed"].get("operation_digest") is not None else []))
+                 and cand["execution_status"] == "success" else []))
         records.append(record)
     return {"schema_version": 1, "mode": mode,
             "classification": "RESEARCHER_SUPPLIED_LOCAL_OBSERVATIONS",
