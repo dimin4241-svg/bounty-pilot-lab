@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.45.0 — Reality differentials
+
+- Added offline `reality-diff settlement`: exact atomic-unit checks for newly
+  unbacked finalized liabilities, requiring a negative-control observation.
+- Added `reality-diff outcome`: detects a finalized success record that
+  contradicts failed nested items under an explicit completion policy.
+- Added `reality-diff context`: compares authorized, verified and executed
+  field bindings and cache keys reused across distinct verification contexts.
+- Added bounded JSON input, duplicate-ID/key refusal, Unicode checks, private
+  no-overwrite output, 25 synthetic candidate/control regression tests and
+  `bounty.py` CLI routing.
+- All outputs remain unverified leads based on researcher-supplied observations,
+  **not verified exploits or native reproductions**. No measured uplift claim.
+
+
 ## 0.44.0 — Lab consolidation and isolated PoC execution
 
 - Consolidated previously tested draft 0.40–0.42 research capabilities and the
