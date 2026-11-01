@@ -247,7 +247,7 @@ class HistoricBenchmarkTests(Checkout):
         history.seal(queue, self.predictions(queue, mapping), evaluator)
         p = evaluator / "sealed-predictions.json"
         d = json.loads(p.read_text())
-        d["tasks"][0]["findings"] = []
+        d["tasks"][0]["source_revision"] = REV  # guaranteed to change the sealed bytes
         p.write_text(json.dumps(d))
         with self.assertRaisesRegex(ValueError, "edited"):
             history.score(evaluator, {"schema_version": 1, "reviewer": "reviewer",
