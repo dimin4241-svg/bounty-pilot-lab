@@ -18,6 +18,17 @@
 
 ---
 
+## Current release: 0.49.0 — fixed-budget historical source A/B diagnostic
+
+- A new GitHub Actions workflow executes a **real six-snapshot** public
+  historical-source replay under the same 120-file/6,000-line/1MB/60s budget.
+- Compares existing Bounty Pilot baseline source cues against the extended
+  generic JS cues, on the **same** pinned source bytes; seals both outputs
+  before historical scoring and uploads the report artifact.
+- This is deliberately **not** a blind LLM trial or independently validated
+  vulnerability rediscovery. Lexical cues never become finding claims.
+  [Detailed measurement protocol and limitations](skills/bounty-pilot/references/web-ab-diagnostic.md).
+
 ## Current release: 0.48.0 — repeatable native evidence + historical web benchmark
 
 - **Native capture** runs approved local candidate/control tests twice through

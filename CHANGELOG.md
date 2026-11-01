@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.49.0 — Historical Web A/B source diagnostic
+
+- Added a GitHub Actions replay fetching six immutable affected/patched
+  GitHub source snapshots from the pre-existing published reference set.
+  Enforced identical file/line/byte/wall-clock caps per baseline/extended
+  source-cue arm and recorded original source-byte SHA-256 provenance.
+- Reused existing evaluator-separated `web-history-bench` prepare,
+  verify, seal and score stages. Lexical reading cues do NOT become
+  security findings. Reports accurately show no verified rediscoveries.
+- Added offline unit regressions and technical protocol documentation.
+  No LLM calls, historical native PoCs, truly blind holdout or
+  independent human adjudication were performed by this diagnostic.
+
+
 ## 0.48.0 — Native Web3 evidence capture and historical evaluation protocol
 
 - Added `web-native-capture`: exact Git-HEAD-bound, two-round native

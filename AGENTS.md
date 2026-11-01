@@ -7,6 +7,14 @@ directories, logs or credentials. The toolkit being public does not make any fin
 
 Preserve these invariants when editing:
 
+- **A/B source-cue diagnostic does not establish vulnerability discovery.**
+  Both arms need identical immutable historical source bytes, fixed
+  source budgets, no candidate access to evaluator labels, complete
+  pre-score sealing and published results even when zero findings.
+  Never convert lexical risk cues into vulnerability claims, claim that
+  published cases are genuinely unseen, or label this offline diagnostic
+  as independent LLM or native exploit verification.
+
 - **Capture real test outputs, not operator-filled verdicts.** The web-native
   collector uses scenario_runner with a pinned Git revision, actual recognized
   and successful candidate/control test executions and exactly one constrained

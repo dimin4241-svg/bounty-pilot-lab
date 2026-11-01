@@ -4,6 +4,18 @@ description: The experimental "lab" line of Bounty Pilot, ahead of the stable bo
 ---
 # Bounty Pilot Lab
 
+## Historic source diagnostic — Lab 0.49
+
+Use `scripts/web_ab_diagnostic.py` to run the bounded, reproducible
+**lexical-only** baseline versus extended pass on six published,
+pinned historical Git snapshots. Source data is identical for both arms,
+and the report uses the existing sealed benchmark scorer. The GitHub
+Actions workflow uploads the complete report. Do not call source cues
+security findings: no model calls, native PoCs or independent human
+reviews are supplied by this procedure. For a truly blind model run,
+use the evaluator-separated workflow with new holdout cases and
+a separately engaged agent/reviewer. See `references/web-ab-diagnostic.md`.
+
 ## Native evidence and historical replay — Lab 0.48
 
 When an in-scope web bug hypothesis is testable in a local native framework,
