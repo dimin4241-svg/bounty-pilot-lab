@@ -7,6 +7,14 @@ directories, logs or credentials. The toolkit being public does not make any fin
 
 Preserve these invariants when editing:
 
+- **Never commit, log, echo, pass into tests, or otherwise persist real
+  Anthropic API secrets.** The `opus5_charon_audit.py` trial uses
+  only a local environment key, exact pinned public source, preflight
+  conservative USD upper bound, no target execution, and externally
+  paid Anthropic Messages API calls only on explicit local invocation.
+  Do not misrepresent mock tests as a successful real Opus model run.
+  Never promote model hypotheses into confirmed bug bounty reports.
+
 - **A/B source-cue diagnostic does not establish vulnerability discovery.**
   Both arms need identical immutable historical source bytes, fixed
   source budgets, no candidate access to evaluator labels, complete
