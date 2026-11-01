@@ -11657,6 +11657,12 @@ def build_parser():
     rd.add_argument('--scope', action='append', default=None,
                     help='required in-scope relative path prefix for scan; repeatable')
 
+    reality = sub.add_parser('reality-diff',
+                             help='offline candidate/control checks for settlement, nested outcomes and context binding')
+    reality.add_argument('operation', choices=('settlement', 'outcome', 'context'))
+    reality.add_argument('--input', required=True, help='local investigator-supplied paired observations JSON')
+    reality.add_argument('--out', default=None, help='new private JSON output path (never overwrite)')
+
     rn = sub.add_parser('research-next', help='opt-in spec mapping, native repetitions and private hypothesis memory')
     rn.add_argument('operation', choices=('spec', 'native', 'memory-record', 'memory-lookup'))
     rn.add_argument('--repo', default=None)
@@ -11956,6 +11962,16 @@ def main(argv=None):
                           else rd.byte_tuple(observations) if args.operation == 'byte-tuple'
                           else rd.quorum(observations))
             print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        if args.action == 'reality-diff':
+            engine = load_impact_helper('reality_differential')
+            result = engine.analyze(engine.load_input(args.input), args.operation)
+            if args.out:
+                engine._write_private(args.out, result)
+                print(json.dumps({'file': args.out, 'leads': result['leads'],
+                                  'classification': result['classification']}, indent=2))
+            else:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0
         if args.action == 'research-next':
             if args.operation == 'spec':
