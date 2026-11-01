@@ -4,6 +4,19 @@ description: The experimental "lab" line of Bounty Pilot, ahead of the stable bo
 ---
 # Bounty Pilot Lab
 
+## Advanced Web3 web integrity — Lab 0.47
+
+For explicitly scoped websites, client SDKs or financial API backends,
+the `web-integrity` lens now joins `bundle --lens web`. Trace source
+anchors and authorized native test paths for three advanced hypotheses:
+asset/fee/deposit business consistency, complete displayed/signed/executed
+multi-leg intent, and local JavaScript artifact provenance. Use
+`bounty.py web3-advanced business-invariants|signed-intent-mirror|
+runtime-provenance` with investigator-controlled local evidence.
+Read `references/web3-advanced-integrity.md` for exact JSON schemas
+and fail-closed controls. This engine never authenticates deployed bytes,
+signature decoders, native traces, scope permission or a bug bounty verdict.
+
 ## Web3 web applications — Lab 0.46
 
 Use the optional offline Web3 Security Research Engine when an explicitly
