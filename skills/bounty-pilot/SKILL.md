@@ -4,6 +4,24 @@ description: The experimental "lab" line of Bounty Pilot, ahead of the stable bo
 ---
 # Bounty Pilot Lab
 
+## Native evidence and historical replay — Lab 0.48
+
+When an in-scope web bug hypothesis is testable in a local native framework,
+use `bounty.py web-native-capture` with an explicit pinned source revision
+and a real candidate/negative-control plan. The runner performs two rounds,
+collects structured test observations and hashes transcripts. Native
+execution **requires a genuine externally network-isolated, disposable,
+secret-free environment**; opt-in flags do not create isolation. Collected
+test claims are not independently verified bug evidence.
+
+For historical web evaluation use `bounty.py web-history-bench`. Only
+give the hunter the opaque queue, never the published source catalog,
+answer map, fixed/vulnerable labels or reviewer judgments. Freeze all
+findings before separate human adjudication; present missing benchmarks
+as unmeasured, never as zero or successful rediscovery. The small public
+seed corpus cannot estimate bug-bounty yield. Read
+`references/web-native-history.md`.
+
 ## Advanced Web3 web integrity — Lab 0.47
 
 For explicitly scoped websites, client SDKs or financial API backends,

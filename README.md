@@ -18,6 +18,28 @@
 
 ---
 
+## Current release: 0.48.0 — repeatable native evidence + historical web benchmark
+
+- **Native capture** runs approved local candidate/control tests twice through
+  the existing safe-command runner; checks pinned Git checkout and consistent
+  test output; extracts structured observations and transcript SHA-256 digests
+  directly into Web3 differential engine inputs.
+- **Web historical benchmark** prepares opaque, randomized hunter tasks
+  separately from a private evaluator answer map. It freezes all predictions
+  and requires independent judgments before reporting TP/FN, false positives
+  and patched-control outcomes.
+- **Three sourced historical cases:** Next.js middleware authorization
+  (2025) and CryptoJS entropy/PBKDF2 (2026/2023), with exact affected and
+  fixed Git revisions. No model benchmark or native historical rediscovery
+  has been performed. Published cases are contamination-prone and insufficient
+  for claims of improved bug-bounty yield.
+- CLI: `bounty.py web-native-capture --help` and
+  `bounty.py web-history-bench --help`.
+  [Complete protocol](skills/bounty-pilot/references/web-native-history.md).
+- Execution requires explicit external sandbox/network isolation. Python
+  flags do NOT enforce network isolation; captured test output is not
+  independently verified evidence of exploitability.
+
 ## Current release: 0.47.0 — financial and browser integrity research
 
 - **Web business invariants:** compare native candidate/control records for

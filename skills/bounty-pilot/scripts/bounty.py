@@ -11683,6 +11683,28 @@ def build_parser():
     adv.add_argument('--policy', default=None, help='offline scope declaration for runtime-provenance')
     adv.add_argument('--out', default=None, help='new private JSON output; never overwrite')
 
+    wcap = sub.add_parser('web-native-capture',
+                           help='twice-run sandbox-confirmed candidate/control native observation collection')
+    wcap.add_argument('--config', required=True, help='pinned test plan and observation schema')
+    wcap.add_argument('--repo', required=True, help='pinned clean local Git checkout')
+    wcap.add_argument('--out', default=None, help='new private evidence directory')
+    wcap.add_argument('--allow-exec', action='store_true')
+    wcap.add_argument('--isolated-workspace-confirmed', action='store_true')
+    wcap.add_argument('--network-isolated-confirmed', action='store_true')
+
+    wh = sub.add_parser('web-history-bench',
+                        help='prepare, verify, seal and independently score historical web hunts')
+    wh.add_argument('operation', choices=('prepare', 'verify', 'seal', 'score'))
+    wh.add_argument('--catalog', default=None, help='evaluator-only published historical seeds')
+    wh.add_argument('--hunter-out', default=None, help='new isolated hunter task directory')
+    wh.add_argument('--evaluator-out', default=None, help='new PRIVATE evaluator mapping directory')
+    wh.add_argument('--queue', default=None, help='blind task queue')
+    wh.add_argument('--task', default=None, help='opaque task ID')
+    wh.add_argument('--repo', default=None, help='local pinned Git checkout')
+    wh.add_argument('--predictions', default=None, help='hunting predictions before truth access')
+    wh.add_argument('--evaluator', default=None, help='evaluator-only directory')
+    wh.add_argument('--judgments', default=None, help='independent reviewer decisions')
+
     rn = sub.add_parser('research-next', help='opt-in spec mapping, native repetitions and private hypothesis memory')
     rn.add_argument('operation', choices=('spec', 'native', 'memory-record', 'memory-lookup'))
     rn.add_argument('--repo', default=None)
@@ -12034,6 +12056,37 @@ def main(argv=None):
                                   'classification': result['classification']}))
             else:
                 print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        if args.action == 'web-native-capture':
+            module = load_impact_helper('web_native_capture')
+            result = module.collect(module.web3_advanced.json_file(args.config),
+                                    args.repo, args.out,
+                                    execute=args.allow_exec,
+                                    isolated=args.isolated_workspace_confirmed,
+                                    network_isolated=args.network_isolated_confirmed)
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.action == 'web-history-bench':
+            module = load_impact_helper('web_historical_bench')
+            if args.operation == 'prepare':
+                if not args.hunter_out or not args.evaluator_out:
+                    raise ValueError('prepare requires separate --hunter-out and --evaluator-out')
+                seed = module.json_file(args.catalog or module.SEED)
+                result = module.prepare(seed, args.hunter_out, args.evaluator_out)
+            elif args.operation == 'verify':
+                if not args.queue or not args.task or not args.repo:
+                    raise ValueError('verify needs --queue --task --repo')
+                result = module.verify_checkout(module.json_file(args.queue), args.task, args.repo)
+            elif args.operation == 'seal':
+                if not args.queue or not args.predictions or not args.evaluator:
+                    raise ValueError('seal needs --queue --predictions --evaluator')
+                result = module.seal(module.json_file(args.queue),
+                                     module.json_file(args.predictions), args.evaluator)
+            else:
+                if not args.evaluator or not args.judgments:
+                    raise ValueError('score needs --evaluator --judgments')
+                result = module.score(args.evaluator, module.json_file(args.judgments))
+            print(json.dumps(result, indent=2))
             return 0
         if args.action == 'research-next':
             if args.operation == 'spec':
