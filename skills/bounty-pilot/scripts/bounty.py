@@ -11664,6 +11664,15 @@ def build_parser():
     reality.add_argument('--input', required=True, help='local investigator-supplied paired observations JSON')
     reality.add_argument('--out', default=None, help='new private JSON output path (never overwrite)')
 
+    web3 = sub.add_parser('web3', help='offline Web3 scope, API and paired authz/wallet research')
+    web3.add_argument('operation', choices=('scope', 'api-map', 'authz', 'wallet-intent'))
+    web3.add_argument('--policy', default=None, help='declared local scope, mandatory for scope/api-map')
+    web3.add_argument('--url', default=None, help='classify URL text only, never request it')
+    web3.add_argument('--repo', default=None, help='local tracked checkout for API source inventory')
+    web3.add_argument('--scope', action='append', default=None, help='allowed relative source prefix')
+    web3.add_argument('--input', default=None, help='native paired observations for authz/wallet-intent')
+    web3.add_argument('--out', default=None, help='private output file, create-only')
+
     rn = sub.add_parser('research-next', help='opt-in spec mapping, native repetitions and private hypothesis memory')
     rn.add_argument('operation', choices=('spec', 'native', 'memory-record', 'memory-lookup'))
     rn.add_argument('--repo', default=None)
@@ -11971,6 +11980,26 @@ def main(argv=None):
                 engine._write_private(args.out, result)
                 print(json.dumps({'file': args.out, 'leads': result['leads'],
                                   'classification': result['classification']}, indent=2))
+            else:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        if args.action == 'web3':
+            module = load_impact_helper('web3_research')
+            if args.operation == 'scope':
+                if not args.policy or not args.url or args.repo or args.input or args.scope:
+                    raise ValueError('scope needs --policy and --url without --repo/--input/--scope')
+                result = module.scope_check(module.load_json(args.policy), args.url)
+            elif args.operation == 'api-map':
+                if not args.policy or not args.repo or args.url or args.input:
+                    raise ValueError('api-map needs --policy and --repo, no --url/--input')
+                result = module.api_map(args.repo, module.load_json(args.policy), args.scope)
+            else:
+                if not args.input or args.repo or args.url or args.policy or args.scope:
+                    raise ValueError('authz/wallet-intent need --input only')
+                result = module.observe(module.load_json(args.input), args.operation)
+            if args.out:
+                module.write_private(args.out, result)
+                print(json.dumps({'saved_to': args.out, 'classification': result['classification']}))
             else:
                 print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0
