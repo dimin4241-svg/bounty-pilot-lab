@@ -18,6 +18,15 @@
 
 ---
 
+## Current release: 0.45.0 — three reality differential engines
+
+- **Settlement Truth:** checks exact atomic-unit changes against newly unbacked finalized liabilities in candidate/control observations.
+- **Outcome Propagation:** detects nested-operation failures recorded as finalized success, under an explicit batch success policy.
+- **Context Binding:** compares authorized, verified and executed identity fields and cache-context key reuse.
+- **Reality Boundary hunt lens:** part of the `cross-stack` and `high-impact` source-bundle groups; traces actual sinks to propose targeted native candidate/control experiments.
+- Run `python3 skills/bounty-pilot/scripts/bounty.py reality-diff settlement --input /private/observations.json` (or `outcome`, `context`).
+- All source revisions, trace digests and observations are **researcher-supplied, not independently verified**. The engine executes no target code. It produces leads, not findings or evidence of improved real-world payouts. [Protocol](skills/bounty-pilot/references/reality-differential.md).
+
 ## Current release: 0.44.0 — 1 November 2026
 
 - **Research tools:** signing-control-plane lens (0.40), CaseForge and semantic

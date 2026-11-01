@@ -41,6 +41,12 @@ Preserve these invariants when editing:
   that turns one of these into a warning destroys the only measurement this package can make.
   An unmatched hunt finding is never counted as a false positive.
 - **No benchmark claims** without a reproducible measurement in the repository.
+- **Reality-diff observations are never self-proving.** `reality-diff`
+  compares researcher-supplied native candidate/control data for settlement,
+  outcome propagation and context binding. No target code execution, trace
+  authentication, payout estimate or finding promotion is implied.
+  Missing finality or failed negative controls must never become positive
+  leads. Accounting is performed using exact base-ten integer strings.
 - **Containerized PoC execution is explicit.** For untrusted targets prefer
   `scripts/sandbox_run.py` with a trusted SHA-256-pinned toolchain image and
   disposable checkout. It removes network and host-HOME access but still
