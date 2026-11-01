@@ -47,6 +47,14 @@ this skill and outside the target checkout.
   anything less under `unverified_blockers`, and a blocker whose command succeeded is not one.
 - **Nothing is concluded from a name**, and every heuristic in this package — the state graph, the
   impact queue, the odd-one-out report, convergence counts — is a reading order, never a verdict.
+- **Reality Differential checkpoint (opt-in).** For finalized settlement,
+  nested batch outcomes, and signed/verified/executed context divergence,
+  compare an actual native candidate and negative control with
+  `bounty.py reality-diff settlement|outcome|context --input <private-observations.json>`.
+  Read `references/reality-differential.md`. This tool only compares supplied
+  observations; it neither executes PoCs nor authenticates their digests.
+  Preserve original native tests and request independent review before
+  treating any result as a finding.
 
 ## Start — checkout and run directory
 
