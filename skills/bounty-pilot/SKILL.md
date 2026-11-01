@@ -4,6 +4,21 @@ description: The experimental "lab" line of Bounty Pilot, ahead of the stable bo
 ---
 # Bounty Pilot Lab
 
+## Web3 web applications — Lab 0.46
+
+Use the optional offline Web3 Security Research Engine when an explicitly
+in-scope website or backend is part of the program. The source-grounded
+`web-api-boundary` lens is included in `bundle --lens web`, alongside
+`web-frontend`. First document the actual program's scope and exclusions,
+then create a private offline policy file and use `bounty.py web3 scope`
+to classify origin strings or `bounty.py web3 api-map` to inspect only
+tracked local source. Use `bounty.py web3 authz` and `wallet-intent`
+on investigator-run, synthetic candidate/negative-control observations.
+See `references/web3-security.md`. The source map does not prove
+absence of authorization, the policy is not independently verified,
+and the engine must never send live network requests, execute code, promote
+a finding, or attest a native trace by itself.
+
 ## What this is
 
 An agent workflow for finding a bug a bounty program will actually pay for. Three parts, all
