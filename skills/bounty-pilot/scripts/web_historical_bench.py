@@ -119,9 +119,9 @@ def prepare(seed, hunter_path, evaluator_path):
     random.SystemRandom().shuffle(tasks)
     queue = {"schema_version": 1, "label": "PUBLIC_CODE_BLIND_QUEUE",
              "tasks": tasks,
-             "notice": "Only queue file may be delivered to the hunting agent. "
-                       "Do not give it the evaluator mapping, seed catalog, patches "
-                       "or published advisory. Prior model knowledge can still contaminate."}
+             "notice": "Only opaque queue entries may be delivered to the hunting agent. "
+                       "The evaluator holds separate confidential reference data; "
+                       "prior model knowledge can still contaminate historical tasks."}
     answer = {"schema_version": 1, "hunter_queue_sha256": _sha(queue),
               "cases_count": len(cases), "snapshot_count": len(tasks),
               "key": key, "source_catalog_sha256": _sha(seed)}
