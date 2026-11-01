@@ -34,7 +34,7 @@ LENSES = {
     "cairo-starknet": ["privileged-path", "business-logic", "temporal-logic"],
     "go": ["recovery-failure", "business-logic", "semantic-mismatch", "node-client"],
     "web-backend": ["privileged-path", "recovery-failure", "semantic-mismatch",
-                    "web-api-boundary"],
+                    "web-api-boundary", "web-integrity"],
 }
 
 BACKEND_JS_DEPS = ("express", "fastify", "@nestjs", "koa", "@hapi/hapi", "hapi",
@@ -267,7 +267,8 @@ def prioritize(route_report, budget=6):
             "delta": 1, "upstream-diff": 1, "seam": 1,
             # Ranks like any specialised lens once a stack asks for it, and is dropped outright
             # when none does: a node lens on a contracts-only target reads nothing.
-            "node-client": 3, "signing-control-plane": 3, "web-api-boundary": 4}
+            "node-client": 3, "signing-control-plane": 3, "web-api-boundary": 4,
+            "web-integrity": 2}
     reasons = {name: ["general baseline"] for name in base}
     hinted = set()
     for stack in route_report["stacks"]:
@@ -298,6 +299,8 @@ def prioritize(route_report, budget=6):
         base.pop("signing-control-plane", None)
     if "web-api-boundary" not in hinted:
         base.pop("web-api-boundary", None)
+    if "web-integrity" not in hinted:
+        base.pop("web-integrity", None)
     ranked = sorted(base, key=lambda name: (-base[name], name))
     # Who may deliver a message is the boundary every bridge and relayer turns on: with any
     # messaging signal, integration-auth is selected whatever the budget.
