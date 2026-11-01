@@ -30,6 +30,34 @@
       "timeout_sec": 180
     },
     {
+      "id": "solidity-identity-candidate",
+      "pair_id": "solidity-identity",
+      "role": "candidate",
+      "cwd": "tests/fixtures/native/evm",
+      "argv": [
+        "forge",
+        "test",
+        "--match-test",
+        "^test_packed_dynamic_collision_candidate\\(\\)$",
+        "-vv"
+      ],
+      "timeout_sec": 180
+    },
+    {
+      "id": "solidity-identity-control",
+      "pair_id": "solidity-identity",
+      "role": "negative-control",
+      "cwd": "tests/fixtures/native/evm",
+      "argv": [
+        "forge",
+        "test",
+        "--match-test",
+        "^test_framed_control_preserves_tuple_boundary\\(\\)$",
+        "-vv"
+      ],
+      "timeout_sec": 180
+    },
+    {
       "id": "rust-candidate",
       "pair_id": "rust",
       "role": "candidate",
@@ -54,6 +82,36 @@
         "test",
         "--offline",
         "tests::test_negative_control",
+        "--",
+        "--exact"
+      ],
+      "timeout_sec": 180
+    },
+    {
+      "id": "rust-quorum-candidate",
+      "pair_id": "rust-quorum",
+      "role": "candidate",
+      "cwd": "tests/fixtures/native/rust",
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "tests::test_candidate_duplicate_signer_quorum",
+        "--",
+        "--exact"
+      ],
+      "timeout_sec": 180
+    },
+    {
+      "id": "rust-quorum-control",
+      "pair_id": "rust-quorum",
+      "role": "negative-control",
+      "cwd": "tests/fixtures/native/rust",
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "tests::test_negative_control_unique_signer_quorum",
         "--",
         "--exact"
       ],

@@ -8080,7 +8080,7 @@ LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence', 'privileg
           'live-reality', 'anchor-account', 'seam', 'business-logic',
           'temporal-logic', 'recovery-failure', 'semantic-mismatch', 'composition',
           'impact-first', 'classic', 'web-frontend', 'node-client', 'secrets-artifacts',
-          'wallet')
+          'wallet', 'signing-control-plane')
 TRIAGE = 'triage'
 # Aiming lenses produce a reading order, not findings: spec-divergence reads what the project
 # promised in its own documentation and says where to go looking for the promise being broken.
@@ -8093,7 +8093,8 @@ ATTACK_LENSES = ('privileged-path', 'accounting', 'integration-auth', 'external-
                  'economics', 'liveness', 'classic')
 CONFIG_LENSES = ('live-reality', 'upgrade')
 LOGIC_LENSES = ('business-logic', 'temporal-logic', 'composition')
-CROSS_STACK_LENSES = ('semantic-mismatch', 'recovery-failure')
+CROSS_STACK_LENSES = ('semantic-mismatch', 'recovery-failure', 'signing-control-plane')
+SIGNING_LENSES = ('signing-control-plane',)
 HIGH_IMPACT_LENSES = ('impact-first', 'privileged-path', 'business-logic',
                       'economics', 'composition', 'accounting', 'external-call',
                       'integration-auth')
@@ -8666,6 +8667,8 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
             chosen.extend(LOGIC_LENSES)
         elif lens == 'cross-stack':
             chosen.extend(CROSS_STACK_LENSES)
+        elif lens == 'signing':
+            chosen.extend(SIGNING_LENSES)
         elif lens == 'recommended':
             chosen.extend(routed['prioritization']['selected'])
         elif lens == 'high-impact':
@@ -8683,8 +8686,8 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
         else:
             raise ValueError(f'unknown lens {lens!r}; choose from ' + ', '.join(LENSES)
                              + f', {TRIAGE}, or the groups aim / attack / config / logic / '
-                               'cross-stack / high-impact / web / node / artifacts / '
-                               'wallet-app / recommended / all')
+                               'cross-stack / signing / high-impact / web / node / artifacts / '
+                                'wallet-app / recommended / all')
     chosen = list(dict.fromkeys(chosen))
     for lens in chosen:
         source_file = (references / f'{TRIAGE}.md' if lens == TRIAGE
@@ -11627,7 +11630,7 @@ def build_parser():
     bnd.add_argument('--repo', required=True)
     bnd.add_argument('--run', required=True)
     bnd.add_argument('--lens', action='append', required=True,
-                     help='lens name, or a group: aim, attack, config, logic, cross-stack, high-impact, web, recommended, all. Repeatable.')
+                     help='lens name, or a group: aim, attack, config, logic, cross-stack, signing, high-impact, web, recommended, all. Repeatable.')
     bnd.add_argument('--scope', action='append', default=None, help='path prefix to keep')
     bnd.add_argument('--include', action='append', default=None,
                      help='extra context file to append, e.g. a delta ranking. Repeatable.')
@@ -11640,6 +11643,33 @@ def build_parser():
                                help='keep only symbols whose path starts with this prefix, e.g. src/ . '
                                     'Repeatable. Without it a build-info file drags in lib/ and test/ '
                                     'and the truncated queue can hold no in-scope sink at all.')
+
+    cf = sub.add_parser('caseforge', help='provenance-checked retrospective research cases; never a benchmark result')
+    cf.add_argument('operation', choices=('validate', 'index', 'blind-queue'))
+    cf.add_argument('--catalog', default=None)
+    cf.add_argument('--family', default=None)
+
+    rd = sub.add_parser('research-diff', help='passive identity/cross-phase hypotheses from local data')
+    rd.add_argument('operation', choices=('identity', 'phases', 'byte-tuple', 'quorum', 'scan'))
+    rd.add_argument('--input', default=None,
+                    help='local JSON observations for identity, phases, byte-tuple or quorum')
+    rd.add_argument('--repo', default=None, help='local tracked checkout for passive lexical scan')
+    rd.add_argument('--scope', action='append', default=None,
+                    help='required in-scope relative path prefix for scan; repeatable')
+
+    rn = sub.add_parser('research-next', help='opt-in spec mapping, native repetitions and private hypothesis memory')
+    rn.add_argument('operation', choices=('spec', 'native', 'memory-record', 'memory-lookup'))
+    rn.add_argument('--repo', default=None)
+    rn.add_argument('--spec', default=None)
+    rn.add_argument('--stack', choices=('foundry', 'cargo', 'pytest', 'go', 'unittest'))
+    rn.add_argument('--allow-exec', action='store_true')
+    rn.add_argument('--isolated-workspace-confirmed', action='store_true')
+    rn.add_argument('--evidence-dir', default=None, help='new private path outside checkout for both executed native rounds')
+    rn.add_argument('--ledger', default=None)
+    rn.add_argument('--input', default=None)
+    rn.add_argument('--target', default=None)
+    rn.add_argument('--mechanism', default=None)
+    rn.add_argument('--revision', default=None)
 
     route_parser = sub.add_parser('route', help='recommend native adapters from tracked manifests (heuristic)')
     route_parser.add_argument('--repo', required=True)
@@ -11898,6 +11928,69 @@ def main(argv=None):
             print(json.dumps(impact_plan(args.repo, args.solc, args.out,
                                          getattr(args, 'scope', None)), indent=2))
             return 0
+        if args.action == 'caseforge':
+            cf = load_impact_helper('caseforge')
+            catalog = cf._read(args.catalog or cf.CATALOG)
+            if args.operation == 'validate':
+                result = cf.validate(catalog)
+            elif args.operation == 'index':
+                result = cf.index(catalog, args.family)
+            else:
+                if args.family is not None:
+                    raise ValueError('--family applies to index only')
+                result = cf.blind_queue(catalog)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        if args.action == 'research-diff':
+            rd = load_impact_helper('research_diff')
+            if args.operation == 'scan':
+                if not args.repo or args.input:
+                    raise ValueError('scan requires --repo and no --input')
+                result = rd.source_scan(args.repo, args.scope)
+            else:
+                if not args.input or args.repo or args.scope:
+                    raise ValueError('identity/phases/byte-tuple/quorum requires --input and no --repo/--scope')
+                observations = rd._json(args.input)
+                result = (rd.identity(observations) if args.operation == 'identity'
+                          else rd.phases(observations) if args.operation == 'phases'
+                          else rd.byte_tuple(observations) if args.operation == 'byte-tuple'
+                          else rd.quorum(observations))
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
+        if args.action == 'research-next':
+            if args.operation == 'spec':
+                if not args.repo or not args.spec or args.allow_exec:
+                    raise ValueError('spec needs --repo and --spec, without execution')
+                mapper = load_impact_helper('spec_mapper')
+                source = Path(args.spec)
+                if source.is_symlink() or not source.is_file() or source.stat().st_size > 100_000:
+                    raise ValueError('spec file must be a non-symlink JSON file under 100kB')
+                result = mapper.map_spec(json.loads(source.read_text(encoding='utf-8')), args.repo)
+            elif args.operation == 'native':
+                if not args.repo or not args.spec or not args.stack:
+                    raise ValueError('native requires --repo, --spec and --stack')
+                cycle = load_impact_helper('native_cycle')
+                source = Path(args.spec)
+                if source.is_symlink() or not source.is_file() or source.stat().st_size > 100_000:
+                    raise ValueError('native spec must be a non-symlink JSON file under 100kB')
+                result = cycle.cycle(json.loads(source.read_text(encoding='utf-8')),
+                                     args.stack, args.repo, args.allow_exec,
+                                     args.isolated_workspace_confirmed, args.evidence_dir)
+            elif args.operation == 'memory-record':
+                if not args.ledger or not args.input:
+                    raise ValueError('memory-record requires --ledger and --input')
+                source = Path(args.input)
+                if source.is_symlink() or not source.is_file() or source.stat().st_size > 4096:
+                    raise ValueError('memory input must be a non-symlink JSON file under 4kB')
+                result = load_impact_helper('belief_ledger').record(
+                    json.loads(source.read_text(encoding='utf-8')), args.ledger)
+            else:
+                if not all((args.ledger, args.target, args.mechanism, args.revision)):
+                    raise ValueError('memory-lookup requires --ledger, --target, --mechanism, --revision')
+                result = load_impact_helper('belief_ledger').lookup(
+                    args.target, args.mechanism, args.revision, args.ledger)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 1 if args.operation == 'native' and args.allow_exec and not result['status'].startswith('NATIVE_PAIR') else 0
         if args.action == 'route':
             print(json.dumps(load_stack_route().route(args.repo), indent=2))
             return 0

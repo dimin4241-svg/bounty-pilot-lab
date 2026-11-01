@@ -24,6 +24,26 @@ Two consequences for a hunter:
    competent competitors than the contract scope. Read the program's full scope before assuming it
    is a Solidity-only hunt.
 
+## Signing control planes / EIP-7702 — Binance, October 2026
+
+- **Official preliminary account.** Binance said on 30 October that its initial
+  investigation suggested a compromised DevOps laptop, access to a service container
+  and unauthorized withdrawal requests, with no evidence of private-key leakage.
+  The final post-mortem has not been published.
+  [Binance update](https://www.binance.com/en/support/announcement/detail/c5a8729a97ac486d963784d96c5642d7).
+- **On-chain analysis, not a confirmed authorization root cause.** TRM Labs reports
+  an Ethereum EIP-7702 delegation using 50 pre-signed authorizations during the
+  29 October attack, alongside transfers on other networks.
+  [TRM Labs](https://www.trmlabs.com/resources/blog/north-korea-steals-usd-6-36-billion-from-binance-in-the-largest-hack-in-history).
+- **Bounty-worthy question.** Does an *in-scope lower-privilege* client have a route
+  to get the signer to authorize an unintended delegate, network, wallet, recipient,
+  amount, nonce window or replay? EIP-7702 still requires a valid EOA signature.
+  A stolen employee machine or privileged service key alone is not a demonstrated
+  low-privilege exploit and is often excluded.
+
+→ Lens: `signing-control-plane`, plus `privileged-path` and `integration-auth`.
+Never label Binance's final root cause as established.
+
 ## Access control and initialization
 
 Measurably the hardest category for automated reviewers, and consistently the most expensive.

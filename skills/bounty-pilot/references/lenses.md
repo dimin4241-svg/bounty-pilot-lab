@@ -97,6 +97,12 @@ this skill's own ledger came from this class and was found by accident, outside 
 lens never uses a credential it finds; the finding is that the value is published and what the
 service's own permission model says it would authorise.
 
+**`signing` → `hunt-agents/signing-control-plane-agent.md`.** Research off-chain
+signing and withdrawal authorization across API, queue, worker, HSM/MPC/EOA signer
+and EIP-7702 delegated EOA policy. Only a demonstrated low-privilege route
+becomes a candidate. The `cross-stack` group includes this lens, while
+`recommended` selects it only on passive off-chain signing code/path signals.
+
 **`wallet-app` → `hunt-agents/wallet-agent.md`.** The client that signs: extension, mobile, desktop
 or a hardware device's companion app. Every finding in the class is one sentence — the user saw A
 and signed B, or an origin that should not have been able to ask, asked. Its bundle carries the web

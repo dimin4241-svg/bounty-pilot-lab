@@ -135,6 +135,39 @@ def _messaging_signals(root, files):
     return signals[:20]
 
 
+
+# Off-chain signing clues are routed as reading leads, never as findings.
+# A Solidity WalletSigner is not evidence of a signer control plane.
+SIGNING_PATH_TERMS = {"signer", "signing", "hsm", "mpc", "kms", "withdrawal",
+                      "withdrawals", "hotwallet", "custody"}
+SIGNING_CONTEXT_TERMS = {"api", "worker", "workers", "service", "services", "queue",
+                         "queues", "backend", "server", "internal", "signer",
+                         "signing", "hsm", "mpc", "kms"}
+SIGNING_SOURCE_SUFFIXES = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py",
+                           ".rs", ".go", ".java", ".kt"}
+SIGNING_CALL = re.compile(
+    r"\b(?:signTransaction|sign_transaction|authorizationList|authorization_list|"
+    r"signRawTransaction|sign_raw_transaction|mpc\.sign|hsm\.sign)\b", re.I)
+
+
+def _signing_signals(root, files):
+    """Bounded passive naming/code clues; no code execution or live network."""
+    signals = []
+    for name in files:
+        path = Path(name)
+        if path.suffix.lower() not in SIGNING_SOURCE_SUFFIXES:
+            continue
+        words = _path_words(name)
+        if words & SIGNING_PATH_TERMS and words & SIGNING_CONTEXT_TERMS:
+            signals.append("off-chain signing path: " + name)
+        elif words & SIGNING_CONTEXT_TERMS and SIGNING_CALL.search(
+                _read(root / name, cap=65536)):
+            signals.append("off-chain signing call in: " + name)
+        if len(signals) >= 20:
+            break
+    return signals
+
+
 def route(repo):
     root = Path(repo).resolve()
     raw = subprocess.run(["git", *GIT_HARDENING, "-C", str(root), "ls-files", "-z"],
@@ -209,11 +242,14 @@ def route(repo):
                "recommended_lenses": LENSES[s]} for s, ev in sorted(matches.items())]
     if len(stacks) > 1:
         warnings.append("Mixed-language/repo detection is not component ownership. Inspect real process and trust boundaries.")
+    signing = _signing_signals(root, files)
     report = {"schema": 1, "method": "manifest-and-extension-heuristics",
             "stacks": stacks, "warnings": warnings, "native_execution_verified": False,
             "messaging_signals": _messaging_signals(root, files),
-            "suggested_cross_stack_lenses": ["semantic-mismatch", "recovery-failure", "composition"]
-            if len(stacks) > 1 else [],
+            "signing_signals": signing,
+            "suggested_cross_stack_lenses":
+            (["semantic-mismatch", "recovery-failure", "composition"]
+             if len(stacks) > 1 else []) + (["signing-control-plane"] if signing else []),
             "notice": "Routing only. A file extension does not prove a runtime, deployment or coverage."}
     report["prioritization"] = prioritize(report)
     return report
@@ -230,7 +266,7 @@ def prioritize(route_report, budget=6):
             "delta": 1, "upstream-diff": 1, "seam": 1,
             # Ranks like any specialised lens once a stack asks for it, and is dropped outright
             # when none does: a node lens on a contracts-only target reads nothing.
-            "node-client": 3}
+            "node-client": 3, "signing-control-plane": 3}
     reasons = {name: ["general baseline"] for name in base}
     hinted = set()
     for stack in route_report["stacks"]:
@@ -246,6 +282,10 @@ def prioritize(route_report, budget=6):
     if messaging:
         base["integration-auth"] += 8
         reasons["integration-auth"].append("bridge/relayer/messaging signal: " + messaging[0])
+    signing = route_report.get("signing_signals") or []
+    if signing:
+        base["signing-control-plane"] += 10
+        reasons["signing-control-plane"].append("off-chain signing signal: " + signing[0])
     # Anchor's account model must never be force-selected on ordinary Rust.
     if "rust-solana" not in {x["stack"] for x in route_report["stacks"]}:
         base.pop("anchor-account")
@@ -253,12 +293,22 @@ def prioritize(route_report, budget=6):
     # target is contracts or an application, where it would read nothing.
     if "node-client" not in hinted:
         base.pop("node-client", None)
+    if not signing:
+        base.pop("signing-control-plane", None)
     ranked = sorted(base, key=lambda name: (-base[name], name))
     # Who may deliver a message is the boundary every bridge and relayer turns on: with any
     # messaging signal, integration-auth is selected whatever the budget.
     if messaging and "integration-auth" not in ranked[:budget]:
         ranked.remove("integration-auth")
         ranked.insert(budget - 1, "integration-auth")
+    # Keep a signer-boundary review in the bounded shortlist only when source
+    # shows an off-chain signer. Preserve a forced messaging lens if both exist.
+    if signing and "signing-control-plane" not in ranked[:budget]:
+        ranked.remove("signing-control-plane")
+        position = budget - 1
+        if messaging and budget > 1 and ranked[position] == "integration-auth":
+            position -= 1
+        ranked.insert(position, "signing-control-plane")
     return {"budget": budget, "selected": ranked[:budget],
             "not_selected": ranked[budget:],
             "rationale": {x: reasons[x] for x in ranked[:budget]},

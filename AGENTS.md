@@ -41,6 +41,12 @@ Preserve these invariants when editing:
   that turns one of these into a warning destroys the only measurement this package can make.
   An unmatched hunt finding is never counted as a false positive.
 - **No benchmark claims** without a reproducible measurement in the repository.
+- **Containerized PoC execution is explicit.** For untrusted targets prefer
+  `scripts/sandbox_run.py` with a trusted SHA-256-pinned toolchain image and
+  disposable checkout. It removes network and host-HOME access but still
+  allows modifying the target checkout and is not a hardened VM. Calling
+  `scenario_runner.py --allow-exec` directly runs on the current host;
+  never describe that as sandboxed or automatically safe.
 
 
 - **Stateful helper evidence levels stay explicit.** `state_graph.py` is only a lexical heuristic; `invariant_check.py` tests supplied JSON snapshots; `scenario_runner.py` is dry-run unless execution is explicitly allowed. Never call any of those outcomes verified exploits. Both candidate and negative-control cases are mandatory for execution plans.
@@ -113,6 +119,33 @@ Preserve these invariants when editing:
   destroyed another's VERSION bump with a write that never re-read the file. If you are a hunt
   session and the skill is missing something, say so to the user and let the maintaining session
   land it in git — a lesson that is not committed is a lesson that will be lost.
+
+- **CaseForge is a retrospective research catalog, never a benchmark truth leak.**
+  No historical case is eligible for `blind-queue` without a verified, pinned
+  vulnerable commit. Never give researchers the unblinded catalog during a sealed
+  backtest, and never count catalog entries as discoveries.
+- **Differential observations have an external equivalence premise.** Identity
+  keys and phase decisions are compared only as provided; a disagreement is a
+  `NEEDS_EVIDENCE` hypothesis. Scan only in-scope tracked local source. Different
+  policy versions block phase comparability. Reuse the existing native
+  candidate/control evidence gate before any impact claim.
+- **Identity fingerprints and signer observations stay unverified inputs.** A
+  supplied decoded-message digest, execution digest, chain context, or recovered
+  signer ID does not attest which native code produced it. Quorum comparisons
+  require the paired unique-signer control; missing or mismatched phase context
+  blocks comparability. The synthetic Foundry/Rust fixtures are harness checks,
+  never target findings or historical rediscoveries.
+
+- **Lab 0.42 research-next is advisory until native evidence passes the existing gate.**
+  Spec mapping requires an exact citation of a tracked documentation line and explicit
+  source scope. Absence of a lexical symbol is no proof of missing enforcement.
+  Native repeated candidate/control tests require a pinned HEAD, a new private evidence
+  directory outside the checkout and externally enforced isolation. A green exit is
+  harness conformance only; do not auto-promote to a verified report.
+  The belief ledger stores only hashes and revision-scoped reviewer labels;
+  even a refuted exact revision never silently suppresses a future report.
+  Patch variants reuse ecosystem intelligence rather than creating a parallel
+  security-patch detector.
 
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.

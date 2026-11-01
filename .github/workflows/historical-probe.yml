@@ -1,0 +1,63 @@
+name: historical-probe
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/historical-probe.yml'
+      - 'skills/bounty-pilot/scripts/historical_probe.py'
+      - 'tests/test_historical_probe.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: historical-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned-source-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Unit-test the passive comparison protocol
+        run: python3 -m unittest discover -s tests -p test_historical_probe.py -v
+      - name: Retrieve baseline engine from immutable Lab 0.41.1 commit
+        env:
+          BASELINE_SHA: '651f46eedb904ac2f738843ae0413e1eb3cf638a'
+        run: |
+          git -c core.hooksPath=/dev/null fetch --no-tags --depth=1 origin "$BASELINE_SHA"
+          git show "$BASELINE_SHA:skills/bounty-pilot/scripts/research_diff.py" > "$RUNNER_TEMP/baseline_research_diff.py"
+          python3 -m py_compile "$RUNNER_TEMP/baseline_research_diff.py"
+      - name: Checkout the published pre-fix Monad historical snapshot (source only)
+        env:
+          TARGET_SHA: '6aaccc2ec51eac66a2cf18ec64ab0df2c1448990'
+        run: |
+          mkdir -p "$RUNNER_TEMP/historical-target"
+          git -C "$RUNNER_TEMP/historical-target" init -q
+          git -C "$RUNNER_TEMP/historical-target" remote add origin https://github.com/category-labs/monad-bft.git
+          git -C "$RUNNER_TEMP/historical-target" sparse-checkout init --cone
+          git -C "$RUNNER_TEMP/historical-target" sparse-checkout set monad-eth-txpool monad-eth-block-policy monad-eth-block-validator
+          timeout 210 git -C "$RUNNER_TEMP/historical-target" -c core.hooksPath=/dev/null -c protocol.version=2 fetch --depth=1 --filter=blob:none origin "$TARGET_SHA"
+          git -C "$RUNNER_TEMP/historical-target" -c core.hooksPath=/dev/null checkout --detach "$TARGET_SHA"
+          test "$(git -C "$RUNNER_TEMP/historical-target" rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Compare same read-only lexical scanner on both exact skill revisions
+        env:
+          TARGET_SHA: '6aaccc2ec51eac66a2cf18ec64ab0df2c1448990'
+        run: |
+          python3 skills/bounty-pilot/scripts/historical_probe.py \
+            --repo "$RUNNER_TEMP/historical-target" \
+            --pinned "$TARGET_SHA" \
+            --baseline-script "$RUNNER_TEMP/baseline_research_diff.py" \
+            --candidate-script skills/bounty-pilot/scripts/research_diff.py \
+            --scope monad-eth-txpool \
+            --scope monad-eth-block-policy \
+            --scope monad-eth-block-validator \
+            --out "$RUNNER_TEMP/historical-probe.json"
+          python3 -c 'import json,os; p=json.load(open(os.environ["RUNNER_TEMP"]+"/historical-probe.json")); assert p["blind_ai_comparison"] is False and p["verified_rediscoveries"] is None'

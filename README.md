@@ -18,6 +18,69 @@
 
 ---
 
+## Current release: 0.44.0 — 1 November 2026
+
+- **Research tools:** signing-control-plane lens (0.40), CaseForge and semantic
+  differential leads (0.41), paired native research cycles, spec mapping and
+  reviewer memory (0.42).
+- **Historical diagnostics:** the pinned 0.43 Monad probe produced 54 identical
+  lexical leads in both arms; this is parity, not demonstrated vulnerability
+  rediscovery or an AI-model comparison.
+- **EVMbench preflight (0.44):** two pinned complete skill trees staged in the
+  official five-task EVMbench harness. Preflight and synthetic regressions passed.
+  **No paid model runs or independent vulnerability scores have been obtained.**
+- **Opt-in host-isolated PoC execution:** `sandbox_run.py` wraps existing paired
+  tests in a restricted Docker container (network disabled, capabilities
+  dropped, no host home mount, digest-pinned toolchain). Use a disposable
+  checkout and a dedicated test image; see
+  [sandbox execution](skills/bounty-pilot/references/sandbox-execution.md).
+- **Release validation:** previously green 0.44 preflight and complete Python /
+  Foundry / Rust CI; confirm the new release head CI before relying on it.
+
+## What changed in 0.42 (experimental)
+
+- **Native two-pass runner:** reuses the existing `experimenter.plan`,
+  `native_fuzz_plan` and `scenario_runner` to run native candidate and
+  negative-control tests twice at one pinned git revision. Actual execution
+  requires explicit opt-in, an externally isolated disposable workspace and a
+  fresh private evidence directory for logs. Harness conformance is not proof.
+- **Spec-to-code mapping:** verified documentation line anchors linked to
+  bounded, explicit in-scope lexical code-symbol hints; missing code matches
+  are not vulnerabilities.
+- **Patch variant verification:** existing ecosystem patch analysis now carries
+  before/after commit provenance and deterministic hypothesis fingerprints,
+  not duplicated scanners.
+- **Belief ledger:** private revision-bound, hashed evidence memory; no automatic
+  suppression of refuted hypotheses.
+- **19 regression tests** added to the suite, including an actual synthetic
+  stdlib unittest pair executed by subprocesses; results and runner
+  availability must be checked before merging this draft.
+
+Details: [Research Next](skills/bounty-pilot/references/research-next.md).
+
+## What changed in 0.41.1
+
+- **CaseForge (ten sourced retrospective cases)** records published incidents,
+  disclosure reviews and contest findings separately, without fabricated vulnerable
+  revisions or misleading benchmark scores. Four distinct Monad High findings share one verified audit snapshot and one
+  opaque blind benchmark task; no hunt has executed or been scored.
+- **Semantic Identity and Cross-Phase Differential research.** New `research-diff`
+  commands passively scan explicitly in-scope local source, compute synthetic
+  byte-framing controls, fingerprint verified versus executed payloads, compare
+  chain/epoch/nonce/state/policy/permission context, and check supplied unique signer
+  quorums with a required negative control. Every output remains a lead.
+  Local Foundry and Rust fixtures demonstrate only generic synthetic controls.
+  [Usage and limits](skills/bounty-pilot/references/research-engines.md).
+
+## What changed in 0.40
+
+- **Signing-control-plane lens.** `bundle --lens signing` traces approved intent
+  across in-scope signing/withdrawal APIs, queues, workers and HSM/MPC/EOA policies,
+  including EIP-7702 delegations. Included in `cross-stack` and conditionally
+  prioritized by `recommended` on off-chain signing source signals.
+  Its output is a research lead until the normal proof gates pass.
+  [Instructions](skills/bounty-pilot/references/hunt-agents/signing-control-plane-agent.md).
+
 ## What changed in 0.33
 
 - **State-transition and trust-handoff research.** `ecosystem-intel` now flags source-anchored
@@ -106,8 +169,8 @@ A passed gate is not proof of an exploit or a payout. See
 
 ### 1. Install it
 
-**This repository is private**, so an agent cannot fetch it from a URL on its own — it needs your
-GitHub access. Three routes, in order of convenience:
+**This repository is public**, and cloning it normally requires no GitHub authentication.
+Three installation routes are available:
 
 **As a Claude Code plugin** (works when your own `git` can already clone this repository — check with
 `git ls-remote https://github.com/dimin4241-svg/bounty-pilot-lab`; if that asks for credentials, run

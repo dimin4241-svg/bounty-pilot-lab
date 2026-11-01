@@ -1,5 +1,97 @@
 # Changelog
 
+## 0.44.0 — Lab consolidation and isolated PoC execution
+
+- Consolidated previously tested draft 0.40–0.42 research capabilities and the
+  reproducible 0.43 historical diagnostic / 0.44 EVMbench staging harness.
+- Added `sandbox_run.py`, an opt-in Docker wrapper for paired candidate/control
+  execution: no network, no host HOME mount, no privileged container
+  capabilities, read-only root, process/memory quotas, a pinned image digest
+  and a private evidence directory. The target checkout is writable *inside*
+  the container; it must be disposable and free of secrets. Docker is still
+  an external trust boundary.
+- Added unit checks for sandbox command construction and unsafe inputs.
+- Synchronized skill, plugin and repository versions; updated English/Russian
+  release notes and public-repository installation instructions.
+- Historical scanner parity is not a rediscovery result; the official
+  EVMbench setup has not run paid AI models or been scored.
+- Release CI is required before declaring the new head verified.
+
+
+## 0.42.0 — Draft research workflows
+
+- Added opt-in source-anchored `research-next spec` mapping, with tracked-code
+  scope, bounded exact-symbol leads and source-quote SHA verification.
+- Added `native_cycle.py`, reusing the existing experimenter and scenario runner,
+  to repeat existing candidate/control tests at one verified checkout revision.
+  Execution is explicit, requires external isolation confirmation and a fresh
+  private evidence directory with both rounds of sanitized logs; this does not
+  prove a target bug.
+- Extended existing patch-variant leads with before/after commit provenance,
+  SHA-256 hypothesis fingerprints and falsification protocols.
+- Added `belief_ledger.py` for hashed, private, revision-bound observation
+  memory with reviewable evidence requirements and no auto-dismissal.
+- Added 19 synthetic and controlled-local regression test methods, including
+  an actual stdlib unittest candidate/control subprocess fixture, strict complete-pair
+  detection, rejection of dirty tracked sources, and unchanged diff fingerprints.
+- No measured bounty uplift or independent historical rediscovery is claimed.
+  Never merge before real tests execute.
+
+## 0.41.1
+
+### Research-engine validation and local controls
+
+- Rejected duplicate JSON object keys, malformed enum types, duplicate observation IDs,
+  unpaired Unicode surrogates, oversized inputs and symlinks with bounded error responses.
+- Expanded identity observations to fingerprint verified-message versus executed-operation
+  outputs, encoded bytes and domain context. Phase reports preserve stage order and fingerprint
+  policy identity, chain, epoch, nonce, state and attacker-permission context; missing or changed
+  context blocks comparability.
+- Added `research-diff quorum` for supplied authenticated signer observations. It requires a
+  valid unique-signer negative control and reports duplicate-signature quorum leads without
+  verifying signatures or claiming target impact.
+- Added synthetic Foundry and Rust candidate/control tests to the existing native-smoke plan.
+  They exercise generic byte framing and signer uniqueness, not historical rediscovery.
+- Corrected the Monad H-02 catalog identifier and tested that H-01 through H-04 stay unique
+  and grouped under the single cited pre-fix audit snapshot.
+- Confirmed AVRE already owns sequence generation, economic metamorphic plans, exact integer
+  measurements and sequence minimization; no parallel generator was added.
+
+## 0.41.0
+
+### CaseForge + Semantic Identity + Cross-Phase Differential
+
+- Added an explicitly sourced retrospective CaseForge catalog (10 public cases).
+  Four Monad High findings and their affected paths have been independently
+  matched to one pinned Code4rena audit snapshot. The blind queue emits one
+  opaque task for the shared checkout, without leaking the number of truths;
+  no benchmark has run or been scored. Unverified source revisions still fail closed.
+- Added stdlib-only `research_diff.py` with an opt-in, in-scope tracked-source
+  lexical scan, bounded real byte-framing counterexample experiments, and
+  comparisons of investigator-provided identity/phase observations.
+  It detects semantic identity splits, shared cache IDs, decision divergence,
+  payload drift and policy epoch mismatch as unverified leads only.
+- Exposed both via `bounty.py caseforge` and `bounty.py research-diff`.
+  Native verification is not simulated or claimed; the existing AVRE,
+  Evidence-First and backtest gates remain the source of truth.
+- Hardened scan budgets after scope filtering, zero-coverage warnings, pinned
+  case metadata validation and output fingerprints instead of raw stage IDs.
+- Added synthetic tests and negative controls; no measured rediscovery uplift
+  or claim of running the full suite.
+
+## 0.40.0
+
+### Signing-control-plane authorization research
+
+- Added `signing-control-plane` and `--lens signing` for in-scope signing/withdrawal
+  APIs, queues, workers, HSM/MPC signers, and EIP-7702 policy boundaries.
+- Included the lens in `cross-stack`; a bounded passive source router prioritizes
+  it in `recommended` only when off-chain signing clues exist.
+  Solidity-only projects are not automatically classified as signing backends.
+- Added synthetic routing/bundle tests and linked the 29–30 October Binance incident
+  as a provisional research precedent. No actual key use, live testing or
+  measured vulnerability-discovery improvement is claimed.
+
 ## 0.39.0
 
 ### `--renderer`, because a zero is only as good as what the check could see

@@ -9,7 +9,7 @@ import json
 import re
 from pathlib import Path
 
-SUPPORTED = ("foundry", "cargo", "pytest", "go")
+SUPPORTED = ("foundry", "cargo", "pytest", "go", "unittest")
 SELECTOR = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_:.-]{0,119}$")
 PYTEST_NODE = re.compile(r"^[a-zA-Z0-9_./:-]{1,180}$")
 PACKAGE = re.compile(r"^[./a-zA-Z0-9_-]{1,100}$")
@@ -48,6 +48,12 @@ def argv_for(stack, selector, package="."):
         return ["cargo", "test", selector, "--", "--exact"]
     if stack == "pytest":
         return ["python3", "-m", "pytest", "-q", "--", selector]
+    if stack == "unittest":
+        # Use an exact dotted unittest name. Disallow path traversal, flags and
+        # selectors that could turn the test command into arbitrary Python code.
+        if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*){1,8}", selector):
+            raise ValueError("unittest selector needs a dotted module.Class.test name")
+        return ["python3", "-m", "unittest", "-v", selector]
     if stack == "go":
         if not PACKAGE.fullmatch(package) or ".." in package:
             raise ValueError("unsafe go package")

@@ -533,7 +533,7 @@ def _history(root, files, path_times, scope):
                                 "invariants_removed": minus, "removed_urls": removed_urls,
                                 "diff_summary_only": True})
         if changes:
-            patch_leads.append({"commit": row["commit"], "timestamp": row["timestamp"],
+            patch_leads.append({"commit": row["commit"], "parent_commit": parent, "timestamp": row["timestamp"],
                                 "subject": row["subject"], "changes": changes,
                                 "status": "historical_patch_lead",
                                 "notice": "Token changes do not prove a complete security patch."})
@@ -660,8 +660,13 @@ def _patch_variant_analysis(patches, files):
                     else:
                         ev = {"path": path, "line": 1, "excerpt": redact_text(body[:160])}
                         function_name = "unresolved"
+                    candidate_key = "|".join((patch["commit"], family, path, function_name))
                     candidates.append({
-                        "patch_commit": patch["commit"], "patch_subject": patch["subject"],
+                        "candidate_fingerprint_sha256": hashlib.sha256(
+                            candidate_key.encode("utf-8")).hexdigest(),
+                        "patch_commit": patch["commit"],
+                        "pre_patch_commit": patch.get("parent_commit"),
+                        "patch_subject": patch["subject"],
                         "invariant": family, "current_path": path,
                         "function": function_name,
                         "relation": "same_path" if path in patch_paths else "alternate_path_or_version",
@@ -670,6 +675,16 @@ def _patch_variant_analysis(patches, files):
                             "This is a lexical candidate; the patch may be path-specific or a shared library may enforce the property.",
                             "No deployment, inheritance, generated code, or runtime call path was resolved.",
                         ],
+                        "recommended_verification": {
+                            "before_revision": patch.get("parent_commit"),
+                            "after_revision": patch["commit"],
+                            "method": "Pin both revisions in separate disposable checkouts. "
+                                      "Reproduce the SAME native candidate and negative control "
+                                      "with identical inputs; independently replay unchanged tests.",
+                            "falsifiers": ["A shared verifier enforces the invariant.",
+                                           "The code path cannot be reached by an attacker.",
+                                           "The patch changes behavior by design or is not deployed."],
+                            "evidence_status": "commands-not-run"},
                         "status": "hypothesis", "confidence": "low",
                     })
                     if len(candidates) >= 200:
