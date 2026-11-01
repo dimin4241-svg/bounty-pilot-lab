@@ -178,8 +178,8 @@ def _http_error(exc, api_key):
     if api_key:
         message = message.replace(api_key, "[REDACTED]")
     message = re.sub(r"sk-ant-[A-Za-z0-9_-]{8,}", "[REDACTED_KEY]", message)
-    message = re.sub(r"(?i)Bearer\\s+[^\\s,;]+", "Bearer [REDACTED]", message)
-    message = re.sub(r"[\\x00-\\x1f\\x7f]+", " ", message).strip()[:320]
+    message = re.sub(r"(?i)Bearer\s+[^\s,;]+", "Bearer [REDACTED]", message)
+    message = re.sub(r"[\x00-\x1f\x7f]+", " ", message).strip()[:320]
     if not message:
         message = "Provider did not supply safe error detail."
     parts = ["Anthropic HTTP %s" % status, category, message]
