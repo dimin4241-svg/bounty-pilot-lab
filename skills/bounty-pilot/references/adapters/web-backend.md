@@ -2,6 +2,12 @@
 
 Start from app routes, auth/session middleware, permission sources, background workers, DB schema/migrations, RPC clients and external services.
 
+For high-impact Web3 API surfaces, also run web-integrity for paired
+asset-identity, signed-fee and deposit-finality hypotheses, and
+multi-leg wallet intent/provenance review. See
+references/web3-advanced-integrity.md. Changed local scripts and
+supplied native observations alone never establish an exploit.
+
 For Web3 website or API scopes, use the offline web-api-boundary hunt lens
 and the bounded `bounty.py web3 api-map` inventory. Before every local
 native candidate/control, identify the same resource, tenant/owner and
