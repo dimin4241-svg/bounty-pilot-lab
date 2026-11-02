@@ -158,6 +158,48 @@ exhaustion. The exact code windows are fixed, bounded and numbered:
 3. `partial-signatures-and-broadcast`: partial signature exchange and
    bcast/consensus transport.
 
+## Opus 5 successful HTTP response without final text (Lab 0.49.4)
+
+Claude Opus 5 defaults to **high** thinking effort. In a hard source
+review it can consume the old `max_tokens=4500` output budget thinking
+and return HTTP 200 with a `thinking` block, no `text` block and
+`stop_reason=max_tokens`. **No visible text does not mean free usage.**
+
+The launcher now sets explicit `output_config.effort=medium` and
+`max_tokens=8192` for every request. It records non-text responses
+safely: stop reason, block *types* and provider usage counters, without
+recording internal thinking content or signatures. The first incomplete
+or non-text response halts later requests. The manifest includes
+`api_responses_received`, `passes_completed`, and the cost estimate
+from *all parsed HTTP-success responses*, even when no pass finishes.
+
+`PARTIAL_NO_TEXT_RESPONSE` with `api_responses_received=1` can
+have a **nonzero cost**. Inspect the first pass's JSON locally. Never
+upload API keys, full provider headers, Claude thinking blocks, VPN
+credentials, or secret files into chat or a public repository.
+
+**Do not rerun the earlier request without a fresh key and first
+inspecting Anthropic Console usage/spend.** The previous 0.49.3
+manifest's `estimated_usd_spent:0.0` did not reflect a 200 response
+whose text was unusable. We cannot reconstruct past usage from that
+discarded response. Anthropic Console is authoritative for billing.
+
+After upgrading, if `--check-model` is already working, perform
+one paid pass in a new local output directory with at least $1
+estimated script budget:
+
+```sh
+python3 skills/bounty-pilot/scripts/opus5_charon_audit.py \
+  --repo "$HOME/charon-opus5" \
+  --out "$HOME/opus5-charon-live-$(date +%s)" \
+  --passes 1 --max-usd 1
+```
+
+Run the command only within the shell where both a **new, rotated**
+`ANTHROPIC_API_KEY` and (if unscoped) `ANTHROPIC_WORKSPACE_ID`
+were exported. The local limit is a model-usage estimate, **not a
+provider billing limit**.
+
 ## What outputs look like
 
 Output is a new private directory outside the target checkout. The
