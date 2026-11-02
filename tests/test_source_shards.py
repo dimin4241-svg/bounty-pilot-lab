@@ -24,6 +24,7 @@ class SourceShardTests(unittest.TestCase):
         (self.root / "other/c.py").write_text("c" * 700)
         (self.root / "other/big.rs").write_text("d" * 2600)
         (self.root / "src/a_test.go").write_text("not a source for scope")
+        (self.root / "src/client.vue").write_text("<template>app</template>")
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
         subprocess.run(["git", "-C", str(self.root), "add", "-A"], check=True)
         subprocess.run(["git", "-C", str(self.root), "-c", "user.name=Fixture",
