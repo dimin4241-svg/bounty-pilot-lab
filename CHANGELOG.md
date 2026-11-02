@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.49.5 — independent three-model hypothesis continuity
+
+- Fix web API and integrity hunt bundles to include scoped non-frontend
+  Go/Python/Rust and other source; keep frontend lens unchanged.
+- Add explicitly selected DeepSeek via local OpenCode CLI, whitelisting only
+  its API key environment variable for that transport. No invented REST API,
+  no automatic provider spend cap or credentials in output.
+- Save complete Charon Opus 5 hypothesis text into immutable private Markdown
+  readings, alongside existing safe provider JSON. Prompt for source-grounded
+  standard unverified LEAD blocks; keep native PoC and adjudication separate.
+- Add read-only discovery doctor for model output, parser, import, bundle size
+  and job-state diagnostics; include mocked/fixture regression tests.
+- Add tri-model runbook. Historical lexical-only A/B is unchanged: it is not
+  a blind model test and cannot quantify real vulnerability recall.
+
+
 ## 0.49.4 — Opus 5 nontext response receipts and safe cost tracking
 
 - Fix a live-reproduced case where an HTTP 200 message without visible
