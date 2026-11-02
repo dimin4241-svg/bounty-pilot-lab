@@ -112,6 +112,10 @@ def diagnose(run_dir, opus_output=None):
         report["warnings"].append("No model reading files found; check agent_dispatch status, provider output and Opus output path.")
     if counts["unparsed_candidate_headers"]:
         report["warnings"].append("Some candidate-like headers were not parsed; review raw readings before discarding.")
+    if counts["readings"] and not counts["candidate_or_lead_blocks"]:
+        report["warnings"].append(
+            "Readings exist but contain no parsable LEAD/CANDIDATE blocks. "
+            "This can be a legitimate negative result or output-format drift; inspect the private readings.")
     if counts["candidate_or_lead_blocks"] and report["recorded_hypotheses"] == 0:
         report["warnings"].append("Model produced parsable candidates, but findings.json has no open records. Run import-findings with the reading directory.")
     if report["agent_jobs"].get("queued") or report["agent_jobs"].get("failed"):
