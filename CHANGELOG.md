@@ -12,6 +12,8 @@
   standard unverified LEAD blocks; keep native PoC and adjudication separate.
 - Add read-only discovery doctor for model output, parser, import, bundle size
   and job-state diagnostics; include mocked/fixture regression tests.
+- Plan bounded source-scope shards without silently losing eligible tracked files;
+  mark oversized files, require separate run directories and cross-shard review.
 - Add tri-model runbook. Historical lexical-only A/B is unchanged: it is not
   a blind model test and cannot quantify real vulnerability recall.
 
