@@ -22,6 +22,54 @@ to this repository, add it to a shell command or upload it in a log.
 The launcher reads `ANTHROPIC_API_KEY` from the local process environment
 only. It does not log the key or copy it to result files.
 
+## Anthropic API keys with no workspace scope
+
+Anthropic's authentication documentation requires the HTTP header
+`anthropic-workspace-id` when using a personal/service-account API key
+that is **not scoped to any specific workspace**. This affected the
+previous `--check-model` command and also would have affected paid
+`/v1/messages` calls. See
+https://platform.claude.com/docs/en/manage-claude/authentication
+
+Find your actual `wrkspc_...` ID at
+https://platform.claude.com/settings/workspaces (ID column).
+Do **not** use an organization ID or invent a workspace ID.
+
+Since Lab 0.49.3 the launcher reads `ANTHROPIC_WORKSPACE_ID` from the
+**local process environment** and adds the header to both the read-only
+model lookup and charged Messages requests. For a workspace-scoped API
+key, leave `ANTHROPIC_WORKSPACE_ID` unset. The script validates the
+workspace ID format and never prints it, persists it or passes it via
+CLI arguments.
+
+Run read-only `--check-model` first. On macOS, from the
+`bounty-pilot-opus-run` directory (with version 0.49.3 or later):
+
+```bash
+bash -c '
+read -rp "Workspace ID (wrkspc_...): " ANTHROPIC_WORKSPACE_ID
+read -rsp "New Anthropic API key: " ANTHROPIC_API_KEY; echo
+export ANTHROPIC_WORKSPACE_ID ANTHROPIC_API_KEY
+python3 skills/bounty-pilot/scripts/opus5_charon_audit.py --check-model
+unset ANTHROPIC_WORKSPACE_ID ANTHROPIC_API_KEY
+'
+```
+
+When `MODEL_AVAILABLE` is returned, repeat with the same new key and
+workspace ID but replace the last Python line with the bounded Charon
+trial (use `--passes 1` before three passes to test paid model access):
+
+```bash
+python3 skills/bounty-pilot/scripts/opus5_charon_audit.py \
+  --repo "$HOME/charon-opus5" \
+  --out "$HOME/opus5-charon-live-$(date +%s)" \
+  --passes 1 --max-usd 1
+```
+
+The charged command must execute in the same shell with both environment
+variables exported. Never echo the key, embed it in scripts or paste it
+into a chat. A prior leaked key must be revoked and replaced.
+
 ## Debug Anthropic 400 errors without spending money
 
 The Messages API can return HTTP 400 for malformed input **or** an
