@@ -97,6 +97,31 @@ class SecureOpusRunnerTests(unittest.TestCase):
         if os.name == "posix":
             self.assertEqual(stat.S_IMODE((output / "manifest.json").stat().st_mode), 0o600)
 
+    def test_opus_structured_lead_roundtrips_into_bounty_queue(self):
+        source = 'app/obolapi/api.go:sample'
+        reading = ('LEAD | lens: semantic-mismatch | surface: ' + source
+                   + ' | bug_class: signer-mismatch\n'
+                   + 'mechanism: a mismatched signer is accepted.\n'
+                   + 'proof: app/obolapi/api.go:2 sample()\n'
+                   + 'next_experiment: local candidate and negative-control Go test.\n')
+        def fake(key, prompt):
+            return {'text': reading,
+                    'usage': {'input_tokens': 200, 'output_tokens': 150,
+                              'estimated_usd': 0.005},
+                    'stop_reason': 'end_turn'}
+        output = Path(self.tmp.name) / 'opus-reading'
+        with mock.patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'mock-' + 'q'*40}):
+            opus.run(self.repo, output, passes=1, max_usd=2.0, requester=fake)
+        spec = importlib.util.spec_from_file_location(
+            'bounty_import_integration', ROOT / 'skills/bounty-pilot/scripts/bounty.py')
+        bounty = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bounty)
+        run = Path(self.tmp.name) / 'bounty-run'
+        bounty.initialize(self.repo, run)
+        bounty.import_findings(run, [output / 'readings'], repo=self.repo)
+        records = json.loads((run / 'findings.json').read_text())
+        self.assertTrue(any(r.get('bug_class') == 'signer-mismatch' for r in records))
+        self.assertTrue(all(r.get('status') == 'hypothesis' for r in records))
     def test_without_key_provider_is_not_called(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(ValueError, "NEW ANTHROPIC_API_KEY"):
