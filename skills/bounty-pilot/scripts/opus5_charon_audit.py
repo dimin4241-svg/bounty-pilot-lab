@@ -190,6 +190,29 @@ def _http_error(exc, api_key):
     return ValueError(" | ".join(parts))
 
 
+WORKSPACE_ID_PATTERN = re.compile(r"wrkspc_[A-Za-z0-9]{10,80}\\Z")
+
+
+def _anthropic_headers(api_key, include_content_type=False):
+    """Only local environment supplies workspace; never persist it to a report."""
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "user-agent": "bounty-pilot-local-audit/0.3",
+    }
+    workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID", "")
+    if workspace_id:
+        if not WORKSPACE_ID_PATTERN.fullmatch(workspace_id):
+            raise ValueError(
+                "ANTHROPIC_WORKSPACE_ID must match wrkspc_ followed by 10-80 alphanumerics; "
+                "find the ID in Anthropic Console > Workspaces"
+            )
+        headers["anthropic-workspace-id"] = workspace_id
+    if include_content_type:
+        headers["content-type"] = "application/json"
+    return headers
+
+
 def check_model(api_key, timeout=20):
     """Read-only, unbilled lookup for this account's selected model."""
     if not isinstance(api_key, str) or len(api_key) < 20:
@@ -197,8 +220,7 @@ def check_model(api_key, timeout=20):
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/models/" + MODEL,
         method="GET",
-        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
-                 "user-agent": "bounty-pilot-local-audit/0.2"})
+        headers=_anthropic_headers(api_key))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             raw = response.read(65537)
@@ -224,10 +246,7 @@ def request_opus(api_key, prompt_text, timeout=120):
     }).encode("utf-8")
     req = urllib.request.Request(
         API_URL, data=body, method="POST",
-        headers={"x-api-key": api_key,
-                 "anthropic-version": "2023-06-01",
-                 "content-type": "application/json",
-                 "user-agent": "bounty-pilot-local-audit/0.1"})
+        headers=_anthropic_headers(api_key, include_content_type=True))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as result:
             raw = result.read(1_500_001)
