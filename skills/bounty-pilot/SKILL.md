@@ -4,6 +4,29 @@ description: The experimental "lab" line of Bounty Pilot, ahead of the stable bo
 ---
 # Bounty Pilot Lab
 
+## Three-model hypothesis integrity — Lab 0.49.5
+
+For Claude Code, Codex and DeepSeek use the independent three-worker plan
+described in `references/agent-dispatch.md`. The DeepSeek provider is routed
+through a locally installed OpenCode CLI with an explicit `deepseek/<model-id>`,
+not a custom direct-API client. Keep all provider API keys local and set
+provider-side spend limits (only Claude Code exposes a generic per-job cap here).
+For oversized repositories create non-dropping source scope groups with
+`scripts/source_shards.py --repo <checkout> --out <private-plan.json>`.
+Use a separate private run directory per shard and review cross-shard call paths.
+Run `scripts/discovery_doctor.py --run <private-run>` on apparent zero-yield
+runs; it distinguishes no output, unparsed candidate blocks, unimported leads,
+failed jobs and oversized bundle contexts without claiming bug validity.
+Import raw hypotheses only as unverified LEADs. The pinned Charon Opus trial
+writes `readings/*.md` alongside its private JSON on complete text responses;
+use `bounty.py import-findings` and native PoC review for those hypotheses.
+
+The scoped `web-api-boundary` and `web-integrity` lenses now receive both
+frontend source and other in-scope backend code (including Go/Python/Rust),
+rather than only browser/frontend source. If a bundle is over 400 KB, split
+the project into explicit, smaller `--scope` groups in separate private runs.
+The warning is not a coverage claim and no source is silently declared read.
+
 ## Historic source diagnostic — Lab 0.49
 
 Use `scripts/web_ab_diagnostic.py` to run the bounded, reproducible

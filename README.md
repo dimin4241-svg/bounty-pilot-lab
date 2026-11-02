@@ -18,6 +18,22 @@
 
 ---
 
+## Current release: 0.49.5 — Claude, Codex and DeepSeek discovery handoff
+
+- Independent multi-model research through `agent_dispatch.py`: Claude Code,
+  Codex and DeepSeek (via OpenCode with an explicit DeepSeek model ID).
+- API/integrity bundles include Go/Python/Rust backend source as well as web source.
+- Completed Charon Opus 5 outputs save importable **unverified LEAD** Markdown
+  alongside private JSON, preventing model hypotheses from being invisible to
+  `converge` and `import-findings`.
+- `python3 skills/bounty-pilot/scripts/discovery_doctor.py --run "$RUN"`
+  detects failed/queued agents, oversized bundles, unparsed output and
+  leads still missing from `findings.json`.
+- These are pipeline repairs with mocked and fixture tests. No independent
+  model rediscovery uplift or real target PoC has been demonstrated.
+
+[Three-model runbook](skills/bounty-pilot/references/agent-dispatch.md).
+
 ## Current release: 0.49.4 — Opus 5 thinking-only responses and spend accounting
 
 The Charon trial now uses explicit `medium` thinking effort and a

@@ -84,6 +84,34 @@ class AgentDispatchTests(unittest.TestCase):
         self.fake_cli.write_text(FAKE_CLI, encoding='utf-8')
         self.fake_cli.chmod(0o755)
 
+    def test_deepseek_uses_opencode_explicit_model(self):
+        argv, capped = dispatch._provider_command(
+            'deepseek', '/usr/bin/opencode', self.run, model='deepseek/example-model')
+        self.assertEqual(argv[:3], ['/usr/bin/opencode', 'run', '--standalone'])
+        self.assertIn('--model', argv)
+        self.assertIn('deepseek/example-model', argv)
+        self.assertFalse(capped)
+        with self.assertRaisesRegex(ValueError, 'requires --model'):
+            dispatch._provider_command('deepseek', '/usr/bin/opencode', self.run)
+        with self.assertRaisesRegex(ValueError, 'requires --model'):
+            dispatch._provider_command('deepseek', '/usr/bin/opencode', self.run,
+                                       model='anthropic/claude-opus')
+
+    def test_deepseek_api_key_passed_only_to_opencode_transport(self):
+        with mock.patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'test-only-not-real'}, clear=True):
+            self.assertEqual(dispatch._provider_env('deepseek')['DEEPSEEK_API_KEY'],
+                             'test-only-not-real')
+            self.assertEqual(dispatch._provider_env('opencode')['DEEPSEEK_API_KEY'],
+                             'test-only-not-real')
+            self.assertNotIn('DEEPSEEK_API_KEY', dispatch._provider_env('claude'))
+            self.assertNotIn('DEEPSEEK_API_KEY', dispatch._provider_env('codex'))
+
+    def test_deepseek_parses_opencode_json_event(self):
+        raw = json.dumps({'type': 'text', 'part': {'text': READING}})
+        parsed = dispatch.parse_output('deepseek', raw)
+        self.assertTrue(parsed['parsed'])
+        self.assertIn('stale-debt', parsed['text'])
+
     def test_provider_logs_reuse_broad_secret_redaction(self):
         private_key = '0x' + 'ab' * 32
         rpc = 'https://eth-mainnet.g.alchemy.com/v2/Kx7SECRETKEY9012345678901234'

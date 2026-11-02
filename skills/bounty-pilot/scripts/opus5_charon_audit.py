@@ -127,12 +127,17 @@ def prompt(pass_name, items):
         "Search for non-obvious authorization/signature/partial-operation or "
         "cross-component invariant failures. Prioritize violations that survive "
         "a valid negative control and have a plausible local native test.\n\n"
-        "Return at most 3 HYPOTHESES (not findings). For each: exact "
-        "file:line evidence; attacker-controlled input and realistic preconditions; "
-        "expected invariant vs observed violated branch; concrete impact if proven; "
-        "minimum missing source needed; an offline native Go test candidate "
-        "and matching legitimate negative control; two falsification paths; "
-        "assessment why this may be already intended or duplicate. "
+        "Return at most 3 unverified hypotheses as machine-importable LEAD blocks. "
+        "Each MUST start on its own line exactly: "
+        "'LEAD | lens: semantic-mismatch | surface: path/file.go:FunctionName "
+        "| bug_class: kebab-case-mechanism'. "
+        "Use real file paths and real symbols only; never invent them. "
+        "On following lines include 'mechanism:', 'proof:' with file:line, "
+        "'capability:', 'path:', 'breaks:' and 'next_experiment:' containing "
+        "a candidate native Go test and a legitimate negative control. "
+        "Also give realistic preconditions, concrete impact IF proven, "
+        "minimum missing source, two falsification paths and duplicate concerns. "
+        "Do not output FINDING, verified or a severity label. "
         "If no source-supported hypothesis, output 'NO SUPPORTED HYPOTHESIS'. "
         "Avoid speculative severity and do not assert exploitation.\n\n"
     )
@@ -386,9 +391,21 @@ def run(repo, out, passes=2, max_usd=1.0, dry_run=False, requester=request_opus)
                         json.dumps(result, ensure_ascii=False, indent=2) + "\n")
         if classification != "UNVERIFIED_MODEL_HYPOTHESES":
             break
+        # Keep the original provider JSON, plus a standard Bounty Pilot reading.
+        # The latter is only a LEAD, not verified. Import/converge parses it
+        # like Claude Code, Codex or OpenCode output; no JSON result is dropped.
+        readings_dir = parent / "readings"
+        readings_dir.mkdir(mode=0o700, exist_ok=True)
+        reading_name = name + ".md"
+        _atomic_private(readings_dir / reading_name,
+                        "<!-- BP_OPUS_SOURCE " + PIN + " pass=" + name + " -->\n"
+                        + output_text + "\n")
+        result["reading_file"] = str(readings_dir / reading_name)
         results.append(result)
     info["api_responses_received"] = api_responses
     info["passes_completed"] = len(results)
+    info["readings_saved"] = len(results)
+    info["reading_directory"] = str(parent / "readings") if results else None
     info["estimated_usd_spent"] = round(spent, 6)
     _atomic_private(parent / "manifest.json",
                     json.dumps(info, ensure_ascii=False, indent=2) + "\n")

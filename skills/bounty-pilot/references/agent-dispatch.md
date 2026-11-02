@@ -35,7 +35,7 @@ python3 <skill-dir>/scripts/agent_dispatch.py run --run <run> \
   --job-id <another-job-id> --provider claude --max-budget-usd 1.00
 ```
 
-The supported providers are `opencode`, `zcode`, `claude`, and `codex`. CLI versions and output
+The supported providers are `opencode`, `zcode`, `claude`, `codex`, and `deepseek` (DeepSeek through the OpenCode CLI; select an installed DeepSeek model explicitly with `--model deepseek/<model-id>`). CLI versions and output
 formats can change, so each result retains the exact command, CLI version probe, binary digest,
 process exit, stdout, stderr, session identifier when reported, token usage when reported, and
 provider-reported cost when available. A provider without cost metadata is recorded as unknown;
@@ -44,6 +44,65 @@ CLIs currently have no generic per-call USD cap exposed here; limit their number
 provider-side spend cap, and keep the timeout bounded before starting them. Each plan is limited to
 24 jobs, and each `run` starts exactly one job; this is a count limit, not a monetary cap. The
 result records the replica count and wall time for comparing runs.
+
+
+## Claude + Codex + DeepSeek: independent three-way discovery
+
+The DeepSeek provider uses the **OpenCode CLI**, not an untracked HTTP client. Install and
+configure OpenCode locally, and choose the exact installed model ID from `opencode models`.
+For this transport only, `DEEPSEEK_API_KEY` is passed in the process environment (never
+in the model prompt, tracked files or reports). Do not paste credentials into chats or logs.
+Set provider-side usage/spending limits: the OpenCode transport has no generic USD cap.
+
+For one bounded lens, build its bundle once, plan *three* independent model readings,
+then start the printed job IDs in three separate CLI commands:
+
+```sh
+S=skills/bounty-pilot/scripts
+python3 "$S/bounty.py" bundle --repo "$TARGET_CHECKOUT" --run "$RUN" --lens semantic-mismatch --scope "$SOURCE_DIR"
+python3 "$S/agent_dispatch.py" plan --run "$RUN" --mode independent-blind --lens semantic-mismatch --replicas 3
+# Replace JOB_CLAUDE, JOB_CODEX and JOB_DEEPSEEK with three distinct printed job IDs:
+python3 "$S/agent_dispatch.py" run --run "$RUN" --job-id "$JOB_CLAUDE" --provider claude --max-budget-usd 1.00
+python3 "$S/agent_dispatch.py" run --run "$RUN" --job-id "$JOB_CODEX" --provider codex
+python3 "$S/agent_dispatch.py" run --run "$RUN" --job-id "$JOB_DEEPSEEK" --provider deepseek --model "deepseek/<model-id>"
+python3 "$S/agent_dispatch.py" status --run "$RUN"
+python3 "$S/bounty.py" converge --run "$RUN" --readings "$RUN/readings"
+python3 "$S/bounty.py" import-findings --run "$RUN" --from "$RUN/readings" --repo "$TARGET_CHECKOUT"
+python3 "$S/discovery_doctor.py" --run "$RUN"
+```
+
+No command in the block automatically submits a report or runs a live exploit.
+Do not merge independent findings until **all three provider runs have finished**;
+failed runs require `retry`. `converge` records overlap, whereas `import-findings`
+preserves unique unverified candidates in `findings.json` for local PoC and independent
+triage. Read the doctor output when models report empty or malformed readings: it
+distinguishes no model output, unparsed candidate-like text, unimported candidates,
+queued/failed jobs, oversized bundles and older web API bundles.
+
+The separate `opus5_charon_audit.py` writes completed pass Markdown into
+`<opus-output>/readings/` in addition to immutable JSON. Import those Markdown
+readings via `bounty.py import-findings --run "$RUN" --from "<opus-output>/readings"
+--repo "$TARGET_CHECKOUT"` only when the target pinned commit matches.
+Never count unverified model hypotheses as exploit proofs or confirmed findings.
+
+**Bounded source-shard planner:** for oversized repositories, build a
+deterministic, non-dropping list of file-specific scope groups:
+
+```sh
+python3 "$S/source_shards.py" --repo "$TARGET_CHECKOUT" --max-source-bytes 160000 --out "$PRIVATE_SHARD_PLAN"
+```
+
+Each JSON shard contains `scope_args` (explicit `--scope <file>` pairs).
+Create a **separate private Bounty Pilot run directory per shard** with `bounty.py init`,
+then bundle and dispatch that subset. Reusing one run overwrites earlier bundles.
+Every tracked eligible source file is accounted for exactly once. Files larger than
+the cap are flagged for manual splitting, and unreadable files are reported.
+Shard grouping is not a call graph: review cross-shard dependencies separately.
+**Scope and context:** if a source bundle exceeds 400 KB, split the audit into
+small, explicit `--scope` groups in separate private runs. Keep a written inventory
+of the omitted paths and review cross-component dependencies separately. Web API and
+web integrity lenses now receive both the frontend and other scoped Go/Python/Rust
+backend source. They remain offline, with no live program probes.
 
 ## Parallel safety, recovery and independence
 

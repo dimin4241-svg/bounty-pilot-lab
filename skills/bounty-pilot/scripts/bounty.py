@@ -8720,6 +8720,7 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                   + source)
     (out / 'source.md').write_text(source_doc, encoding='utf-8')
     web_doc, web_paths = '', []
+    api_doc = ''
     if any(lens in WEB_LENSES + WALLET_LENSES for lens in chosen):
         # The page that builds the transaction, not the contracts it calls: a web-frontend
         # bundle carries this in place of the contract source.
@@ -8736,6 +8737,25 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
                    + (web_source or 'No tracked web source matched the scope. Widen --scope to '
                       'the frontend, or fetch the deployed page as the lens procedure says.\n'))
         (out / 'web-source.md').write_text(web_doc, encoding='utf-8')
+        # API/financial integrity reviews must include server/native handlers, not just
+        # browser-facing TS/JS. Keep frontend and other tracked source disjoint to avoid
+        # duplicating large files in the model context. Source selection remains bounded
+        # by the caller's explicit --scope; bundles that exceed the warning threshold
+        # must be split into smaller scoped runs, not treated as complete coverage.
+        if any(lens in ('web-api-boundary', 'web-integrity') for lens in chosen):
+            backend_paths = [p for p in in_scope if p not in set(web_paths)]
+            backend_skips = []
+            backend_source, _ = _collect(root, backend_paths, backend_skips, redactions)
+            skipped_files.extend(backend_skips)
+            api_doc = (web_doc + '\n\n# Other in-scope API/backend/native source '
+                       f'({len(backend_paths)} files)\n\n'
+                       + (f'{len(backend_skips)} source file(s) unreadable or omitted: '
+                          + '; '.join(f"{item['path']} ({item['reason']})"
+                                      for item in backend_skips[:20]) + '\n\n'
+                          if backend_skips else '')
+                       + (backend_source or
+                          'No additional tracked backend source matched --scope.\n'))
+            (out / 'web-api-source.md').write_text(api_doc, encoding='utf-8')
     tests, _ = _collect(root, test_paths, skipped_files, redactions)
     tests_doc = (f'# Tests, mocks and fixtures ({len(test_paths)} files)\n\n'
                  'Read these as evidence of what the authors believed, not as code to audit.\n'
@@ -8892,7 +8912,10 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
         # them (an extension or a webview app), the ordinary source tree otherwise (a mobile
         # or desktop wallet in Swift, Kotlin or Rust).
         use_web = lens in WEB_LENSES or (lens in WALLET_LENSES and bool(web_paths))
-        pieces.append(web_doc if use_web else source_doc)
+        if lens in ('web-api-boundary', 'web-integrity'):
+            pieces.append(api_doc)
+        else:
+            pieces.append(web_doc if use_web else source_doc)
         if lens in ('coverage-gap', 'business-logic', 'temporal-logic', 'composition'):
             pieces.append(tests_doc)
         pieces.append(BUNDLE_FOOTER.format(lens=lens, target=root.name, commit=commit))
