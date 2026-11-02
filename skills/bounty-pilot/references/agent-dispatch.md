@@ -85,6 +85,19 @@ readings via `bounty.py import-findings --run "$RUN" --from "<opus-output>/readi
 --repo "$TARGET_CHECKOUT"` only when the target pinned commit matches.
 Never count unverified model hypotheses as exploit proofs or confirmed findings.
 
+**Bounded source-shard planner:** for oversized repositories, build a
+deterministic, non-dropping list of file-specific scope groups:
+
+```sh
+python3 "$S/source_shards.py" --repo "$TARGET_CHECKOUT" --max-source-bytes 160000 --out "$PRIVATE_SHARD_PLAN"
+```
+
+Each JSON shard contains `scope_args` (explicit `--scope <file>` pairs).
+Create a **separate private Bounty Pilot run directory per shard** with `bounty.py init`,
+then bundle and dispatch that subset. Reusing one run overwrites earlier bundles.
+Every tracked eligible source file is accounted for exactly once. Files larger than
+the cap are flagged for manual splitting, and unreadable files are reported.
+Shard grouping is not a call graph: review cross-shard dependencies separately.
 **Scope and context:** if a source bundle exceeds 400 KB, split the audit into
 small, explicit `--scope` groups in separate private runs. Keep a written inventory
 of the omitted paths and review cross-component dependencies separately. Web API and
