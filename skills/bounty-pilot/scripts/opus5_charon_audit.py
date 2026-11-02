@@ -190,7 +190,7 @@ def _http_error(exc, api_key):
     return ValueError(" | ".join(parts))
 
 
-WORKSPACE_ID_PATTERN = re.compile(r"wrkspc_[A-Za-z0-9]{10,80}\\Z")
+WORKSPACE_ID_PATTERN = re.compile(r"wrkspc_[A-Za-z0-9]{10,80}\Z")
 
 
 def _anthropic_headers(api_key, include_content_type=False):
