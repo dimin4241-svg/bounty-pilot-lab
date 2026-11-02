@@ -6,6 +6,16 @@
 
 ---
 
+## Актуальный релиз: 0.49.3 — поддержка workspace в Anthropic
+
+Исправлена ошибка `HTTP 400: This API key is not scoped to a workspace`.
+Для ключей, не закреплённых за workspace, локальный скрипт читает
+`ANTHROPIC_WORKSPACE_ID` из окружения и отправляет заголовок
+`anthropic-workspace-id` в **обоих** запросах: `--check-model` и
+`/v1/messages`. Ключи, привязанные к одному workspace, работают без
+дополнительных параметров. ID проверяется на корректный формат и не
+сохраняется в отчётах. [Пошаговая инструкция](skills/bounty-pilot/references/opus5-charon-trial.md).
+
 ## Актуальный релиз: 0.49.2 — диагностика HTTP 400 Anthropic
 
 Добавлена команда `--check-model`, которая проверяет доступность

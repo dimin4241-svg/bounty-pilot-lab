@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.49.3 — workspace-aware Anthropic API key support
+
+- Support organization-level/unscoped Anthropic API keys by passing a
+  validated, locally supplied `ANTHROPIC_WORKSPACE_ID` as
+  `anthropic-workspace-id` on both model metadata and paid Messages calls.
+- Omit the header for keys already scoped to an Anthropic workspace.
+- Enforce strict workspace ID syntax and prevent header injection.
+- Cover GET, POST, missing/invalid workspace and safe omission with mocked
+  tests. No real Anthropic calls or secrets added.
+
+
 ## 0.49.2 — Anthropic Messages API 400 diagnostics
 
 - Added free `--check-model` read-only GET of the exact pinned
