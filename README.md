@@ -18,6 +18,16 @@
 
 ---
 
+## Current release: 0.49.3 — workspace-scoped Anthropic requests
+
+For Anthropic API keys **not bound to a workspace**, the pinned Opus 5
+local Charon trial now validates `ANTHROPIC_WORKSPACE_ID` from the process
+environment and sends `anthropic-workspace-id` on both `--check-model`
+and paid Messages calls. Keys already scoped to a workspace continue to
+work with no additional configuration. A rejected/malformed ID fails
+locally before contacting Anthropic, and no workspace ID or API key
+is included in saved results. [Local setup guide](skills/bounty-pilot/references/opus5-charon-trial.md).
+
 ## Current release: 0.49.2 — diagnose Anthropic API 400 without leaking secrets
 
 Adds `--check-model` to the local Charon Opus 5 runner: a read-only
