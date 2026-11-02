@@ -186,6 +186,52 @@ class SecureOpusRunnerTests(unittest.TestCase):
         self.assertEqual(request.get_method(), "GET")
         self.assertTrue(request.full_url.endswith("/v1/models/" + opus.MODEL))
 
+    def test_workspace_unscoped_key_injects_header_for_model_lookup(self):
+        workspace = "wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ"
+        response = io.BytesIO(json.dumps({"id": opus.MODEL}).encode())
+        with mock.patch.dict(os.environ, {"ANTHROPIC_WORKSPACE_ID": workspace}):
+            with mock.patch.object(opus.urllib.request, "urlopen", return_value=response) as call:
+                result = opus.check_model("local-rotated-key-" + "x"*30)
+        req = call.call_args[0][0]
+        headers = dict((k.lower(), v) for k, v in req.header_items())
+        self.assertEqual(req.get_method(), "GET")
+        self.assertEqual(headers.get("anthropic-workspace-id"), workspace)
+        self.assertEqual(result["status"], "MODEL_AVAILABLE")
+        self.assertNotIn(workspace, json.dumps(result))
+
+    def test_workspace_header_applies_to_paid_messages_request(self):
+        workspace = "wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ"
+        response = io.BytesIO(json.dumps({
+            "model": opus.MODEL,
+            "content": [{"type": "text", "text": "No supported hypothesis"}],
+            "usage": {"input_tokens": 100, "output_tokens": 25},
+            "stop_reason": "end_turn"
+        }).encode())
+        with mock.patch.dict(os.environ, {"ANTHROPIC_WORKSPACE_ID": workspace}):
+            with mock.patch.object(opus.urllib.request, "urlopen", return_value=response) as call:
+                result = opus.request_opus("local-rotated-key-" + "x"*30, "audit test")
+        req = call.call_args[0][0]
+        headers = dict((k.lower(), v) for k, v in req.header_items())
+        self.assertEqual(req.get_method(), "POST")
+        self.assertEqual(headers.get("anthropic-workspace-id"), workspace)
+        self.assertEqual(result["text"], "No supported hypothesis")
+
+    def test_workspace_scoped_key_omits_optional_header(self):
+        with mock.patch.dict(os.environ, {"ANTHROPIC_WORKSPACE_ID": ""}):
+            headers = opus._anthropic_headers("local-rotated-key-" + "x"*30)
+        self.assertNotIn("anthropic-workspace-id", headers)
+
+    def test_invalid_workspace_id_rejected_without_network_calls(self):
+        invalid = ("ws_123456", "wrkspc_bad\\r\\nx-injected: yes",
+                   "wrkspc_", " wrkspc_0123456789A", "wrkspc_1234567890/")
+        for workspace in invalid:
+            with self.subTest(workspace=repr(workspace)):
+                with mock.patch.dict(os.environ, {"ANTHROPIC_WORKSPACE_ID": workspace}):
+                    with mock.patch.object(opus.urllib.request, "urlopen") as call:
+                        with self.assertRaisesRegex(ValueError, "ANTHROPIC_WORKSPACE_ID"):
+                            opus.check_model("local-rotated-key-" + "x"*30)
+                        call.assert_not_called()
+
     def test_check_model_does_not_need_source_paths(self):
         with mock.patch.object(opus, "check_model",
                                return_value={"status": "MODEL_AVAILABLE",
