@@ -28,7 +28,8 @@ def plan(repo, scope=None, max_source_bytes=160000):
     if len(head) != 40:
         raise ValueError("expected pinned Git commit")
     tracked = [x for x in bounty.git(root, "ls-files", "-z").split("\0") if x]
-    eligible = [p for p in tracked if Path(p).suffix.lower() in bounty.SOURCE_SUFFIXES
+    source_extensions = bounty.SOURCE_SUFFIXES | bounty.WEB_SOURCE_SUFFIXES
+    eligible = [p for p in tracked if Path(p).suffix.lower() in source_extensions
                 and not bounty._is_test_path(p)
                 and bounty.path_in_scope(p, scope)]
     # Group nearby files first to keep one module's definitions together;
