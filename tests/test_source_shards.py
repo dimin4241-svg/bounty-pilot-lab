@@ -35,7 +35,7 @@ class SourceShardTests(unittest.TestCase):
         result = shards.plan(self.root, max_source_bytes=1200)
         names = [p for shard in result["shards"] for p in shard["paths"]]
         self.assertEqual(sorted(names), sorted(
-            ["src/a.go", "src/b.go", "other/c.py", "other/big.rs"]))
+            ["src/a.go", "src/b.go", "src/client.vue", "other/c.py", "other/big.rs"]))
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(result["oversized_single_files"], ["other/big.rs"])
         self.assertTrue(all(s["source_bytes"] <= 1200 or
