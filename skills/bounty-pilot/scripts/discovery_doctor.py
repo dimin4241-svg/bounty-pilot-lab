@@ -88,7 +88,9 @@ def diagnose(run_dir, opus_output=None):
         counts["not_reached_lines"] += len(parsed["not_reached"])
         for skipped in parsed["skipped"]:
             reason = skipped.get("reason", "")
-            if "format example" not in reason and "looks like a block header" in reason:
+            if ("format example" not in reason and (
+                    "looks like a block header" in reason or
+                    "no surface or bug_class" in reason)):
                 counts["unparsed_candidate_headers"] += 1
                 unparsed_headers[reason] += 1
     report["reading_counts"] = dict(counts)
