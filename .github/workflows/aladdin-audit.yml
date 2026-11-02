@@ -1,0 +1,73 @@
+name: Aladdin scoped source audit (self-hosted)
+on:
+  push:
+    branches:
+      - audit/aladdin-2026-11-02
+    paths:
+      - .github/workflows/aladdin-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aladdin-scoped-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 65
+    steps:
+      - name: Checkout audited skill
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare disposable external source checkouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$RUNNER_TEMP/aladdin-audit-$GITHUB_RUN_ID"
+          mkdir -p "$BASE"
+          echo "ALADDIN_BASE=$BASE" >> "$GITHUB_ENV"
+          git clone --depth 1 https://github.com/AladdinDAO/fx-protocol-contracts.git "$BASE/fx-v2"
+          git clone --depth 1 https://github.com/AladdinDAO/aladdin-v3-contracts.git "$BASE/v3"
+          git clone --depth 1 https://github.com/AladdinDAO/aladdin-v2-contracts.git "$BASE/v2"
+          for r in fx-v2 v3 v2; do
+            echo "SOURCE_PIN $r $(git -C "$BASE/$r" rev-parse HEAD)"
+          done
+      - name: Run isolated static research funnel (no code execution or live probing)
+        shell: bash
+        run: |
+          set -uo pipefail
+          BASE="$ALADDIN_BASE"
+          S="$GITHUB_WORKSPACE/skills/bounty-pilot/scripts/bounty.py"
+          mkdir -p "$BASE/logs"
+          printf '%s\n' 'Target: Aladdin supported source families; deployment reachability unverified' > "$BASE/logs/summary.txt"
+          for spec in 'fx-v2:contracts' 'v3:contracts/concentrator' 'v3:contracts/clever' 'v3:contracts/f(x)' 'v2:contracts/stake' 'v2:contracts/token'; do
+            repo="${spec%%:*}"; scope="${spec#*:}"
+            id="$(printf '%s' "$spec" | tr '/()' '---')"
+            src="$BASE/$repo"
+            out="$BASE/run-$id"
+            if [ ! -d "$src/$scope" ]; then
+              echo "MISSING_SCOPE $spec" | tee -a "$BASE/logs/summary.txt"
+              continue
+            fi
+            echo "START $spec" | tee -a "$BASE/logs/summary.txt"
+            python3 "$S" init --repo "$src" --out "$out" > "$BASE/logs/$id-init.log" 2>&1
+            rc=$?
+            if [ "$rc" -eq 0 ]; then
+              python3 "$S" bundle --repo "$src" --run "$out" --lens accounting --scope "$scope" > "$BASE/logs/$id-bundle.log" 2>&1
+              rc=$?
+            fi
+            echo "FINISH $spec exit=$rc" | tee -a "$BASE/logs/summary.txt"
+            if [ "$rc" -ne 0 ]; then
+              tail -n 12 "$BASE/logs/$id-bundle.log" 2>/dev/null || tail -n 12 "$BASE/logs/$id-init.log" || true
+            fi
+          done
+          cat "$BASE/logs/summary.txt"
+          echo 'This job prepares static leads only; no PoC or vulnerability has been confirmed.'
+      - name: Save non-sensitive run status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aladdin-source-scan-status
+          path: ${{ env.ALADDIN_BASE }}/logs/
+          retention-days: 3
