@@ -35,7 +35,7 @@ import bounty  # noqa: E402
 
 STATE_REL = Path('agents/dispatch.json')
 SCHEMA_VERSION = 1
-PROVIDERS = ('opencode', 'zcode', 'claude', 'codex')
+PROVIDERS = ('opencode', 'zcode', 'claude', 'codex', 'deepseek')
 MODES = ('independent-blind', 'diverse-strategy')
 MAX_PLAN_JOBS = 24
 MAX_EVIDENCE_CONTEXT_BYTES = 4_000_000
@@ -318,7 +318,13 @@ def _provider_command(provider: str, binary: str, workdir: Path, model=None,
     if isinstance(producer_binding, dict):
         prompt += ('\nProducer invocation receipt:\n'
                    + json.dumps(producer_binding, sort_keys=True))
-    if provider == 'opencode':
+    if provider in ('opencode', 'deepseek'):
+        # DeepSeek uses OpenCode's supported CLI transport, never a custom
+        # unaudited HTTP sender. Require an explicit selected DeepSeek model.
+        if provider == 'deepseek' and (not isinstance(model, str) or
+                                        not model.startswith('deepseek/') or
+                                        model.strip() != model or any(c.isspace() for c in model)):
+            raise ValueError('deepseek requires --model deepseek/<id> from opencode models')
         argv = [binary, 'run', '--standalone', '--agent', 'plan', '--format', 'json',
                 '--file', context_file]
         if model:
@@ -360,6 +366,8 @@ def _provider_env(provider: str) -> dict[str, str]:
         'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
         'ZAI_API_KEY', 'BIGMODEL_API_KEY', 'NO_COLOR',
     }
+    if provider in ('opencode', 'deepseek'):
+        allowed_exact.add('DEEPSEEK_API_KEY')
     env = {key: value for key, value in os.environ.items()
            if key in allowed_exact or key.startswith('LC_')}
     env['NO_COLOR'] = '1'
@@ -512,7 +520,8 @@ def _cli_fingerprint(provider: str, binary: str) -> dict:
             result['binary_sha256'] = bounty._sha256_file(path)
     except OSError:
         pass
-    if path.name != provider and not (provider == 'zcode' and path.name.endswith('.cjs')):
+    expected_cli = 'opencode' if provider == 'deepseek' else provider
+    if path.name != expected_cli and not (provider == 'zcode' and path.name.endswith('.cjs')):
         result['version'] = 'custom binary; version not probed'
         return result
     try:
@@ -557,7 +566,7 @@ def _stage_zcode_cli(binary: str, attempt_dir: Path) -> str:
 
 
 def _resolve_binary(provider: str, requested: str | None) -> str | None:
-    executable = requested or provider
+    executable = requested or ('opencode' if provider == 'deepseek' else provider)
     found = shutil.which(executable)
     if found:
         return found
