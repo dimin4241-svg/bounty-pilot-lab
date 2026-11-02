@@ -79,6 +79,11 @@ class SecureOpusRunnerTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "mock-key-not-real-"+"q"*30}):
             res = opus.run(self.repo, output, passes=2,
                            max_usd=2.0, requester=fake)
+        self.assertEqual(res["readings_saved"], 2)
+        reading = output / "readings" / "partial-exit-and-auth.md"
+        self.assertTrue(reading.is_file())
+        self.assertIn("HYPOTHESIS ONLY", reading.read_text())
+        self.assertIn("LEAD blocks", calls[0][1])
         self.assertEqual(res["passes_completed"], 2)
         self.assertEqual(len(calls), 2)
         self.assertEqual(res["estimated_usd_spent"], 0.02)
