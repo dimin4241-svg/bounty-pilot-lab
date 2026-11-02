@@ -11,6 +11,9 @@ described in `references/agent-dispatch.md`. The DeepSeek provider is routed
 through a locally installed OpenCode CLI with an explicit `deepseek/<model-id>`,
 not a custom direct-API client. Keep all provider API keys local and set
 provider-side spend limits (only Claude Code exposes a generic per-job cap here).
+For oversized repositories create non-dropping source scope groups with
+`scripts/source_shards.py --repo <checkout> --out <private-plan.json>`.
+Use a separate private run directory per shard and review cross-shard call paths.
 Run `scripts/discovery_doctor.py --run <private-run>` on apparent zero-yield
 runs; it distinguishes no output, unparsed candidate blocks, unimported leads,
 failed jobs and oversized bundle contexts without claiming bug validity.
