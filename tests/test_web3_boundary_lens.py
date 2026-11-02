@@ -28,6 +28,8 @@ class Web3BoundaryLensTests(unittest.TestCase):
             root = Path(tmp) / "checkout"
             (root / "api").mkdir(parents=True)
             (root / "api/server.ts").write_text('app.post("/withdraw", f);\n')
+            (root / "api/settlement.go").write_text('package api\nfunc Settle() {}\n')
+            (root / "api/authorization.py").write_text('def authorize_user(): return True\n')
             subprocess.run(["git", "init", "-q", str(root)], check=True)
             subprocess.run(["git", "-C", str(root), "add", "."], check=True)
             subprocess.run(["git", "-C", str(root), "-c", "user.name=Fixture",
@@ -41,6 +43,10 @@ class Web3BoundaryLensTests(unittest.TestCase):
             self.assertIn("web-frontend", lenses)
             body = (out / "bundles/web-api-boundary-bundle.md").read_text()
             self.assertIn("/withdraw", body)
+            self.assertIn("func Settle()", body)
+            self.assertIn("authorize_user", body)
+            self.assertIn("func Settle()", (out / "bundles/web-integrity-bundle.md").read_text())
+            self.assertNotIn("func Settle()", (out / "bundles/web-frontend-bundle.md").read_text())
             self.assertIn("negative control", body)
 
 
