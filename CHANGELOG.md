@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.49.4 — Opus 5 nontext response receipts and safe cost tracking
+
+- Fix a live-reproduced case where an HTTP 200 message without visible
+  text (e.g. `thinking` blocks ending at `max_tokens`) resulted in
+  `model returned no usable text` and incorrectly reported $0 usage.
+- Always capture provider input/output counters and estimated cost
+  before evaluating whether any research text was produced.
+- On non-text or incomplete response, write private diagnostics
+  (stop reason, safe block types, usage) and stop further paid passes.
+  Never save hidden thinking or opaque signatures.
+- Use explicit `output_config.effort=medium` and `max_tokens=8192`
+  to leave room for a usable final text within fixed bounded costs.
+- Add mocked tests for empty/partial paid responses, token accounting,
+  and request effort. No live model requests or real secrets used in CI.
+
+
 ## 0.49.3 — workspace-aware Anthropic API key support
 
 - Support organization-level/unscoped Anthropic API keys by passing a
