@@ -18,6 +18,21 @@
 
 ---
 
+## Current release: 0.49.4 — Opus 5 thinking-only responses and spend accounting
+
+The Charon trial now uses explicit `medium` thinking effort and a
+larger bounded `max_tokens=8192` output budget. Anthropic HTTP 200
+responses containing only non-text thinking blocks no longer lose
+usage information. Their provider token counts, stop reason and safe
+block-type labels are recorded locally; such replies are **not security
+findings** and later passes stop rather than retrying and charging
+again. The script never records raw hidden thinking.
+
+The earlier version's `estimated_usd_spent=0.0` after
+`model returned no usable text` did **not** prove zero charges.
+Check Anthropic Console usage before retrying.
+[Local runbook](skills/bounty-pilot/references/opus5-charon-trial.md).
+
 ## Current release: 0.49.3 — workspace-scoped Anthropic requests
 
 For Anthropic API keys **not bound to a workspace**, the pinned Opus 5

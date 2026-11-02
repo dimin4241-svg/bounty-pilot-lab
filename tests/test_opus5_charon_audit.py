@@ -186,6 +186,77 @@ class SecureOpusRunnerTests(unittest.TestCase):
         self.assertEqual(request.get_method(), "GET")
         self.assertTrue(request.full_url.endswith("/v1/models/" + opus.MODEL))
 
+    def test_messages_request_medium_effort_leaves_room_for_text(self):
+        response = io.BytesIO(json.dumps({
+            "model": opus.MODEL,
+            "content": [{"type": "text", "text": "Only tentative analysis"}],
+            "usage": {"input_tokens": 520, "output_tokens": 310},
+            "stop_reason": "end_turn"
+        }).encode())
+        with mock.patch.object(opus.urllib.request, "urlopen", return_value=response) as call:
+            reply = opus.request_opus("safe-local-fixture-" + "k"*40, "test")
+        sent = json.loads(call.call_args[0][0].data)
+        self.assertEqual(sent["output_config"]["effort"], "medium")
+        self.assertEqual(sent["max_tokens"], 8192)
+        self.assertEqual(reply["text"], "Only tentative analysis")
+
+    def test_thinking_only_success_counts_tokens_and_hides_thinking(self):
+        # Simulate paid 200 response with only private reasoning, no final text.
+        response = io.BytesIO(json.dumps({
+            "model": opus.MODEL,
+            "content": [{"type": "thinking",
+                         "thinking": "CONFIDENTIAL INTERNAL THINKING MUST NOT BE SAVED",
+                         "signature": "opaque-signature"}],
+            "usage": {"input_tokens": 310, "output_tokens": 8192},
+            "stop_reason": "max_tokens"
+        }).encode())
+        with mock.patch.object(opus.urllib.request, "urlopen", return_value=response):
+            reply = opus.request_opus("safe-local-fixture-" + "k"*40, "test")
+        self.assertEqual(reply["text"], "")
+        self.assertEqual(reply["content_types"], ["thinking"])
+        self.assertEqual(reply["stop_reason"], "max_tokens")
+        self.assertEqual(reply["usage"]["output_tokens"], 8192)
+        self.assertGreater(reply["usage"]["estimated_usd"], 0)
+        self.assertNotIn("INTERNAL THINKING", json.dumps(reply))
+        self.assertNotIn("opaque-signature", json.dumps(reply))
+
+    def test_source_trial_records_cost_of_no_text_response(self):
+        out = Path(self.tmp.name) / "no-text-evidence"
+        def fake(key, question):
+            return {"text": "", "content_types": ["thinking"],
+                    "stop_reason": "max_tokens",
+                    "usage": {"input_tokens": 350, "output_tokens": 8192,
+                              "estimated_usd": 0.20655}}
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "local-mock-" + "x"*30}):
+            result = opus.run(self.repo, out, passes=2,
+                              max_usd=2.0, requester=fake)
+        self.assertEqual(result["status"], "PARTIAL_NO_TEXT_RESPONSE")
+        self.assertEqual(result["passes_completed"], 0)
+        self.assertEqual(result["api_responses_received"], 1)
+        self.assertEqual(result["estimated_usd_spent"], 0.20655)
+        content = (out / "partial-exit-and-auth.json").read_text()
+        self.assertIn("NO_TEXT_NO_FINDING", content)
+        self.assertNotIn("hypotheses_markdown", content)
+        self.assertIn("thinking", content)
+        self.assertFalse((out / "beacon-cross-client-boundary.json").exists())
+        self.assertIn("0.20655", (out / "manifest.json").read_text())
+
+    def test_incomplete_text_is_not_marked_as_completed_pass(self):
+        out = Path(self.tmp.name) / "incomplete-evidence"
+        def fake(key, question):
+            return {"text": "unfinished draft", "content_types": ["text"],
+                    "stop_reason": "max_tokens",
+                    "usage": {"input_tokens": 350, "output_tokens": 8192,
+                              "estimated_usd": 0.20655}}
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "local-mock-" + "x"*30}):
+            result = opus.run(self.repo, out, passes=2,
+                              max_usd=2.0, requester=fake)
+        self.assertEqual(result["status"], "PARTIAL_INCOMPLETE_RESPONSE")
+        self.assertEqual(result["passes_completed"], 0)
+        report = json.loads((out / "partial-exit-and-auth.json").read_text())
+        self.assertEqual(report["classification"], "UNVERIFIED_INCOMPLETE_RESPONSE")
+        self.assertEqual(report["stop_reason"], "max_tokens")
+
     def test_workspace_unscoped_key_injects_header_for_model_lookup(self):
         workspace = "wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ"
         response = io.BytesIO(json.dumps({"id": opus.MODEL}).encode())

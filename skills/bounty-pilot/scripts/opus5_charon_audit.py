@@ -23,7 +23,9 @@ TARGET = "https://github.com/ObolNetwork/charon"
 PIN = "2b534ebb719d168414ca3bf49ae75563c661f6b2"
 PRICE_INPUT = 5.0
 PRICE_OUTPUT = 25.0
-MAX_OUTPUT_TOKENS = 4500
+MAX_OUTPUT_TOKENS = 8192
+# Opus 5 defaults to high effort; medium leaves more room for final text.
+RESEARCH_EFFORT = "medium"
 MAX_FILE_BYTES = 28000
 MAX_PASS_BYTES = 68000
 MAX_PASSES = 3
@@ -241,6 +243,7 @@ def request_opus(api_key, prompt_text, timeout=120):
     body = json.dumps({
         "model": MODEL,
         "max_tokens": MAX_OUTPUT_TOKENS,
+        "output_config": {"effort": RESEARCH_EFFORT},
         "system": SYSTEM,
         "messages": [{"role": "user", "content": prompt_text}],
     }).encode("utf-8")
@@ -265,12 +268,24 @@ def request_opus(api_key, prompt_text, timeout=120):
     inp, out = usage.get("input_tokens"), usage.get("output_tokens")
     if (type(inp) is not int or type(out) is not int or inp < 0 or out < 0):
         raise ValueError("missing reliable API usage counters")
-    content = obj.get("content") or []
-    texts = [x.get("text", "") for x in content if isinstance(x, dict) and x.get("type") == "text"]
-    if not texts or not all(isinstance(t, str) for t in texts):
-        raise ValueError("model returned no usable text")
+    content = obj.get("content")
+    if not isinstance(content, list):
+        raise ValueError("Anthropic response content is not a list")
+    texts = [block["text"] for block in content
+             if isinstance(block, dict) and block.get("type") == "text"
+             and isinstance(block.get("text"), str)]
+    # Record only safe block type labels, never raw thinking blocks, signatures,
+    # API keys or model-internal reasoning in local diagnostics.
+    allowed_types = {"thinking", "redacted_thinking", "text",
+                     "tool_use", "server_tool_use"}
+    content_types = sorted(set(
+        block["type"] if isinstance(block, dict) and
+        block.get("type") in allowed_types else "other"
+        for block in content
+    ))
     cost = (inp * PRICE_INPUT + out * PRICE_OUTPUT) / 1_000_000
-    return {"text": "\n".join(texts),
+    return {"text": "\n".join(texts).strip(),
+            "content_types": content_types,
             "usage": {"input_tokens": inp, "output_tokens": out,
                       "estimated_usd": round(cost, 6)},
             "stop_reason": obj.get("stop_reason")}
@@ -304,6 +319,8 @@ def run(repo, out, passes=2, max_usd=1.0, dry_run=False, requester=request_opus)
     info = {"status": "DRY_RUN" if dry_run else "COMPLETE_UNVERIFIED_HYPOTHESES",
             "model": MODEL, "target": TARGET, "pinned_commit": PIN,
             "passes": passes, "max_usd": max_usd,
+            "research_effort": RESEARCH_EFFORT,
+            "max_output_tokens_per_request": MAX_OUTPUT_TOKENS,
             "conservative_preflight_cap_usd": round(budget, 6),
             "source": [{"pass": x[0], "files": [
                 {"path": item["path"], "sha256": item["sha256"],
@@ -320,8 +337,10 @@ def run(repo, out, passes=2, max_usd=1.0, dry_run=False, requester=request_opus)
     parent.mkdir(mode=0o700, parents=False, exist_ok=False)
     spent = 0.0
     results = []
+    api_responses = 0
     for name, files, text, reserved in batches:
         if spent + reserved > max_usd:
+            info["status"] = "BUDGET_LIMIT_REACHED"
             break
         try:
             reply = requester(key, text)
@@ -329,16 +348,46 @@ def run(repo, out, passes=2, max_usd=1.0, dry_run=False, requester=request_opus)
             info["status"] = "PARTIAL_API_FAILURE"
             info["error"] = str(exc)
             break
+        # A successful HTTP response can be billable even with NO visible text
+        # (e.g. only 'thinking' blocks and stop_reason=max_tokens). Always
+        # record provider token counters before testing response usability.
         usage = reply["usage"]
+        api_responses += 1
         spent += usage["estimated_usd"]
+        output_text = reply.get("text", "")
+        if not isinstance(output_text, str):
+            output_text = ""
+        output_text = output_text.strip()
+        stop_reason = reply.get("stop_reason")
+        classification = "UNVERIFIED_MODEL_HYPOTHESES"
+        if not output_text:
+            classification = "NO_TEXT_NO_FINDING"
+            info["status"] = "PARTIAL_NO_TEXT_RESPONSE"
+            info["diagnostic"] = (
+                "API returned usage but no visible text. Check stop_reason and "
+                "content_types in pass JSON. This request MAY HAVE BEEN BILLED; "
+                "do not retry automatically."
+            )
+        elif stop_reason != "end_turn":
+            classification = "UNVERIFIED_INCOMPLETE_RESPONSE"
+            info["status"] = "PARTIAL_INCOMPLETE_RESPONSE"
+            info["diagnostic"] = (
+                "Model response stopped before end_turn. This is not a "
+                "completed research pass; do not submit as a finding."
+            )
         result = {"pass": name, "usage": usage,
-                  "stop_reason": reply.get("stop_reason"),
+                  "stop_reason": stop_reason,
+                  "content_types": reply.get("content_types", []),
                   "source_sha256": {f["path"]: f["sha256"] for f in files},
-                  "classification": "UNVERIFIED_MODEL_HYPOTHESES",
-                  "hypotheses_markdown": reply["text"]}
+                  "classification": classification}
+        if output_text:
+            result["hypotheses_markdown"] = output_text
         _atomic_private(parent / (name + ".json"),
                         json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+        if classification != "UNVERIFIED_MODEL_HYPOTHESES":
+            break
         results.append(result)
+    info["api_responses_received"] = api_responses
     info["passes_completed"] = len(results)
     info["estimated_usd_spent"] = round(spent, 6)
     _atomic_private(parent / "manifest.json",
