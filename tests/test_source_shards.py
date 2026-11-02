@@ -44,7 +44,7 @@ class SourceShardTests(unittest.TestCase):
     def test_scope_limits_to_named_files_without_root_escape(self):
         result = shards.plan(self.root, scope=["src"], max_source_bytes=1200)
         paths = [p for s in result["shards"] for p in s["paths"]]
-        self.assertEqual(sorted(paths), ["src/a.go", "src/b.go"])
+        self.assertEqual(sorted(paths), ["src/a.go", "src/b.go", "src/client.vue"])
         self.assertEqual(result["excluded"], [])
 
     def test_small_budget_and_subdirectory_are_rejected(self):
