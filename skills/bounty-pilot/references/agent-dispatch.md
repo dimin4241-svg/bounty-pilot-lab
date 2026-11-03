@@ -5,6 +5,14 @@ latest immutable bundles into separate jobs, starts one fresh process per job, a
 result with its logs and input digest under the private run directory. It never resumes a prior
 session or shares another job's reading with a worker.
 
+## Codex Cloud is a separate execution path
+
+The existing `--provider codex` option starts the local `codex exec` CLI in the current host. It does not create a Codex Cloud task or pin GPT-6 Luna. Keep that behavior for the runner's existing source-reading use cases, but never use it to execute target PoCs when the task requires cloud-only compute.
+
+For bounded PoCs, use the official ChatGPT Work > Cloud UI with a published repository environment. Validate the task JSON with `research_handoff.py validate-task ... --for-cloud`, select its exact repository ref and commit, and verify that the model picker says GPT-6 Luna before submitting. Return the structured result in the Cloud conversation with test logs and artifact digests. The researcher then validates the result and independently reviews the candidate/control assertions before changing the status.
+
+This path requires a person to submit each READY_FOR_POC task. Do not create a GitHub Actions trigger, local watcher or provider API client. The Cloud CLI is experimental and its documented cloud-specific flags do not expose a model override, so use the UI where the model must be guaranteed. Full details and privacy rules: [Codex Cloud handoff](codex-cloud-handoff.md).
+
 ## Two distinct modes
 
 **Independent blind pass** gives the exact same bundle to multiple fresh processes. Each receives

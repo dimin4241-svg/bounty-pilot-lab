@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.49.6 — GPT-6 Luna Codex Cloud handoff
+
+- Add strict research task and result JSON Schemas, with standard-library validation for pinned commits, scope readiness, exact GPT-6 Luna executor metadata, paired test evidence and independent review.
+- Add private-by-default task, result, PoC and report folders; live bounty artifacts remain ignored and must not be pushed.
+- Document the ChatGPT Work to Codex Cloud flow, model verification and the manual submission boundary; keep the existing local Codex dispatcher clearly separate.
+- Add synthetic regression coverage for task readiness, model pinning and evidence gates. No live target, model API, GitHub Actions or Mac test runner is required.
+
+
 ## 0.49.5 — independent three-model hypothesis continuity
 
 - Fix web API and integrity hunt bundles to include scoped non-frontend

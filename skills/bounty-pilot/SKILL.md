@@ -407,6 +407,8 @@ spend cap and a bounded number of explicitly started jobs. One plan is capped at
 bounds job count, not money. Parsed unique-mechanism counts are unvalidated reading text, not
 confirmed findings.
 
+**Codex Cloud handoff for PoC execution.** Keep research and execution separate: the researcher records source, scope, reachability, impact and known-issue evidence before a task becomes READY_FOR_POC. Validate the private task with the schema and standard-library helper in `references/codex-cloud-handoff.md`. Use the published Cloud environment and verify GPT-6 Luna in the model picker for each task. The existing `agent_dispatch.py --provider codex` runs local `codex exec`; it is not a Cloud test runner. Do not use it to execute a PoC when the user requires Cloud-only compute. A Cloud result remains TESTING until an independent researcher reviews its pinned source, candidate/control pair and saved logs. Keep live tasks and all evidence in the ignored private research folders; never commit them to this public repository.
+
 The dispatcher locks every state transaction across processes. It publishes to `readings/` only
 after a parsed zero-exit response; partial or failed output stays under the attempt directory.
 `agent_dispatch.py recover --run <run>` repairs attempts whose local runner process died; retry is

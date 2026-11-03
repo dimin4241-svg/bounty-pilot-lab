@@ -1,0 +1,9 @@
+# Live bounty hypotheses, evidence and reports can be confidential.
+/tasks/*
+!/tasks/README.md
+/results/*
+!/results/README.md
+/pocs/*
+!/pocs/README.md
+/reports/*
+!/reports/README.md
