@@ -126,7 +126,10 @@ def validate_task(data, for_cloud=False):
             errors.append("$.known_issue_review.sources: completed review needs sources")
         if review.get("status") == "not_available" and not review.get("rationale"):
             errors.append("$.known_issue_review.rationale: explain why review sources were unavailable")
-    if for_cloud and task_type == "workflow_smoke_test":\n        if data.get("target", {}).get("scope_status") != "synthetic":\n            errors.append("$.target.scope_status: workflow smoke tasks must stay synthetic")\n    if isinstance(data.get("source_basis"), list):
+    if for_cloud and task_type == "workflow_smoke_test":
+        if data.get("target", {}).get("scope_status") != "synthetic":
+            errors.append("$.target.scope_status: workflow smoke tasks must stay synthetic")
+    if isinstance(data.get("source_basis"), list):
         for index, anchor in enumerate(data["source_basis"]):
             if isinstance(anchor, dict) and isinstance(anchor.get("line_start"), int) and isinstance(anchor.get("line_end"), int):
                 if anchor["line_end"] < anchor["line_start"]:
