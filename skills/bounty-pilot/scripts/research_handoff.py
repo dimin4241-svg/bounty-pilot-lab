@@ -164,12 +164,13 @@ def validate_result(data, task=None):
         log = kinds.get("test_log")
         if not log:
             errors.append("$.artifacts: adjudicated result needs a test_log artifact")
-        elif log.get("path") != execution.get("log_path") or log.get("sha256") != execution.get("log_sha256"):
-            errors.append("$.execution: log path and digest must match the test_log artifact")
         if status == "CONFIRMED" and not kinds.get("proof_of_concept"):
             errors.append("$.artifacts: CONFIRMED requires a proof_of_concept artifact")
         if execution.get("tests_passed", 0) > execution.get("tests_run", 0):
             errors.append("$.execution.tests_passed: cannot exceed tests_run")
+    log = kinds.get("test_log")
+    if log and (log.get("path") != execution.get("log_path") or log.get("sha256") != execution.get("log_sha256")):
+        errors.append("$.execution: log path and digest must match the test_log artifact")
     if status == "INCONCLUSIVE":
         blocker = data.get("blocker")
         if not isinstance(blocker, dict):
