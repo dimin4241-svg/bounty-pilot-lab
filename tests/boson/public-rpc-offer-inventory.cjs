@@ -34,8 +34,8 @@ for(const [chain,urls] of Object.entries(chainMap)){
     try{
      const offer=await c.getOffer(offerId);
      record.checked++;
-     if(offer[0] && offer[4].mutualizerAddress!=='0x0000000000000000000000000000000000000000')
-      record.nonzero.push({offerId,address:offer[4].mutualizerAddress,sellerId:String(offer[1].sellerId),fee:String(offer[4].feeAmount),resolverId:String(offer[4].disputeResolverId)});
+     if(offer[0] && offer[4][4]!=='0x0000000000000000000000000000000000000000')
+      record.nonzero.push({offerId,address:offer[4][4],sellerId:String(offer[1][1]),fee:String(offer[4][2]),resolverId:String(offer[4][0])});
     }catch(e){record.failedOffers=(record.failedOffers||0)+1;}
     await sleep(150);
    }
