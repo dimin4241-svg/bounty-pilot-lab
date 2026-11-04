@@ -33,3 +33,5 @@ jobs:
           path: ${{ runner.temp }}/boson-offer-observations.json
           retention-days: 3
           if-no-files-found: warn
+
+# Read-only rerun with positional ABI tuple decoding.
