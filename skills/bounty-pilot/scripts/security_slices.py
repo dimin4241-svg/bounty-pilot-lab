@@ -31,7 +31,9 @@ def _resolve(request, origin, known):
     if request.startswith("."):
         values.append((base / request).as_posix())
     else:
-        values.append(request)
+        # Rust 'mod x;' resolves beside the importer; root-qualified package
+        # imports may resolve from the checkout root. Ambiguity is not guessed.
+        values.extend([request, (base / request).as_posix()])
     if request.startswith("crate::"):
         values.append(request[len("crate::"):].replace("::", "/"))
     if "." in request and not request.endswith((".sol", ".ts", ".py", ".js")):

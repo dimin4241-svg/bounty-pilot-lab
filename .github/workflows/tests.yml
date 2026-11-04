@@ -4,7 +4,7 @@ on:
   # NEVER execute untrusted public pull_request code on a personal self-hosted Mac.
   # Owners may manually start a vetted revision using workflow_dispatch.
   push:
-    branches: [main, 'feat/avre-counterexample-lab-050']
+    branches: [main]
   workflow_dispatch:
 
 permissions:

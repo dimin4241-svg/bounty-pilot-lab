@@ -45,7 +45,10 @@ def _observation(case, variant, role):
     if not case.get("executed") or case.get("status") != "ran" or not case.get("matched_expected_exit"):
         return None, "native-test-did-not-conform"
     raw = str(case.get("stdout", "")) + "\n" + str(case.get("stderr", ""))
-    matches = [line[len(MARKER):] for line in raw.splitlines() if line.startswith(MARKER)]
+    # Foundry commonly indents console logs. Only strip leading horizontal
+    # whitespace; embedded prose containing a marker remains ignored.
+    visible = [line.lstrip(" \t") for line in raw.splitlines()]
+    matches = [line[len(MARKER):] for line in visible if line.startswith(MARKER)]
     if len(matches) != 1 or len(matches[0]) > 4096:
         return None, "missing-or-ambiguous-structured-observation"
     try:

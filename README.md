@@ -18,7 +18,19 @@
 
 ---
 
-## Current release: 0.49.5 — Claude, Codex and DeepSeek discovery handoff
+## Current release: 0.50.0 — experimental native evidence feedback and cross-file discovery
+
+- AVRE now scores before capping and preserves deferred, distinct invariant leads.
+- Static compiler-AST adapter and cross-file security slices provide additional
+  *unverified* state/dependency context.
+- Local replay helper, measured economic frontier and layered outcome analyzer
+  support targeted reproducibility studies, not automatic exploit proof.
+- New helpers require a scope-approved, pinned test environment. Native target
+  execution stays on the isolated self-hosted Mac runner.
+- The full CI run and real-world blind improvement remain unverified until
+  recorded test results are available.
+
+## Previous release: 0.49.5 — Claude, Codex and DeepSeek discovery handoff
 
 - Independent multi-model research through `agent_dispatch.py`: Claude Code,
   Codex and DeepSeek (via OpenCode with an explicit DeepSeek model ID).

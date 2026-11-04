@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.50.0 — experimental native feedback and cross-file hypothesis continuity
+
+- Score all AVRE candidates before global budget selection, retain deferred
+  leads, and preserve distinct same-state invariants under deduplication.
+- Add bounded cross-file security slices, local import/qualified-reference cues
+  and a compiler-AST state graph adapter with explicitly bound checkout revision.
+  Neither source cue nor compiler reference proves runtime reachability.
+- Add local, scope-pinned native research loop with repeated candidate/control
+  observations, revision-bound unverified feedback for a new AVRE run, an exact
+  measured economic frontier, and layered outcome-consistency review leads.
+- Fix the public bounty.py avre CLI to forward --feedback and --semantic-graph;
+  accept indented Foundry test log observations; resolve adjacent Rust modules.
+- Add regression tests for CLI compatibility, source isolation and native
+  observation handling; keep CI on the owner's trusted self-hosted Mac runner.
+- This version is **experimental**. Published source and synthetic regression
+  fixtures do not establish full target-runner CI success, exploitability, a
+  blind recall gain, or paid bug bounty findings.
+
 ## 0.49.5 — independent three-model hypothesis continuity
 
 - Fix web API and integrity hunt bundles to include scoped non-frontend
