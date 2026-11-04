@@ -892,7 +892,6 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                         "economic_differential"))
         hypotheses = _deduplicate(hypotheses)
         hypotheses_before_cap = len(hypotheses)
-        hypotheses = hypotheses[:budget]
         if known_issues_path:
             known_path = Path(known_issues_path).expanduser()
             if known_path.is_symlink() or not known_path.is_file() or known_path.stat().st_size > MAX_INPUT_BYTES:
@@ -900,10 +899,20 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
             known = eco.redact_text(known_path.read_text(encoding="utf-8", errors="replace"))
         else:
             known = ""
-        ranked = _score(hypotheses, known, repository_decision)
+        # Rank *all* candidates before applying the run budget. The previous
+        # slice-before-score hid later modules' best leads completely.
+        all_ranked = _score(hypotheses, known, repository_decision)
+        selector = _load("hypothesis_selector")
+        ranked, deferred, selection = selector.select(all_ranked, budget)
+        _write_json(output / "deferred-hypotheses.json", _sanitize({
+            "source_revision": _head(root), "selection": selection,
+            "hypotheses": deferred, "evidence_status": "unverified"
+        }, eco))
         results["hypothesis-ranking"] = {"hypotheses": ranked, "budget": budget,
                                         "candidates_before_cap": hypotheses_before_cap,
-                                        "notice": "Priority is a queue, not a severity or payout prediction."}
+                                        "selection": selection,
+                                        "deferred_artifact": "deferred-hypotheses.json",
+                                        "notice": "Ranked before capping; deferred hypotheses remain unverified and reviewable."}
         if "attack-graph" in selected:
             sequences = results.get("sequence-mutation") or {"sequences": []}
             results["attack-graph"] = _attack_graph(state_graph or {"symbols": [], "edges": []},
