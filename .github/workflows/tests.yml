@@ -1,9 +1,10 @@
 name: tests (Mac self-hosted)
 
 on:
+  # NEVER execute untrusted public pull_request code on a personal self-hosted Mac.
+  # Owners may manually start a vetted revision using workflow_dispatch.
   push:
-    branches: [main]
-  pull_request:
+    branches: [main, 'feat/avre-counterexample-lab-050']
   workflow_dispatch:
 
 permissions:
