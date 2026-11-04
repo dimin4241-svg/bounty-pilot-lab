@@ -115,8 +115,12 @@ class AVRETests(unittest.TestCase):
         }
         other = {**base, "title": "Check withdraw then repeat",
                  "invariant": "An operation must not be settled twice"}
-        result = avre._deduplicate([base, dict(base), other])
+        variants = [base, dict(base), other]
+        result = avre._deduplicate(variants)
         self.assertEqual(len(result), 2)
+        whitespace_same = {**base, "title": "Check   withdraw then redeem",
+                           "invariant": "A user's  CreditNotes cannot be redeemed by another"}
+        self.assertEqual(len(avre._deduplicate([base, whitespace_same])), 1)
 
     def test_optional_local_plan_remains_dry_run(self):
         plan_path = self.root / "scenario-plan.json"

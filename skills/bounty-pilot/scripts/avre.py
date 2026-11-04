@@ -420,8 +420,8 @@ def _deduplicate(rows):
         # Distinct operations and invariants may share a file and state token:
         # deduplication on location alone discards precisely the cross-user and
         # multi-step hypotheses this engine is intended to preserve.
-        invariant = re.sub(r"\\s+", " ", str(row.get("invariant", "")).strip()).lower()
-        mechanism = re.sub(r"\\s+", " ", str(row.get("title", "")).strip()).lower()
+        invariant = re.sub(r"\s+", " ", str(row.get("invariant", "")).strip()).lower()
+        mechanism = re.sub(r"\s+", " ", str(row.get("title", "")).strip()).lower()
         key = (row["module"], row["bug_class"], tuple(anchor_paths), support_key,
                invariant, mechanism)
         if key in unique:
