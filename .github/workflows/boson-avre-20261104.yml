@@ -20,6 +20,9 @@ jobs:
           set -euo pipefail
           git clone --depth 1 --branch v2.5.1 https://github.com/bosonprotocol/boson-protocol-contracts.git "$RUNNER_TEMP/boson-src"
           test "$(git -C "$RUNNER_TEMP/boson-src" rev-parse HEAD)" = "f4c91c4d13561c5e1b4007d3e394e603a803978f"
+          git -C "$RUNNER_TEMP/boson-src" sparse-checkout init --cone
+          git -C "$RUNNER_TEMP/boson-src" sparse-checkout set contracts test docs scripts
+          echo "Scoped source files only; generated addresses/abis excluded from lexical research."
       - name: Run passive AVRE with explicit repository authorization scope
         shell: bash
         run: |
