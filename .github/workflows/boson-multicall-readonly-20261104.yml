@@ -34,3 +34,5 @@ jobs:
           retention-days: 2
 
 # Second attempt with normalized checksum address.
+
+# Read-only protocol-version verification on deployed chains.
