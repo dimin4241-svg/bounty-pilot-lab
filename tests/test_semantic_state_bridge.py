@@ -42,6 +42,20 @@ class SemanticStateBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "revision"):
             bridge.adapt(self.doc, self.repo, "b" * 40)
 
+    def test_bind_graph_records_source_hashes_not_compiler_provenance(self):
+        import subprocess
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=Fixture",
+                        "-c", "user.email=fixture@example.invalid",
+                        "commit", "-qm", "fixture"], check=True)
+        bound = bridge.bind_graph(self.doc, self.repo)
+        self.assertEqual(len(bound["source_revision"]), 40)
+        self.assertFalse(bound["source_snapshot"]["compiled_input_equality_verified"])
+        self.assertIn("src/Vault.sol", bound["source_snapshot"]["sha256_by_path"])
+        result = bridge.adapt(bound, self.repo, bound["source_revision"])
+        self.assertEqual(len(result["symbols"]), 2)
+
     def test_missing_path_is_visible_not_silently_confirmed(self):
         self.doc["symbols"][0]["path"] = "../Vault.sol"
         result = bridge.adapt(self.doc, self.repo, self.rev)

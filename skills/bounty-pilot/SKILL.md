@@ -8,7 +8,9 @@ description: The experimental "lab" line of Bounty Pilot, ahead of the stable bo
 
 See references/lab-050-research-loop.md for the new optional tools.
 AVRE now ranks all discovered candidates before capping and preserves deferred
-ones in a private artifact. security_slices.py plans cross-file context bridges.
+ones in a private artifact. semantic_state_bridge.py can bind compiler-AST references for an explicitly
+pinned checkout; this is not deployed-state proof. security_slices.py plans
+cross-file context bridges.
 research_loop.py selects explicitly supplied candidate/control native tests and
 records repeated observations **only** after external network-disconnected,
 secret-free isolation and explicit opt-in; it never generates exploit code.

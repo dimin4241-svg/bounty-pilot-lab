@@ -13,7 +13,30 @@ when possible and writes excluded candidates into a private
 deferred-hypotheses.json. Deferred means not selected, not refuted. Earlier
 per-module input caps still exist and must be reviewed separately.
 
-## 2. Cross-file security slices
+## 2. Compiler-resolved static state/effect bridge for Solidity
+
+impact-plan already emits a compiler-derived semantic-graph.json from pinned
+solc build-info. It does not attach checkout provenance. Explicitly bind that
+artifact to the reviewed checkout HEAD and hash its source files:
+
+    python3 skills/bounty-pilot/scripts/semantic_state_bridge.py \
+      --graph "$PRIVATE_DIR/impact/semantic-graph.json" \
+      --repo "$TARGET_CHECKOUT" \
+      --out "$PRIVATE_DIR/bound-semantic-graph.json"
+
+Binding **does not authenticate** which exact sources went into solc. Check
+build-info, source commit and original file hashes separately. Only then use
+the compiler AST static call/write graph for a new passive AVRE run:
+
+    python3 skills/bounty-pilot/scripts/bounty.py avre \
+      --repo "$TARGET_CHECKOUT" --scope "$PRIVATE_DIR/scope.json" \
+      --out "$PRIVATE_DIR/avre-ast" \
+      --semantic-graph "$PRIVATE_DIR/bound-semantic-graph.json"
+
+Unresolved dynamic calls, compiler paths with missing source spans, external
+dependencies and authorization semantics still require manual review.
+
+## 3. Cross-file security slices
 
 Run the planner against a pinned, scope-permitted local checkout:
 
@@ -27,7 +50,7 @@ two-file bridge shards. The resulting JSON supplies scope_args for a *fresh*
 private Bounty Pilot run per shard. Inspect unrepresented_cross_shard_edges;
 large dependencies and non-import runtime links are not solved by this planner.
 
-## 3. Local native feedback campaign (isolated Mac runner only)
+## 4. Local native feedback campaign (isolated Mac runner only)
 
 research_loop.py accepts up to 32 *explicitly authored* native test variants
 with exactly one candidate and one negative-control test each. It executes
@@ -104,7 +127,7 @@ priority slightly but remain unverified. Independent reproduction,
 evidence_verifier.py, deployment/permission checks and attacker economics
 are still required.
 
-## 4. Measured-point economics
+## 5. Measured-point economics
 
 economic_frontier.py reads explicitly supplied local scenario measurements;
 it never fetches live liquidity or invents flash loans:
@@ -124,7 +147,7 @@ checks the supplied assumptions and chooses the *minimum positive tested*
 capital, not an untested global optimum. Values are unauthenticated until an
 independent reviewer checks the fork receipts and assertions.
 
-## 5. Cross-layer outcomes
+## 6. Cross-layer outcomes
 
     python3 skills/bounty-pilot/scripts/outcome_consistency.py \
       --observations "$PRIVATE_DIR/outcomes.json" \
@@ -141,7 +164,7 @@ violation. Explicit final-settlement with failed nested operations, a measured
 asset difference, or unauthorized cross-user outcome becomes a review cue,
 never an automatic bug report.
 
-## 6. Blind measurements and limitations
+## 7. Blind measurements and limitations
 
 Compare Lab 0.49.5 and Lab 0.50 on genuinely held-out pinned source revisions,
 with identical models, budgets and runtimes, before seeing their published
