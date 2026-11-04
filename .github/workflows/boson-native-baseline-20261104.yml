@@ -1,0 +1,55 @@
+name: Boson pinned native baseline - local Hardhat
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/boson-native-baseline-20261104.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boson-target-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare source at verified Boson release
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v2.5.1 https://github.com/bosonprotocol/boson-protocol-contracts.git "$RUNNER_TEMP/boson"
+          test "$(git -C "$RUNNER_TEMP/boson" rev-parse HEAD)" = "f4c91c4d13561c5e1b4007d3e394e603a803978f"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ${{ runner.temp }}/boson/package-lock.json
+      - name: Install public dependencies without project lifecycle scripts
+        working-directory: ${{ runner.temp }}/boson
+        env:
+          CI: 'true'
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Native tests - orchestration and authorization candidates / controls
+        working-directory: ${{ runner.temp }}/boson
+        env:
+          CI: 'true'
+          HARDHAT_NETWORK: hardhat
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/boson-evidence"
+          npx hardhat test \
+            test/protocol/OrchestrationCommitAndRedeemTest.js \
+            test/protocol/TokenTransferAuthorizationLibTest.js \
+            test/protocol/ExchangeHandlerCommitWithAuthorizationTest.js \
+            test/protocol/MetaTransactionsPermitStrategiesTest.js \
+            --no-compile 2>&1 | tee "$RUNNER_TEMP/boson-evidence/test-no-compile.log"
+      - name: Publish test log (no secrets)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boson-native-baseline
+          path: ${{ runner.temp }}/boson-evidence/
+          if-no-files-found: warn
+          retention-days: 3
