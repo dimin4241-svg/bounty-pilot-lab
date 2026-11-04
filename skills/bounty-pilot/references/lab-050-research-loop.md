@@ -64,10 +64,11 @@ your own pinned local test harness):
 
 Each real native test should emit exactly one line of the following shape with
 its matching role and variant. The negative control must set violated:false and
-use the same property_id. A marker alone does not prove that the test asserted
+use the same property_id. Both roles and repeated rounds must share the same initial_state_digest.
+A marker alone does not prove that the test asserted
 the corresponding state property.
 
-    BP_LAB_OBSERVATION={"variant":"actor-switch-01","role":"candidate","property_id":"cross-user-rights","violated":true,"victim_loss":"1","attacker_delta":"0","state_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+    BP_LAB_OBSERVATION={"variant":"actor-switch-01","role":"candidate","property_id":"cross-user-rights","violated":true,"victim_loss":"1","attacker_delta":"0","initial_state_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 
 Dry-run first:
 

@@ -57,6 +57,9 @@ def _observation(case, variant, role):
     if type(obj.get("violated")) is not bool or not isinstance(obj.get("property_id"), str) \
             or not IDENT.fullmatch(obj["property_id"]):
         return None, "observation-property-invalid"
+    initial_state = obj.get("initial_state_digest")
+    if not isinstance(initial_state, str) or not re.fullmatch(r"[0-9a-f]{64}", initial_state):
+        return None, "initial-state-digest-missing-or-invalid"
     victim_loss = obj.get("victim_loss", "0")
     attacker_delta = obj.get("attacker_delta", "0")
     try:
@@ -69,7 +72,8 @@ def _observation(case, variant, role):
         return None, "state-digest-invalid"
     return {"variant": variant, "role": role, "property_id": obj["property_id"],
             "violated": obj["violated"], "victim_loss": victim_loss,
-            "attacker_delta": attacker_delta, "state_digest": state}, None
+            "attacker_delta": attacker_delta, "state_digest": state,
+            "initial_state_digest": initial_state}, None
 
 
 def _validate(manifest, root):
@@ -151,11 +155,14 @@ def run(manifest, repo, max_variants=12, rounds=2, execute=False,
             if len(paired) == 2:
                 if paired["candidate"]["property_id"] != paired["negative-control"]["property_id"]:
                     errors.append("candidate/control property IDs differ")
+                if paired["candidate"]["initial_state_digest"] != paired["negative-control"]["initial_state_digest"]:
+                    errors.append("candidate/control initial state differs")
                 observations.append(paired)
         witnessed = (execute and not errors and len(observations) == rounds and
                      all(p["candidate"]["violated"] and not p["negative-control"]["violated"]
                          for p in observations) and
-                     len({p["candidate"]["property_id"] for p in observations}) == 1)
+                     len({p["candidate"]["property_id"] for p in observations}) == 1 and
+                     len({p["candidate"]["initial_state_digest"] for p in observations}) == 1)
         examined.append({
             "id": item["id"], "family": item["family"],
             "hypothesis_id": item.get("hypothesis_id"),

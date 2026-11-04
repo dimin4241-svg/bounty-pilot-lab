@@ -43,7 +43,8 @@ class ResearchLoopTests(unittest.TestCase):
              "stdout": "BP_LAB_OBSERVATION=" + json.dumps({
                  "variant": "one", "role": role, "property_id": "account-isolation",
                  "violated": role == "candidate", "victim_loss": "1.5",
-                 "attacker_delta": "0.5", "state_digest": "a" * 64})}
+                 "attacker_delta": "0.5", "state_digest": "a" * 64,
+                 "initial_state_digest": "b" * 64})}
             for role in ("candidate", "negative-control")]}
 
     def test_dry_run_never_counts_witness(self):

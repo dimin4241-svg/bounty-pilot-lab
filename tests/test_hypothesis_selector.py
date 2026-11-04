@@ -43,7 +43,7 @@ class HypothesisSelectorTests(unittest.TestCase):
         self.assertEqual({x["id"] for x in kept}, {"b", "c"})
 
     def test_feedback_is_revision_bound_and_never_confirms_findings(self):
-        rows = [candidate("late", "b", 0.5), candidate("top", "a", 0.6)]
+        rows = [candidate("late", "b", 0.55), candidate("top", "a", 0.6)]
         feed = {"schema_version": 1, "source_revision": "a"*40,
                 "execution": "local-native", "experiments": [{
                     "hypothesis_id": "late",
