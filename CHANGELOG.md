@@ -18,7 +18,6 @@
   fixtures do not establish full target-runner CI success, exploitability, a
   blind recall gain, or paid bug bounty findings.
 
-\n
 ## 0.49.5 — independent three-model hypothesis continuity
 
 - Fix web API and integrity hunt bundles to include scoped non-frontend
