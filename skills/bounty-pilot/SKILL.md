@@ -4,6 +4,20 @@ description: The experimental "lab" line of Bounty Pilot, ahead of the stable bo
 ---
 # Bounty Pilot Lab
 
+## Experimental Lab 0.50 — native feedback and no-drop discovery
+
+See references/lab-050-research-loop.md for the new optional tools.
+AVRE now ranks all discovered candidates before capping and preserves deferred
+ones in a private artifact. security_slices.py plans cross-file context bridges.
+research_loop.py selects explicitly supplied candidate/control native tests and
+records repeated observations **only** after external network-disconnected,
+secret-free isolation and explicit opt-in; it never generates exploit code.
+economic_frontier.py compares exact measured capital/profit assumptions, while
+outcome_consistency.py compares layered completion semantics and asset effects.
+A new passive AVRE run may use --feedback as unverified prioritization input.
+Do not equate local test observations with independent proof, novelty or payout.
+For target native execution use the operator's isolated Mac runner only.
+
 ## Three-model hypothesis integrity — Lab 0.49.5
 
 For Claude Code, Codex and DeepSeek use the independent three-worker plan

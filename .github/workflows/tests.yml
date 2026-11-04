@@ -1,4 +1,4 @@
-name: tests
+name: tests (Mac self-hosted)
 
 on:
   push:
@@ -15,34 +15,39 @@ concurrency:
 
 jobs:
   unittest:
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.9', '3.12', '3.13']
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Byte-compile the helpers
+          persist-credentials: false
+      - name: Verify Python toolchain
+        run: python3 --version
+      - name: Compile all helper modules
         run: python3 -m compileall -q skills/bounty-pilot/scripts
-      - name: Run the test suite
+      - name: Run complete synthetic unit suite
         run: python3 -m unittest discover -s tests -v
 
   native-smoke:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
-      - name: Execute real Solidity candidate and control tests
-        run: forge test --root tests/fixtures/native/evm -vv
-      - name: Execute real Rust candidate and control tests
-        run: cargo test --manifest-path tests/fixtures/native/rust/Cargo.toml --offline
-      - name: Verify native tests through the paired runner and Evidence-First gate
+          persist-credentials: false
+      - name: Verify local native test toolchains
         run: |
+          export PATH="$HOME/.foundry/bin:$HOME/.cargo/bin:$PATH"
+          forge --version
+          cargo --version
+      - name: Run synthetic Solidity and Rust tests (no target networks)
+        run: |
+          export PATH="$HOME/.foundry/bin:$HOME/.cargo/bin:$PATH"
+          forge test --root tests/fixtures/native/evm -vv
+          cargo test --manifest-path tests/fixtures/native/rust/Cargo.toml --offline
+      - name: Check evidence gate on synthetic native fixtures
+        run: |
+          export PATH="$HOME/.foundry/bin:$HOME/.cargo/bin:$PATH"
           python3 skills/bounty-pilot/scripts/bounty.py init --repo . --out "$RUNNER_TEMP/bp-fixture-run"
           python3 skills/bounty-pilot/scripts/scenario_runner.py \
             --plan tests/fixtures/native/paired-plan.json --repo . \
