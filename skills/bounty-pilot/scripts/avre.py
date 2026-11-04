@@ -233,7 +233,9 @@ def _operation_pairs(graph, root, eco, scope):
     )
     candidates, seen = [], set()
     for edge in graph.get("edges", []):
-        if edge.get("reason") != "qualified-or-indexed-write / lexical-read overlap":
+        if edge.get("reason") not in (
+                "qualified-or-indexed-write / lexical-read overlap",
+                "compiler-writer-reader-overlap"):
             continue
         writer, reader = symbols.get(edge.get("from")), symbols.get(edge.get("to"))
         if not writer or not reader:
@@ -252,15 +254,16 @@ def _operation_pairs(graph, root, eco, scope):
                    for row in (writer, reader)]
         candidates.append(_hypothesis(
             "impossible-state", "Check invariant across %s → %s" % (writer["symbol"], reader["symbol"]),
-            "A write/read relationship shares lexical state token %r across operations." % edge.get("token"),
+            "Two operations share a statically identified write/read token %r; runtime storage identity remains unverified." % edge.get("token"),
             [writer["path"], reader["path"]],
-            [{"type": "lexical_state_edge", "shared_state": edge.get("token"),
-              "confidence": "low", "anchors": anchors}], pair[2],
+            [{"type": "static_state_edge", "shared_state": edge.get("token"),
+              "confidence": edge.get("confidence", "low"),
+              "analysis_method": graph.get("method"), "anchors": anchors}], pair[2],
             "Possible stale authorization, accounting drift, duplicate credit, or reward/debt mismatch; no loss measured.",
             ["Confirm the functions address the same storage instance and lifecycle.",
              "Confirm protocol specifications and snapshots do not intentionally preserve this value."],
             "Unprivileged only if the named entry points are public and caller-controlled.",
-            ["The state graph is lexical and path-insensitive.",
+            ["The state graph is static and path-insensitive (AST references are not runtime reachability).",
              "A library, caller, checkpoint, or documented snapshot may enforce the invariant."],
             "INVARIANT_ONLY", scope, "state_transition_invariant"))
     return candidates

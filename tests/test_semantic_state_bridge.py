@@ -38,6 +38,27 @@ class SemanticStateBridgeTests(unittest.TestCase):
         self.assertEqual(report["edges"][0]["reason"], "compiler-static-call-reference")
         self.assertFalse(report["reachability_verified"])
 
+    def test_ast_writer_reader_overlap_is_eligible_for_avre_invariant_lead(self):
+        # Compiler-backed write/read overlap must not be discarded by the
+        # older regex-only reason filter.
+        self.doc["edges"] = [{"from": "solc:1", "to": "solc:2",
+                              "kind": "writer-reader-overlap", "state": "shares"}]
+        converted = bridge.adapt(self.doc, self.repo, self.rev)
+        from importlib.util import spec_from_file_location, module_from_spec
+        script = FILE.parent / "avre.py"
+        sp = spec_from_file_location("avre_ast_test", script)
+        avre = module_from_spec(sp)
+        sp.loader.exec_module(avre)
+        class Ecosystem:
+            @staticmethod
+            def redact_text(x):
+                return x
+        result = avre._operation_pairs(converted, self.repo, Ecosystem(),
+                                       {"classification": "IN_SCOPE"})
+        self.assertTrue(result)
+        self.assertEqual(result[0]["evidence"][0]["analysis_method"],
+                         "compiler-ast-static-effect-bridge")
+
     def test_mismatched_revision_rejected(self):
         with self.assertRaisesRegex(ValueError, "revision"):
             bridge.adapt(self.doc, self.repo, "b" * 40)
