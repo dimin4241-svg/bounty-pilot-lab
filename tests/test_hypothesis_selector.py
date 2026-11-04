@@ -42,6 +42,20 @@ class HypothesisSelectorTests(unittest.TestCase):
         kept, _, _ = selector.select(cases, 2)
         self.assertEqual({x["id"] for x in kept}, {"b", "c"})
 
+    def test_feedback_is_revision_bound_and_never_confirms_findings(self):
+        rows = [candidate("late", "b", 0.5), candidate("top", "a", 0.6)]
+        feed = {"schema_version": 1, "source_revision": "a"*40,
+                "execution": "local-native", "experiments": [{
+                    "hypothesis_id": "late",
+                    "status": "local-witness-needs-independent-review",
+                    "observations": [{}, {}]}]}
+        ranked, stats = selector.apply_feedback(rows, feed, "a"*40)
+        self.assertEqual(ranked[0]["id"], "late")
+        self.assertEqual(stats["witness_leads"], 1)
+        self.assertEqual(ranked[0]["native_feedback"]["status"], "witness-unverified")
+        with self.assertRaisesRegex(ValueError, "revision"):
+            selector.apply_feedback(rows, feed, "b"*40)
+
     def test_invalid_ids_and_budgets_fail_closed(self):
         with self.assertRaises(ValueError):
             selector.select([candidate("a", "a", 1), candidate("a", "a", 2)], 2)

@@ -721,7 +721,8 @@ def _safe_plan(repo, plan_path, runner):
 def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length=5,
             beam_width=16, resume=False, trust_model_path=None, measurements_path=None,
             known_issues_path=None, local_plan_path=None, baseline_path=None,
-            archive_index_path=None, runtime_trace_path=None, pilot_run_path=None):
+            archive_index_path=None, runtime_trace_path=None, pilot_run_path=None,
+            feedback_path=None):
     wall_started, cpu_started = time.perf_counter(), time.process_time()
     root = Path(repo).expanduser().resolve()
     if not root.is_dir():
@@ -760,7 +761,7 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
     extras = {"trust_model": trust_model_path, "measurements": measurements_path,
               "known_issues": known_issues_path, "local_plan": local_plan_path,
               "baseline": baseline_path, "archive_index": archive_index_path,
-              "runtime_trace": runtime_trace_path}
+              "runtime_trace": runtime_trace_path, "feedback": feedback_path}
     extras = {key: _local_input(path, "--" + key.replace("_", "-")) if path else None
               for key, path in extras.items()}
     trust_model_path, measurements_path = extras["trust_model"], extras["measurements"]
@@ -903,6 +904,17 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
         # slice-before-score hid later modules' best leads completely.
         all_ranked = _score(hypotheses, known, repository_decision)
         selector = _load("hypothesis_selector")
+        feedback_provenance = None
+        if extras.get("feedback"):
+            feedback = _json(extras["feedback"])
+            all_ranked, feedback_stats = selector.apply_feedback(
+                all_ranked, feedback, _head(root))
+            feedback_provenance = {
+                "sha256": _file_digest(extras["feedback"]),
+                "source_revision": _head(root), "status": "unverified-native-feedback",
+                "matched": feedback_stats["matched"],
+                "witness_leads": feedback_stats["witness_leads"],
+            }
         ranked, deferred, selection = selector.select(all_ranked, budget)
         _write_json(output / "deferred-hypotheses.json", _sanitize({
             "source_revision": _head(root), "selection": selection,
@@ -1006,6 +1018,7 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                                           if key not in ("nodes", "edges")}, eco)
                               if runtime_trace else None),
             "pilot_import": pilot_import, "benchmark_comparison": comparison,
+            "native_feedback": feedback_provenance,
             "review": {"status": "NOT_INDEPENDENTLY_REVIEWED",
                        "integration": "Use existing Bounty Pilot dispatch + evidence_verifier for a bound independent review; AVRE never self-confirms.",
                        "queue_artifact": "skeptical-review-queue.json"},
@@ -1061,6 +1074,7 @@ def main(argv=None):
     parser.add_argument("--archive-index", help="local index of previously saved in-scope archives")
     parser.add_argument("--runtime-trace", help="pinned caller-supplied local trace JSON; imported as unverified graph edges")
     parser.add_argument("--pilot-run", help="existing Bounty Pilot run to receive untriaged AVRE LEAD records")
+    parser.add_argument("--feedback", help="pinned research_loop.py report; unverified native feedback only")
     args = parser.parse_args(argv)
     modules = [name.strip() for name in args.modules.split(",") if name.strip()]
     try:
@@ -1068,7 +1082,7 @@ def main(argv=None):
                          args.max_sequence_length, args.beam_width, args.resume,
                          args.trust_model, args.measurements, args.known_issues,
                          args.local_plan, args.baseline, args.archive_index,
-                         args.runtime_trace, args.pilot_run)
+                         args.runtime_trace, args.pilot_run, args.feedback)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError,

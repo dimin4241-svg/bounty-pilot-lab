@@ -58,3 +58,47 @@ def select(rows, budget):
         "selected_by_module": dict(Counter(row.get("module", "unknown") for row in selected)),
         "deferred_by_module": dict(Counter(row.get("module", "unknown") for row in deferred)),
     }
+
+
+def apply_feedback(rows, document, source_revision):
+    """Annotate leads with *unverified* local observations, not security truth."""
+    if not isinstance(document, dict) or document.get("schema_version") != 1 \
+            or document.get("source_revision") != source_revision:
+        raise ValueError("feedback schema or source revision mismatch")
+    if document.get("execution") not in ("local-native", "dry-run"):
+        raise ValueError("feedback execution mode invalid")
+    experiments = document.get("experiments")
+    if not isinstance(experiments, list) or len(experiments) > 32:
+        raise ValueError("feedback experiments invalid or over cap")
+    known_ids = {row["id"] for row in rows}
+    matched, witness_leads = set(), set()
+    for item in experiments:
+        if not isinstance(item, dict):
+            raise ValueError("invalid feedback experiment")
+        key = item.get("hypothesis_id")
+        if not isinstance(key, str) or key not in known_ids:
+            continue
+        matched.add(key)
+        observations = item.get("observations")
+        if (document["execution"] == "local-native" and
+                item.get("status") == "local-witness-needs-independent-review" and
+                isinstance(observations, list) and len(observations) >= 2):
+            witness_leads.add(key)
+    output = []
+    for row in rows:
+        row = dict(row)
+        if row["id"] in matched:
+            row["native_feedback"] = {
+                "status": "witness-unverified" if row["id"] in witness_leads else "inconclusive",
+                "source": "caller-supplied-research-loop-report",
+                "independent_reproduction": False,
+            }
+        if row["id"] in witness_leads:
+            row["scores"] = dict(row.get("scores") or {})
+            row["scores"]["priority"] = round(float(row["scores"].get("priority", 0)) + 0.075, 4)
+        output.append(row)
+    output.sort(key=lambda row: (-float(row.get("scores", {}).get("priority", 0)), str(row["id"])))
+    for i, row in enumerate(output, 1):
+        row["rank"] = i
+    return output, {"matched": len(matched), "witness_leads": len(witness_leads),
+                    "warning": "Unverified feedback is not proof and only shifts queue priority."}
