@@ -2,7 +2,7 @@
 const fs=require('fs');
 const {JsonRpcProvider,Interface,Contract,getAddress}=require('ethers');
 const diamond='0x59A4C19b55193D5a2EAD0065c54af4d516E18Cb5';
-const multi='0xcA11bde05977b3631167028862be2a173976ca11';
+const multi='0xca11bde05977b3631167028862be2a173976ca11';
 const providers={
  '137':['https://polygon-bor-rpc.publicnode.com','https://polygon-rpc.com'],
  '1':['https://ethereum-rpc.publicnode.com'],
