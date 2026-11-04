@@ -17,7 +17,7 @@ jobs:
           curl -fLsS --retry 2 --max-time 50 'https://raw.githubusercontent.com/bosonprotocol/boson-protocol-contracts/main/docs/audits/Omniscia_Audit_Report_Boson_Protocol_V2.5.1.pdf' -o "$RUNNER_TEMP/public-boson-audit.pdf"
           file "$RUNNER_TEMP/public-boson-audit.pdf"
           python -m pip install --quiet --break-system-packages pypdf
-          python -c "from pypdf import PdfReader; import sys; p=PdfReader(sys.argv[1]); open(sys.argv[2],\u0027w\u0027).write(\u0027\\n\\n\u0027.join(x.extract_text() or \u0027\u0027 for x in p.pages))" "$RUNNER_TEMP/public-boson-audit.pdf" "$RUNNER_TEMP/public-boson-audit.txt"
+          python -c 'from pypdf import PdfReader; import os; d=os.environ["RUNNER_TEMP"]; p=PdfReader(d+"/public-boson-audit.pdf"); open(d+"/public-boson-audit.txt","w").write(chr(10).join(x.extract_text() or "" for x in p.pages))'
           grep -Ei 'signature|offer creator|assistant|replay|allowance' "$RUNNER_TEMP/public-boson-audit.txt" | head -45 || true
       - uses: actions/upload-artifact@v4
         with:
