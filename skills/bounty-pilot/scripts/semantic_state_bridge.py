@@ -53,6 +53,17 @@ def adapt(graph, root, revision):
     if not isinstance(original_edges, list) or len(original_edges) > MAX_EDGES:
         raise ValueError("compiler graph edges must be <=50000")
     root = Path(root).resolve()
+    snapshot = graph.get("source_snapshot")
+    if snapshot is not None:
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("sha256_by_path"), dict):
+            raise ValueError("invalid bound source snapshot")
+        for name, expected in snapshot["sha256_by_path"].items():
+            path = root / name
+            if not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts \
+                    or path.is_symlink() or not path.is_file() or path.stat().st_size > 2_000_000:
+                raise ValueError("bound compiler source is unavailable: " + str(name))
+            if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                raise ValueError("source bytes changed since compiler graph was bound: " + name)
     adapted, skipped = [], []
     old_to_new = {}
     for row in original:

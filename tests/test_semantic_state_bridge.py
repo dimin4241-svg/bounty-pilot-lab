@@ -70,12 +70,17 @@ class SemanticStateBridgeTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=Fixture",
                         "-c", "user.email=fixture@example.invalid",
                         "commit", "-qm", "fixture"], check=True)
-        bound = bridge.bind_graph(self.doc, self.repo)
+        unbound = dict(self.doc)
+        unbound.pop("source_revision")
+        bound = bridge.bind_graph(unbound, self.repo)
         self.assertEqual(len(bound["source_revision"]), 40)
         self.assertFalse(bound["source_snapshot"]["compiled_input_equality_verified"])
         self.assertIn("src/Vault.sol", bound["source_snapshot"]["sha256_by_path"])
         result = bridge.adapt(bound, self.repo, bound["source_revision"])
         self.assertEqual(len(result["symbols"]), 2)
+        (self.repo / "src/Vault.sol").write_text("changed source")
+        with self.assertRaisesRegex(ValueError, "source bytes changed"):
+            bridge.adapt(bound, self.repo, bound["source_revision"])
 
     def test_missing_path_is_visible_not_silently_confirmed(self):
         self.doc["symbols"][0]["path"] = "../Vault.sol"
