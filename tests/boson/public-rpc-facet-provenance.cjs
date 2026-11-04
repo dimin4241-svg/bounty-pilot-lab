@@ -15,6 +15,10 @@ for(const [chain,name,url] of nets){
     const bytecode=await p.getCode(row.facet);
     row.bytecodeSize=(bytecode.length-2)/2;
     row.codehash=keccak256(bytecode);
+    const metadataLength=parseInt(bytecode.slice(-4),16)+2;
+    row.metadataBytes=metadataLength;
+    row.executableHash=keccak256('0x'+bytecode.slice(2,-metadataLength*2));
+    row.executableMatchesPinnedSource=row.executableHash==='0xde5650b145ffc25a01e838cd20ce0eb3d7a71d690221efd312d163dbe4b64d76';
     row.matchesPinnedSource=row.codehash===expected;
   }catch(e){row.error=String(e.shortMessage||e.message).slice(0,240)}
   console.log('BOSON_FACET_PROVENANCE '+JSON.stringify(row));
