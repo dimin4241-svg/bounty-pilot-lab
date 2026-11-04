@@ -32,3 +32,5 @@ jobs:
           retention-days: 2
 
 # Verify executable bytecode without Solidity metadata tail.
+
+# Capture public deployed Polygon runtime bytes for offline opcode diff.
