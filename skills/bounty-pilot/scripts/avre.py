@@ -39,6 +39,7 @@ import avre_sequence
 
 SCHEMA_VERSION = 1
 MAX_INPUT_BYTES = 8_000_000
+MAX_GENERATED_ECOSYSTEM_BYTES = 32_000_000  # Bounded output of our own passive collector.
 MODULES = ("impossible-state", "sequence-mutation", "economic-differential",
            "failure-recovery", "cross-reality", "identity-context",
            "historical-ecosystem", "attack-graph", "hypothesis-ranking")
@@ -58,9 +59,9 @@ def _load(name):
     return module
 
 
-def _json(path):
+def _json(path, max_bytes=MAX_INPUT_BYTES):
     raw = Path(path).expanduser()
-    if raw.is_symlink() or not raw.is_file() or raw.stat().st_size > MAX_INPUT_BYTES:
+    if raw.is_symlink() or not raw.is_file() or raw.stat().st_size > max_bytes:
         raise ValueError("input must be a regular, non-symlink local file under the size cap")
     return json.loads(raw.read_text(encoding="utf-8"))
 
@@ -806,7 +807,7 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
             eco_out = output / "ecosystem"
             eco_json = eco_out / "ecosystem-intelligence.json"
             if checkpoint and eco_json.is_file():
-                eco_report = _json(eco_json)
+                eco_report = _json(eco_json, max_bytes=MAX_GENERATED_ECOSYSTEM_BYTES)
             else:
                 build_out = output / ".ecosystem-building"
                 if build_out.exists():
@@ -816,7 +817,7 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                 eco.analyze(root, scope_file, build_out, archive_index=archive_index_path,
                             known_issues=known_issues_path)
                 os.replace(build_out, eco_out)
-                eco_report = _json(eco_json)
+                eco_report = _json(eco_json, max_bytes=MAX_GENERATED_ECOSYSTEM_BYTES)
         symbols = state_graph.get("symbols", []) if state_graph else []
         results = dict(done)
         module_order = [name for name in MODULES if name in selected]
