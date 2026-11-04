@@ -44,7 +44,7 @@ jobs:
             test/protocol/TokenTransferAuthorizationLibTest.js \
             test/protocol/ExchangeHandlerCommitWithAuthorizationTest.js \
             test/protocol/MetaTransactionsPermitStrategiesTest.js \
-            --no-compile 2>&1 | tee "$RUNNER_TEMP/boson-evidence/test-no-compile.log"
+            2>&1 | tee "$RUNNER_TEMP/boson-evidence/test-no-compile.log"
       - name: Publish test log (no secrets)
         if: always()
         uses: actions/upload-artifact@v4
