@@ -23,6 +23,7 @@ async function measure(chain,urls){
    const c=new Contract(multi,multiabi,p);
    const next=Number(abi.decodeFunctionResult('getNextOfferId',await p.call({to:diamond,data:abi.encodeFunctionData('getNextOfferId',[])}))[0]);
    s.declared=Math.max(0,next-1);
+   try { s.protocolVersion = String(await (new Contract(diamond,['function getVersion() view returns (string)'],p)).getVersion()); } catch(e) { s.protocolVersion='unavailable'; }
    for(let first=1;first<next;first+=24){
     const ids=Array.from({length:Math.min(24,next-first)},(_,i)=>first+i);
     const calls=ids.map(id=>({target:diamond,allowFailure:true,callData:abi.encodeFunctionData('getOffer',[id])}));
