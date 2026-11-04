@@ -95,6 +95,8 @@ def adapt(graph, root, revision):
                              "sinks": row.get("sinks", []),
                              "source": row.get("source", "compiler-ast")},
         })
+    if not adapted:
+        raise ValueError("zero AST symbols resolve to pinned source; inspect missing paths/spans")
     links = []
     for row in original_edges:
         if not isinstance(row, dict):

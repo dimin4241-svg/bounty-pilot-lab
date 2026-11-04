@@ -73,11 +73,11 @@ your own pinned local test harness):
       "cases": [
         {"id": "candidate", "pair_id": "actor-switch-01",
          "role": "candidate",
-         "argv": ["forge", "test", "--match-test", "testActorSwitch", "-vv"],
+         "argv": ["forge", "test", "--match-test", "testActorSwitch", "-vvv"],
          "cwd": ".", "timeout_sec": 120},
         {"id": "control", "pair_id": "actor-switch-01",
          "role": "negative-control",
-         "argv": ["forge", "test", "--match-test", "testProtectedControl", "-vv"],
+         "argv": ["forge", "test", "--match-test", "testProtectedControl", "-vvv"],
          "cwd": ".", "timeout_sec": 120}
       ]
     }

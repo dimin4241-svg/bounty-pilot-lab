@@ -98,6 +98,8 @@ def plan(repo, scope=None, max_source_bytes=160000, max_bridges=MAX_BRIDGES):
     paths = [p for row in primary["shards"] for p in row["paths"]]
     if len(paths) > MAX_FILES:
         raise ValueError("source file count exceeds bounded semantic slice planner")
+    if not paths:
+        raise ValueError("no scoped tracked source; cannot plan semantic slices")
     edges, sizes = _cues(repo, paths)
     owner = {p: row["index"] for row in primary["shards"] for p in row["paths"]}
     packs = []

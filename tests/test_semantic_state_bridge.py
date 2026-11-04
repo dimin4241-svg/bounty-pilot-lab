@@ -59,6 +59,13 @@ class SemanticStateBridgeTests(unittest.TestCase):
         self.assertEqual(result[0]["evidence"][0]["analysis_method"],
                          "compiler-ast-static-effect-bridge")
 
+    def test_all_ast_source_paths_missing_fails_closed(self):
+        self.doc["symbols"] = [self.doc["symbols"][0]]
+        self.doc["symbols"][0]["path"] = "unknown/Contract.sol"
+        self.doc["edges"] = []
+        with self.assertRaisesRegex(ValueError, "zero AST symbols"):
+            bridge.adapt(self.doc, self.repo, self.rev)
+
     def test_mismatched_revision_rejected(self):
         with self.assertRaisesRegex(ValueError, "revision"):
             bridge.adapt(self.doc, self.repo, "b" * 40)
