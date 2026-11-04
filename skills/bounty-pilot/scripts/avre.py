@@ -233,7 +233,9 @@ def _operation_pairs(graph, root, eco, scope):
     )
     candidates, seen = [], set()
     for edge in graph.get("edges", []):
-        if edge.get("reason") != "qualified-or-indexed-write / lexical-read overlap":
+        if edge.get("reason") not in (
+                "qualified-or-indexed-write / lexical-read overlap",
+                "compiler-writer-reader-overlap"):
             continue
         writer, reader = symbols.get(edge.get("from")), symbols.get(edge.get("to"))
         if not writer or not reader:
@@ -252,15 +254,16 @@ def _operation_pairs(graph, root, eco, scope):
                    for row in (writer, reader)]
         candidates.append(_hypothesis(
             "impossible-state", "Check invariant across %s → %s" % (writer["symbol"], reader["symbol"]),
-            "A write/read relationship shares lexical state token %r across operations." % edge.get("token"),
+            "Two operations share a statically identified write/read token %r; runtime storage identity remains unverified." % edge.get("token"),
             [writer["path"], reader["path"]],
-            [{"type": "lexical_state_edge", "shared_state": edge.get("token"),
-              "confidence": "low", "anchors": anchors}], pair[2],
+            [{"type": "static_state_edge", "shared_state": edge.get("token"),
+              "confidence": edge.get("confidence", "low"),
+              "analysis_method": graph.get("method"), "anchors": anchors}], pair[2],
             "Possible stale authorization, accounting drift, duplicate credit, or reward/debt mismatch; no loss measured.",
             ["Confirm the functions address the same storage instance and lifecycle.",
              "Confirm protocol specifications and snapshots do not intentionally preserve this value."],
             "Unprivileged only if the named entry points are public and caller-controlled.",
-            ["The state graph is lexical and path-insensitive.",
+            ["The state graph is static and path-insensitive (AST references are not runtime reachability).",
              "A library, caller, checkpoint, or documented snapshot may enforce the invariant."],
             "INVARIANT_ONLY", scope, "state_transition_invariant"))
     return candidates
@@ -721,7 +724,8 @@ def _safe_plan(repo, plan_path, runner):
 def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length=5,
             beam_width=16, resume=False, trust_model_path=None, measurements_path=None,
             known_issues_path=None, local_plan_path=None, baseline_path=None,
-            archive_index_path=None, runtime_trace_path=None, pilot_run_path=None):
+            archive_index_path=None, runtime_trace_path=None, pilot_run_path=None,
+            feedback_path=None, semantic_graph_path=None):
     wall_started, cpu_started = time.perf_counter(), time.process_time()
     root = Path(repo).expanduser().resolve()
     if not root.is_dir():
@@ -760,7 +764,8 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
     extras = {"trust_model": trust_model_path, "measurements": measurements_path,
               "known_issues": known_issues_path, "local_plan": local_plan_path,
               "baseline": baseline_path, "archive_index": archive_index_path,
-              "runtime_trace": runtime_trace_path}
+              "runtime_trace": runtime_trace_path, "feedback": feedback_path,
+              "semantic_graph": semantic_graph_path}
     extras = {key: _local_input(path, "--" + key.replace("_", "-")) if path else None
               for key, path in extras.items()}
     trust_model_path, measurements_path = extras["trust_model"], extras["measurements"]
@@ -798,7 +803,12 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
             if checkpoint and cached_graph.is_file():
                 state_graph = _json(cached_graph)
             else:
-                state_graph = _load("state_graph").scan(root, limit=min(2000, max(100, budget * 3)))
+                if extras.get("semantic_graph"):
+                    state_graph = _load("semantic_state_bridge").from_file(
+                        extras["semantic_graph"], root, _head(root))
+                else:
+                    state_graph = _load("state_graph").scan(
+                        root, limit=min(2000, max(100, budget * 3)))
                 _write_json(cached_graph, state_graph)
         need_eco = bool(set(selected) & {"historical-ecosystem", "attack-graph"}) or bool(archive_index_path)
         eco_report = None
@@ -892,7 +902,6 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                         "economic_differential"))
         hypotheses = _deduplicate(hypotheses)
         hypotheses_before_cap = len(hypotheses)
-        hypotheses = hypotheses[:budget]
         if known_issues_path:
             known_path = Path(known_issues_path).expanduser()
             if known_path.is_symlink() or not known_path.is_file() or known_path.stat().st_size > MAX_INPUT_BYTES:
@@ -900,10 +909,31 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
             known = eco.redact_text(known_path.read_text(encoding="utf-8", errors="replace"))
         else:
             known = ""
-        ranked = _score(hypotheses, known, repository_decision)
+        # Rank *all* candidates before applying the run budget. The previous
+        # slice-before-score hid later modules' best leads completely.
+        all_ranked = _score(hypotheses, known, repository_decision)
+        selector = _load("hypothesis_selector")
+        feedback_provenance = None
+        if extras.get("feedback"):
+            feedback = _json(extras["feedback"])
+            all_ranked, feedback_stats = selector.apply_feedback(
+                all_ranked, feedback, _head(root))
+            feedback_provenance = {
+                "sha256": _file_digest(extras["feedback"]),
+                "source_revision": _head(root), "status": "unverified-native-feedback",
+                "matched": feedback_stats["matched"],
+                "witness_leads": feedback_stats["witness_leads"],
+            }
+        ranked, deferred, selection = selector.select(all_ranked, budget)
+        _write_json(output / "deferred-hypotheses.json", _sanitize({
+            "source_revision": _head(root), "selection": selection,
+            "hypotheses": deferred, "evidence_status": "unverified"
+        }, eco))
         results["hypothesis-ranking"] = {"hypotheses": ranked, "budget": budget,
                                         "candidates_before_cap": hypotheses_before_cap,
-                                        "notice": "Priority is a queue, not a severity or payout prediction."}
+                                        "selection": selection,
+                                        "deferred_artifact": "deferred-hypotheses.json",
+                                        "notice": "Ranked before capping; deferred hypotheses remain unverified and reviewable."}
         if "attack-graph" in selected:
             sequences = results.get("sequence-mutation") or {"sequences": []}
             results["attack-graph"] = _attack_graph(state_graph or {"symbols": [], "edges": []},
@@ -971,6 +1001,8 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                          "working_tree_dirty": bool(_git(root, "status", "--porcelain").stdout.strip()),
                          "files_read": file_stats["files_read"], "tracked_files_seen": file_stats["tracked_files_seen"],
                          "modules_selected": selected,
+                         "state_graph_basis": state_graph.get("method") if state_graph else None,
+                         "static_graph_skipped_symbols": len(state_graph.get("skipped_symbols", [])) if state_graph else 0,
                          "resource_usage": {"wall_seconds_before_report_write": round(time.perf_counter() - wall_started, 4),
                                             "process_cpu_seconds_before_report_write": round(time.process_time() - cpu_started, 4),
                                             "model_or_network_calls": 0, "tokens_used": 0,
@@ -997,6 +1029,7 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                                           if key not in ("nodes", "edges")}, eco)
                               if runtime_trace else None),
             "pilot_import": pilot_import, "benchmark_comparison": comparison,
+            "native_feedback": feedback_provenance,
             "review": {"status": "NOT_INDEPENDENTLY_REVIEWED",
                        "integration": "Use existing Bounty Pilot dispatch + evidence_verifier for a bound independent review; AVRE never self-confirms.",
                        "queue_artifact": "skeptical-review-queue.json"},
@@ -1052,6 +1085,8 @@ def main(argv=None):
     parser.add_argument("--archive-index", help="local index of previously saved in-scope archives")
     parser.add_argument("--runtime-trace", help="pinned caller-supplied local trace JSON; imported as unverified graph edges")
     parser.add_argument("--pilot-run", help="existing Bounty Pilot run to receive untriaged AVRE LEAD records")
+    parser.add_argument("--feedback", help="pinned research_loop.py report; unverified native feedback only")
+    parser.add_argument("--semantic-graph", help="explicitly revision-bound compiler AST graph for state/sequence search")
     args = parser.parse_args(argv)
     modules = [name.strip() for name in args.modules.split(",") if name.strip()]
     try:
@@ -1059,7 +1094,8 @@ def main(argv=None):
                          args.max_sequence_length, args.beam_width, args.resume,
                          args.trust_model, args.measurements, args.known_issues,
                          args.local_plan, args.baseline, args.archive_index,
-                         args.runtime_trace, args.pilot_run)
+                         args.runtime_trace, args.pilot_run, args.feedback,
+                         args.semantic_graph)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError,
