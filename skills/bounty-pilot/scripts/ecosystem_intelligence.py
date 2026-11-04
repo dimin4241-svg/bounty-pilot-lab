@@ -133,8 +133,12 @@ def normalize_url(value):
     if parsed.scheme.lower() not in ("http", "https", "ws", "wss") or not parsed.hostname:
         return ""
     host = parsed.hostname.lower()
-    if parsed.port and parsed.port not in (80, 443):
-        host += ":" + str(parsed.port)
+    try:
+        port = parsed.port
+    except ValueError:
+        return ""  # Invalid port from a malformed/markup-suffixed URL; fail closed.
+    if port and port not in (80, 443):
+        host += ":" + str(port)
     path = re.sub(r"/{2,}", "/", parsed.path or "/").rstrip("/") or "/"
     return urlunsplit((parsed.scheme.lower(), host, path, "", ""))
 
@@ -144,8 +148,12 @@ def safe_url(value):
     if not parsed.scheme or not parsed.hostname:
         return ""
     host = parsed.hostname.lower()
-    if parsed.port and parsed.port not in (80, 443):
-        host += ":" + str(parsed.port)
+    try:
+        port = parsed.port
+    except ValueError:
+        return ""  # Invalid port from a malformed/markup-suffixed URL; fail closed.
+    if port and port not in (80, 443):
+        host += ":" + str(port)
     parts = [p for p in parsed.path.split("/") if p]
     parts = ["<redacted>" if (SENSITIVE_PATH.search(p) or
              len(p) >= 24 and re.fullmatch(r"[A-Za-z0-9._~-]+", p) or

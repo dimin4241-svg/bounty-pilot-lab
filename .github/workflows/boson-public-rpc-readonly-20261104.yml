@@ -1,0 +1,37 @@
+name: Boson read-only production usage check
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/boson-public-rpc-readonly-20261104.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install ethers for public read-only requests
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/boson-rpc-deps"
+          npm install --prefix "$RUNNER_TEMP/boson-rpc-deps" ethers@6.16.0 --ignore-scripts --no-audit --no-fund --silent
+      - name: Read bounded public offer state on five official chains
+        env:
+          NODE_PATH: ${{ runner.temp }}/boson-rpc-deps/node_modules
+          BOSON_READONLY_OUTPUT: ${{ runner.temp }}/boson-offer-observations.json
+        shell: bash
+        run: node tests/boson/public-rpc-offer-inventory.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boson-readonly-offer-observations
+          path: ${{ runner.temp }}/boson-offer-observations.json
+          retention-days: 3
+          if-no-files-found: warn
+
+# Read-only rerun with positional ABI tuple decoding.

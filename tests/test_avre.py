@@ -74,6 +74,15 @@ class AVRETests(unittest.TestCase):
             avre.analyze(self.repo, self.scope_path, self.repo / "out",
                          modules=["sequence-mutation"])
 
+    def test_generated_ecosystem_json_uses_separate_bounded_size_cap(self):
+        path = self.root / "large-ecosystem.json"
+        path.write_text(json.dumps({"description": "x" * 70}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "size cap"):
+            avre._json(path, max_bytes=30)
+        self.assertEqual(avre._json(path, max_bytes=200)["description"], "x" * 70)
+        self.assertGreater(avre.MAX_GENERATED_ECOSYSTEM_BYTES, avre.MAX_INPUT_BYTES)
+        self.assertLessEqual(avre.MAX_GENERATED_ECOSYSTEM_BYTES, 32_000_000)
+
     def test_local_static_only_scope_does_not_require_history_permissions(self):
         self.scope["allowed"]["methods"] = ["local_static"]
         self._write_scope()

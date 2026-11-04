@@ -1,0 +1,38 @@
+name: Boson read-only complete offer state inventory
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/boson-multicall-readonly-20261104.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Public ethers dependency
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/read-only-deps"
+          npm install --prefix "$RUNNER_TEMP/read-only-deps" ethers@6.16.0 --ignore-scripts --no-fund --no-audit --silent
+      - name: Fetch bounded public state via eth_call only
+        shell: bash
+        env:
+          NODE_PATH: ${{ runner.temp }}/read-only-deps/node_modules
+          BOSON_READONLY_OUTPUT: ${{ runner.temp }}/boson-complete-offer-inventory.json
+        run: node tests/boson/public-rpc-full-inventory.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boson-complete-offer-inventory-readonly
+          path: ${{ runner.temp }}/boson-complete-offer-inventory.json
+          retention-days: 2
+
+# Second attempt with normalized checksum address.
+
+# Read-only protocol-version verification on deployed chains.

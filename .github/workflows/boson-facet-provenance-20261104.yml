@@ -1,0 +1,36 @@
+name: Boson facet provenance read-only
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/boson-facet-provenance-20261104.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install public read-only EVM decoder
+        run: |
+          mkdir -p "$RUNNER_TEMP/boson-provenance-node"
+          npm install --prefix "$RUNNER_TEMP/boson-provenance-node" ethers@6.16.0 --ignore-scripts --no-audit --no-fund --silent
+      - name: Compare pinned release facet runtime hash with deployed diamond selectors
+        env:
+          NODE_PATH: ${{ runner.temp }}/boson-provenance-node/node_modules
+          BOSON_PROVENANCE_FILE: ${{ runner.temp }}/boson-facet-provenance.json
+        run: node tests/boson/public-rpc-facet-provenance.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boson-readonly-facet-provenance
+          path: ${{ runner.temp }}/boson-facet-provenance.json
+          retention-days: 2
+
+# Verify executable bytecode without Solidity metadata tail.
+
+# Capture public deployed Polygon runtime bytes for offline opcode diff.

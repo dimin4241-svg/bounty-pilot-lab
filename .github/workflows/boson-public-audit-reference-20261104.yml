@@ -1,0 +1,26 @@
+name: Boson public v2.5.1 audit reference text
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/boson-public-audit-reference-20261104.yml'
+permissions:
+  contents: read
+jobs:
+  audit-reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fetch published public audit PDF only
+        shell: bash
+        run: |
+          curl -fLsS --retry 2 --max-time 50 'https://raw.githubusercontent.com/bosonprotocol/boson-protocol-contracts/main/docs/audits/Omniscia_Audit_Report_Boson_Protocol_V2.5.1.pdf' -o "$RUNNER_TEMP/public-boson-audit.pdf"
+          file "$RUNNER_TEMP/public-boson-audit.pdf"
+          python -m pip install --quiet --break-system-packages pypdf
+          python -c 'from pypdf import PdfReader; import os; d=os.environ["RUNNER_TEMP"]; p=PdfReader(d+"/public-boson-audit.pdf"); open(d+"/public-boson-audit.txt","w").write(chr(10).join(x.extract_text() or "" for x in p.pages))'
+          grep -Ei 'signature|offer creator|assistant|replay|allowance' "$RUNNER_TEMP/public-boson-audit.txt" | head -45 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boson-public-audit-reference-text
+          path: ${{ runner.temp }}/public-boson-audit.txt
+          retention-days: 2

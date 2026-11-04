@@ -1,0 +1,59 @@
+name: Boson Lab AVRE source-level hypotheses
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/boson-avre-20261104.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boson-avre:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve and pin Boson source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v2.5.1 https://github.com/bosonprotocol/boson-protocol-contracts.git "$RUNNER_TEMP/boson-src"
+          test "$(git -C "$RUNNER_TEMP/boson-src" rev-parse HEAD)" = "f4c91c4d13561c5e1b4007d3e394e603a803978f"
+          git -C "$RUNNER_TEMP/boson-src" sparse-checkout init --no-cone
+          git -C "$RUNNER_TEMP/boson-src" sparse-checkout set --no-cone "/contracts/protocol/**" "/contracts/domain/**" "/contracts/diamond/**" "/scripts/**" "/docs/**" "/test/protocol/**"
+          echo "Focus: protocol/domain/diamond + scripts/docs/tests; omit generated ABI, examples, mock-only surfaces."
+      - name: Run passive AVRE with explicit repository authorization scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          S=skills/bounty-pilot/scripts/bounty.py
+          SRC="$RUNNER_TEMP/boson-src"
+          OUT="$RUNNER_TEMP/boson-avre"
+          mkdir -p "$RUNNER_TEMP/boson-audit"
+          python3 - "$RUNNER_TEMP/boson-audit/scope.json" <<'PY'
+          import json, sys
+          x = {
+             "schema_version":1,
+             "project":"Boson Protocol v2.5.1 direct bug bounty",
+             "allowed":{"domains":[],"urls":[],"repositories":["https://github.com/bosonprotocol/boson-protocol-contracts"],"contracts":[],"networks":[],"methods":["local_static","git_history"]},
+             "related_out_of_scope":{"domains":[],"urls":[],"repositories":[],"contracts":[],"networks":[],"methods":[]},
+             "limits":{"note":"No network calls to any production target. Source-only run."}
+          }
+          with open(sys.argv[1],"w") as f: json.dump(x,f,indent=2)
+          PY
+          python3 "$S" avre --repo "$SRC" --scope "$RUNNER_TEMP/boson-audit/scope.json" --out "$OUT"             --modules impossible-state,sequence-mutation,economic-differential,identity-context,attack-graph,hypothesis-ranking             --budget 120 --max-sequence-length 4 --beam-width 8 | tee "$RUNNER_TEMP/boson-audit/avre-cli.log"
+          python3 - "$OUT/avre-report.json" <<'PY'
+          import json,sys
+          p=sys.argv[1]
+          with open(p) as f: data=json.load(f)
+          print("AVRE produced",len(json.dumps(data)),"JSON characters; hypotheses unverified.")
+          PY
+      - name: Store private-in-run, source-only lead bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boson-avre-leads-unverified
+          path: ${{ runner.temp }}/boson-avre/
+          if-no-files-found: warn
+          retention-days: 2

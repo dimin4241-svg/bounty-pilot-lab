@@ -1,0 +1,28 @@
+name: Local Solidity compiler artifact for Boson verification
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/boson-solc-toolchain-20261104.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  solc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Acquire pinned public solc compiler package
+        run: |
+          mkdir -p "$RUNNER_TEMP/boson-solc"
+          npm install --prefix "$RUNNER_TEMP/boson-solc" solc@0.8.35 --ignore-scripts --no-audit --no-fund --silent
+          node -e "let s=require(process.env.RUNNER_TEMP+'/boson-solc/node_modules/solc'); if(!s.version().startsWith('0.8.35'))process.exit(1); console.log(s.version());"
+          tar -czf "$RUNNER_TEMP/boson-solc-0.8.35.tar.gz" -C "$RUNNER_TEMP/boson-solc" node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boson-solc-0.8.35
+          path: ${{ runner.temp }}/boson-solc-0.8.35.tar.gz
+          retention-days: 2

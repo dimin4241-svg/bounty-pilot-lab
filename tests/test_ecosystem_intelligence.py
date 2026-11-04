@@ -117,6 +117,14 @@ class EcosystemIntelligenceTests(unittest.TestCase):
         self.assertNotIn("q=token", output)
         self.assertNotIn("abcdefghijklmnopqrstuv", output)
 
+    def test_malformed_port_from_markdown_does_not_crash_avre(self):
+        # Realistic markdown fragments in audited source can retain backticks on :PORT.
+        malformed = "http://127.0.0.1:8545`"
+        self.assertEqual(eco.safe_url(malformed), "")
+        self.assertEqual(eco.normalize_url(malformed), "")
+        self.assertEqual(eco.classify(self.scope, "url", malformed)["classification"], "UNKNOWN")
+        self.assertNotIn("8545`", eco.redact_text("endpoint: " + malformed))
+
     def test_secret_named_tracked_files_are_skipped_before_read(self):
         (self.repo / ".env.production").write_text("API_TOKEN=secret-value\n")
         (self.repo / "config").mkdir(exist_ok=True)
