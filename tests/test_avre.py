@@ -105,6 +105,23 @@ class AVRETests(unittest.TestCase):
         self.assertTrue(any(item["module"] == "impossible-state"
                             for item in report["ranking"]["hypotheses"]))
 
+    def test_candidate_ids_use_dedup_identity_and_never_collide_on_different_invariants(self):
+        args = ("impossible-state", "Same operation title",
+                "One state edge shares credits", ["src/Pool.sol"],
+                [{"type": "static_state_edge", "shared_state": "credits"}])
+        first = avre._hypothesis(*args, "CreditNotes belong to their owner", "loss")
+        second = avre._hypothesis(*args, "Same operation settles at most once", "loss")
+        repeated = avre._hypothesis(*args, "CreditNotes belong to their owner", "loss")
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(first["id"], repeated["id"])
+        kept = avre._deduplicate([first, second, repeated])
+        self.assertEqual(len(kept), 2)
+        selector = avre._load("hypothesis_selector")
+        chosen, deferred, stats = selector.select(kept, 1)
+        self.assertEqual(len(chosen), 1)
+        self.assertEqual(len(deferred), 1)
+        self.assertEqual(stats["evaluated"], 2)
+
     def test_deduplication_preserves_distinct_invariants_on_same_surface(self):
         base = {
             "module": "impossible-state", "bug_class": "state_transition_invariant",

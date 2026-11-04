@@ -10,7 +10,11 @@ result → new research priority.
 AVRE evaluates and scores all deduplicated candidates before enforcing the
 global hypothesis budget. It reserves one candidate from each producing module
 when possible and writes excluded candidates into a private
-deferred-hypotheses.json. Deferred means not selected, not refuted. Earlier
+deferred-hypotheses.json. Deferred means not selected, not refuted. Candidate IDs in 0.50.0
+now incorporate the generating module, bug class, state evidence, invariant and
+mechanism so separate same-title leads cannot collide. Legacy 0.49.5 AVRE
+candidate IDs may not match newly generated ones: bind feedback from a fresh
+run rather than silently reusing old IDs. Earlier
 per-module input caps still exist and must be reviewed separately.
 
 ## 2. Compiler-resolved static state/effect bridge for Solidity
