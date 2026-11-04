@@ -11897,6 +11897,10 @@ def build_parser():
                       help='pinned caller-supplied local trace JSON; imported as unverified graph edges')
     avre.add_argument('--pilot-run', default=None,
                       help='existing Bounty Pilot run to receive untriaged AVRE LEAD records')
+    avre.add_argument('--feedback', default=None,
+                      help='revision-bound research_loop report; remains unverified evidence')
+    avre.add_argument('--semantic-graph', default=None,
+                      help='checkout-bound compiler AST graph via semantic_state_bridge')
     return parser
 
 
@@ -12215,7 +12219,8 @@ def main(argv=None):
                 args.max_sequence_length, args.beam_width, args.resume,
                 args.trust_model, args.measurements, args.known_issues,
                 args.local_plan, args.baseline, args.archive_index,
-                args.runtime_trace, args.pilot_run)
+                args.runtime_trace, args.pilot_run, args.feedback,
+                args.semantic_graph)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         return 2

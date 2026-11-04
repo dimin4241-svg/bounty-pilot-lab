@@ -63,6 +63,29 @@ class ResearchLoopTests(unittest.TestCase):
         self.assertEqual(output["witness_count"], 1)
         self.assertEqual(len(output["experiments"][0]["observations"]), 2)
 
+    def test_indented_native_marker_is_recognized(self):
+        cases = self.fake_native(None, None)["cases"]
+        case = dict(cases[0])
+        case["stdout"] = "Logs:\n    " + case["stdout"] + "\n"
+        observation, error = loop._observation(case, "one", "candidate")
+        self.assertIsNone(error)
+        self.assertTrue(observation["violated"])
+
+    def test_control_with_different_initial_state_is_rejected(self):
+        def changed_state(plan, root, allow_exec=False, allow_dotenv=False):
+            result = self.fake_native(plan, root, allow_exec, allow_dotenv)
+            control = result["cases"][1]
+            control["stdout"] = control["stdout"].replace(
+                '"initial_state_digest": "' + 'b' * 64,
+                '"initial_state_digest": "' + 'c' * 64)
+            return result
+        with patch.object(loop.runner, "execute", side_effect=changed_state):
+            output = loop.run(self.manifest, self.repo, execute=True,
+                              isolation_attested=True, no_network_attested=True)
+        self.assertEqual(output["witness_count"], 0)
+        self.assertIn("candidate/control initial state differs",
+                      output["experiments"][0]["errors"])
+
     def test_no_observation_is_not_evidence(self):
         def no_marker(plan, root, allow_exec=False, allow_dotenv=False):
             result = self.fake_native(plan, root, allow_exec, allow_dotenv)
