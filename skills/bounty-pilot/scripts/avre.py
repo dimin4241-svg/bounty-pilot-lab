@@ -187,6 +187,19 @@ def _source_anchor(root, path, line, eco):
         return {"path": path, "line": line, "quote": ""}
 
 
+def _candidate_identity(row):
+    """Canonical dedup identity shared by candidate IDs and the selection gate."""
+    paths = tuple(sorted({x for x in row.get("affected_paths", []) if isinstance(x, str)}))
+    support_key = tuple(sorted(
+        (str(item.get("type", "")), str(item.get("path", "")),
+         str(item.get("symbol", "")), str(item.get("shared_state", "")))
+        for item in row.get("evidence", []) if isinstance(item, dict)))
+    invariant = re.sub(r"\s+", " ", str(row.get("invariant", "")).strip()).lower()
+    mechanism = re.sub(r"\s+", " ", str(row.get("title", "")).strip()).lower()
+    return (str(row.get("module", "")), str(row.get("bug_class", "")),
+            paths, support_key, invariant, mechanism)
+
+
 def _hypothesis(module, title, root_cause, paths, evidence, invariant, impact,
                 prerequisites=None, attacker=None, disconfirming=None,
                 classification="NEEDS_EVIDENCE", scope=None, bug_class=None):
@@ -195,7 +208,14 @@ def _hypothesis(module, title, root_cause, paths, evidence, invariant, impact,
     prerequisites = prerequisites or []
     attacker = attacker or "Unknown; establish a low-privilege path before escalation."
     disconfirming = disconfirming or []
-    key = module + "|" + title + "|" + "|".join(paths)
+    # Candidate IDs and deduplication must use the exact same identity.
+    # Otherwise distinct same-title invariant leads collide and selection
+    # aborts with duplicate IDs after dedup correctly preserved them.
+    identity = _candidate_identity({
+        "module": module, "bug_class": bug_class or module, "title": title,
+        "affected_paths": paths, "evidence": evidence, "invariant": invariant,
+    })
+    key = json.dumps(identity, ensure_ascii=False, separators=(",", ":"))
     return {
         "id": "AVRE-" + hashlib.sha256(key.encode()).hexdigest()[:12].upper(),
         "module": module, "title": title, "root_cause": root_cause,
@@ -413,17 +433,7 @@ def _historical_candidates(eco_report, scope):
 def _deduplicate(rows):
     unique, kept = set(), []
     for row in rows:
-        anchor_paths = sorted(set(row.get("affected_paths", [])))
-        support_key = tuple(sorted((item.get("type", ""), item.get("path", ""),
-                                    item.get("symbol", ""), item.get("shared_state", ""))
-                                   for item in row.get("evidence", []) if isinstance(item, dict)))
-        # Distinct operations and invariants may share a file and state token:
-        # deduplication on location alone discards precisely the cross-user and
-        # multi-step hypotheses this engine is intended to preserve.
-        invariant = re.sub(r"\s+", " ", str(row.get("invariant", "")).strip()).lower()
-        mechanism = re.sub(r"\s+", " ", str(row.get("title", "")).strip()).lower()
-        key = (row["module"], row["bug_class"], tuple(anchor_paths), support_key,
-               invariant, mechanism)
+        key = _candidate_identity(row)
         if key in unique:
             continue
         unique.add(key)
@@ -1007,6 +1017,7 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                          "working_tree_dirty": bool(_git(root, "status", "--porcelain").stdout.strip()),
                          "files_read": file_stats["files_read"], "tracked_files_seen": file_stats["tracked_files_seen"],
                          "modules_selected": selected,
+                         "hypothesis_id_scheme": "v2-module-bugclass-path-evidence-invariant-title",
                          "state_graph_basis": state_graph.get("method") if state_graph else None,
                          "static_graph_skipped_symbols": len(state_graph.get("skipped_symbols", [])) if state_graph else 0,
                          "resource_usage": {"wall_seconds_before_report_write": round(time.perf_counter() - wall_started, 4),
