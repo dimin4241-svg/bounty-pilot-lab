@@ -1,0 +1,65 @@
+name: Boson Bounty Pilot Lab - passive intake
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/boson-bounty-lab-20261104.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scoped-pass:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get the exact in-scope Boson release
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v2.5.1 https://github.com/bosonprotocol/boson-protocol-contracts.git "$RUNNER_TEMP/boson-src"
+          actual=$(git -C "$RUNNER_TEMP/boson-src" rev-parse HEAD)
+          test "$actual" = "f4c91c4d13561c5e1b4007d3e394e603a803978f"
+          echo "Pinned in-scope release: $actual"
+      - name: Use Bounty Pilot Lab for a source-only research pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          S="skills/bounty-pilot/scripts/bounty.py"
+          TARGET="$RUNNER_TEMP/boson-src"
+          RUN="$RUNNER_TEMP/boson-pass"
+          python3 "$S" init --repo "$TARGET" --out "$RUN"
+          python3 - "$RUN/program.json" <<'PY'
+          import json, sys
+          p = {
+              "program": "Boson Protocol Bug Bounty",
+              "url": "https://github.com/bosonprotocol/community/blob/main/BugBountyProgram.md",
+              "rules_read_at": "2026-11-04",
+              "platform": "direct-email",
+              "deposit_required": False,
+              "duplicate_policy": "first unique eligible report; known issues excluded",
+              "payout_max_usd": None,
+              "in_scope_paths": ["contracts/"],
+              "source_ref": "v2.5.1",
+              "source_commit": "f4c91c4d13561c5e1b4007d3e394e603a803978f",
+              "scope_notes": "Only releases tagged Latest eligible. No production testing. PoC required before submission.",
+              "excluded_impacts": ["known issue or prior audit", "DDoS", "pure scanner output"],
+          }
+          with open(sys.argv[1], "w") as f:
+              json.dump(p, f, indent=2)
+          PY
+          python3 "$S" bundle --repo "$TARGET" --run "$RUN" --lens classic --scope contracts/protocol/libs
+          python3 "$S" bundle --repo "$TARGET" --run "$RUN" --lens integration-auth --scope contracts/protocol/facets
+          echo "## Boson source-only pilot pass" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source: v2.5.1 f4c91c4d13561c5e1b4007d3e394e603a803978f" >> "$GITHUB_STEP_SUMMARY"
+          echo "Bundles generated. This does NOT execute a native PoC or confirm any exploit." >> "$GITHUB_STEP_SUMMARY"
+          find "$RUN" -type f | sed "s|$RUN/||" | head -60
+      - name: Store non-secret research intake
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boson-passive-intake
+          path: ${{ runner.temp }}/boson-pass
+          if-no-files-found: warn
+          retention-days: 3
