@@ -722,7 +722,7 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
             beam_width=16, resume=False, trust_model_path=None, measurements_path=None,
             known_issues_path=None, local_plan_path=None, baseline_path=None,
             archive_index_path=None, runtime_trace_path=None, pilot_run_path=None,
-            feedback_path=None):
+            feedback_path=None, semantic_graph_path=None):
     wall_started, cpu_started = time.perf_counter(), time.process_time()
     root = Path(repo).expanduser().resolve()
     if not root.is_dir():
@@ -761,7 +761,8 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
     extras = {"trust_model": trust_model_path, "measurements": measurements_path,
               "known_issues": known_issues_path, "local_plan": local_plan_path,
               "baseline": baseline_path, "archive_index": archive_index_path,
-              "runtime_trace": runtime_trace_path, "feedback": feedback_path}
+              "runtime_trace": runtime_trace_path, "feedback": feedback_path,
+              "semantic_graph": semantic_graph_path}
     extras = {key: _local_input(path, "--" + key.replace("_", "-")) if path else None
               for key, path in extras.items()}
     trust_model_path, measurements_path = extras["trust_model"], extras["measurements"]
@@ -799,7 +800,12 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
             if checkpoint and cached_graph.is_file():
                 state_graph = _json(cached_graph)
             else:
-                state_graph = _load("state_graph").scan(root, limit=min(2000, max(100, budget * 3)))
+                if extras.get("semantic_graph"):
+                    state_graph = _load("semantic_state_bridge").from_file(
+                        extras["semantic_graph"], root, _head(root))
+                else:
+                    state_graph = _load("state_graph").scan(
+                        root, limit=min(2000, max(100, budget * 3)))
                 _write_json(cached_graph, state_graph)
         need_eco = bool(set(selected) & {"historical-ecosystem", "attack-graph"}) or bool(archive_index_path)
         eco_report = None
@@ -992,6 +998,8 @@ def analyze(repo, scope_path, out, modules=None, budget=200, max_sequence_length
                          "working_tree_dirty": bool(_git(root, "status", "--porcelain").stdout.strip()),
                          "files_read": file_stats["files_read"], "tracked_files_seen": file_stats["tracked_files_seen"],
                          "modules_selected": selected,
+                         "state_graph_basis": state_graph.get("method") if state_graph else None,
+                         "static_graph_skipped_symbols": len(state_graph.get("skipped_symbols", [])) if state_graph else 0,
                          "resource_usage": {"wall_seconds_before_report_write": round(time.perf_counter() - wall_started, 4),
                                             "process_cpu_seconds_before_report_write": round(time.process_time() - cpu_started, 4),
                                             "model_or_network_calls": 0, "tokens_used": 0,
@@ -1075,6 +1083,7 @@ def main(argv=None):
     parser.add_argument("--runtime-trace", help="pinned caller-supplied local trace JSON; imported as unverified graph edges")
     parser.add_argument("--pilot-run", help="existing Bounty Pilot run to receive untriaged AVRE LEAD records")
     parser.add_argument("--feedback", help="pinned research_loop.py report; unverified native feedback only")
+    parser.add_argument("--semantic-graph", help="explicitly revision-bound compiler AST graph for state/sequence search")
     args = parser.parse_args(argv)
     modules = [name.strip() for name in args.modules.split(",") if name.strip()]
     try:
@@ -1082,7 +1091,8 @@ def main(argv=None):
                          args.max_sequence_length, args.beam_width, args.resume,
                          args.trust_model, args.measurements, args.known_issues,
                          args.local_plan, args.baseline, args.archive_index,
-                         args.runtime_trace, args.pilot_run, args.feedback)
+                         args.runtime_trace, args.pilot_run, args.feedback,
+                         args.semantic_graph)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError,
