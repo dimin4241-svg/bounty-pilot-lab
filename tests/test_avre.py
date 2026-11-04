@@ -81,6 +81,30 @@ class AVRETests(unittest.TestCase):
                               modules=["sequence-mutation"], budget=5)
         self.assertEqual(result["network_requests"], 0)
 
+    def test_ast_graph_is_used_by_real_avre_entrypoint_without_execution(self):
+        head = avre._head(self.repo)
+        graph = {"method": "compiler-ast-plus-python-ast",
+                 "source_revision": head,
+                 "symbols": [
+                     {"id": "solc:1", "path": "src/Pool.sol", "source_span": "0:10:0",
+                      "name": "Pool.deposit", "reads": ["shares"], "writes": ["shares"]},
+                     {"id": "solc:2", "path": "src/Pool.sol", "source_span": "0:10:0",
+                      "name": "Pool.withdraw", "reads": ["shares"], "writes": ["shares"]}
+                 ],
+                 "edges": [{"from": "solc:1", "to": "solc:2",
+                            "kind": "writer-reader-overlap", "state": "shares"}]}
+        graph_path = self.root / "bound-compiler-graph.json"
+        graph_path.write_text(json.dumps(graph), encoding="utf-8")
+        result = avre.analyze(self.repo, self.scope_path, self.root / "ast-run",
+                              modules=["impossible-state", "sequence-mutation"],
+                              budget=10, semantic_graph_path=graph_path)
+        report = json.loads(Path(result["report"]).read_text())
+        self.assertEqual(report["analysis"]["state_graph_basis"],
+                         "compiler-ast-static-effect-bridge")
+        self.assertFalse(report["analysis"]["target_execution"])
+        self.assertTrue(any(item["module"] == "impossible-state"
+                            for item in report["ranking"]["hypotheses"]))
+
     def test_optional_local_plan_remains_dry_run(self):
         plan_path = self.root / "scenario-plan.json"
         plan_path.write_text(json.dumps({"schema_version": 1, "cases": [
