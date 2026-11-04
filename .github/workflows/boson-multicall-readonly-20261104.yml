@@ -32,3 +32,5 @@ jobs:
           name: boson-complete-offer-inventory-readonly
           path: ${{ runner.temp }}/boson-complete-offer-inventory.json
           retention-days: 2
+
+# Second attempt with normalized checksum address.
