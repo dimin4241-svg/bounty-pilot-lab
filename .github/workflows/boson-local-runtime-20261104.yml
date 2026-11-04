@@ -1,0 +1,47 @@
+name: Boson local Hardhat runtime bundle
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/boson-local-runtime-20261104.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned public source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v2.5.1 https://github.com/bosonprotocol/boson-protocol-contracts.git "$RUNNER_TEMP/boson"
+          test "$(git -C "$RUNNER_TEMP/boson" rev-parse HEAD)" = f4c91c4d13561c5e1b4007d3e394e603a803978f
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install only public dependencies and compile without custom PoCs
+        working-directory: ${{ runner.temp }}/boson
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          npm ci --ignore-scripts --no-audit --no-fund --silent
+          npx hardhat compile >/dev/null
+          rm -f .env
+      - name: Package clean test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/boson"
+          tar -czf "$RUNNER_TEMP/boson-local-hardhat-runtime.tar.gz" \
+            node_modules artifacts cache contracts scripts test addresses/137-polygon-prod.json \
+            environments.js hardhat.config.js package.json package-lock.json .env.example
+          ls -lh "$RUNNER_TEMP/boson-local-hardhat-runtime.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boson-local-hardhat-runtime
+          path: ${{ runner.temp }}/boson-local-hardhat-runtime.tar.gz
+          retention-days: 1
+          if-no-files-found: error
