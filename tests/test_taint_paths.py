@@ -230,5 +230,181 @@ class TaintPathTests(unittest.TestCase):
             self.assertIn("## Precomputed analysis: taint-paths.json", text)
 
 
+def fixture_with_input_sources():
+    """A real build-info: solc puts the AST under `output`, the text under `input`."""
+    data = fixture()
+    sources = data["output"]["sources"]
+    inputs = {path: {"content": desc.pop("content")} for path, desc in sources.items()}
+    return {"input": {"sources": inputs}, "output": {"sources": sources}}
+
+
+def spanned(param):
+    """solc gives every declaration a `src` span; the shared Ast helper does not."""
+    return dict(param, src="%d:12:0" % (param["id"] * 7))
+
+
+def two_file_fixture():
+    """One in-scope sink and one vendored sink, each fed by its own public parameters."""
+    a = Ast()
+
+    def forwarder(contract_id, name, func_id, inner_id, target_id, data_id,
+                  entry_target, entry_data, second=None):
+        body = [a.func(inner_id, "_forward", [a.stmt(a.call(
+            a.member(a.ident("target", target_id), "call"), a.ident("data", data_id)))],
+            visibility="internal",
+            params=[spanned(a.param(target_id, "target")), spanned(a.param(data_id, "data"))]),
+            a.func(func_id, name, [a.stmt(a.call(a.ident("_forward", inner_id),
+                                                 a.ident("target", entry_target),
+                                                 a.ident("data", entry_data)))],
+                   params=[typed(spanned(a.param(entry_target, "target")), "address"),
+                           typed(spanned(a.param(entry_data, "data")), "bytes calldata")])]
+        if second:
+            body.append(a.func(second[0], second[1],
+                               [a.stmt(a.call(a.ident("_forward", inner_id),
+                                              a.ident("target", second[2]),
+                                              a.ident("data", second[3])))],
+                               params=[typed(spanned(a.param(second[2], "target")), "address"),
+                                       typed(spanned(a.param(second[3], "data")), "bytes calldata")]))
+        return Ast.contract(contract_id, name.capitalize(), body)
+
+    app = forwarder(600, "appForward", 610, 611, 612, 613, 614, 615,
+                    second=(616, "appForwardTwo", 617, 618))
+    vendor = forwarder(700, "vendorForward", 710, 711, 712, 713, 714, 715)
+    return {"output": {"sources": {
+        "src/App.sol": {"ast": Ast.unit(app), "content": "contract App {\n" * 40},
+        "vendor/Vendor.sol": {"ast": Ast.unit(vendor),
+                              "content": "contract Vendor {\n" * 40}}}}
+
+
+class BuildInfoSourceTextTests(unittest.TestCase):
+    """Line numbers need the source text, and no compiler puts it under `output.sources`."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.solc = Path(self.temp.name) / "build-info.json"
+
+    def test_line_numbers_come_from_build_info_input_sources(self):
+        self.solc.write_text(json.dumps(fixture_with_input_sources()), encoding="utf-8")
+        trees = semantic.load_solc(self.solc)
+        self.assertEqual(set(trees.contents), {"src/Router.sol"})
+        report = taint_paths.analyze(trees, semantic.solidity_symbols(trees), semantic)
+        self.assertTrue(report["leads"])
+        resolved = 0
+        for lead in report["leads"]:
+            # The shared Ast helper leaves some synthetic nodes without a span; every node that
+            # does carry one - as every node solc emits does - must resolve to a line.
+            if lead["sink"].get("src"):
+                self.assertIsNotNone(lead["sink"]["line"], lead["sink"]["function"])
+                resolved += 1
+        self.assertGreater(resolved, 0)
+        self.assertTrue(any(lead["source"]["line"] for lead in report["leads"]))
+
+    def test_source_spans_resolve_to_lines_too(self):
+        self.solc.write_text(json.dumps(two_file_fixture()), encoding="utf-8")
+        trees = semantic.load_solc(self.solc)
+        report = taint_paths.analyze(trees, semantic.solidity_symbols(trees), semantic)
+        self.assertTrue(report["leads"])
+        for lead in report["leads"]:
+            self.assertIsNotNone(lead["source"]["line"], lead["source"]["function"])
+
+    def test_output_only_compiler_json_still_works_without_line_numbers(self):
+        self.solc.write_text(json.dumps(fixture()), encoding="utf-8")
+        trees = semantic.load_solc(self.solc)
+        report = taint_paths.analyze(trees, semantic.solidity_symbols(trees), semantic)
+        self.assertEqual(report["status"], "analyzed")
+        self.assertTrue(report["leads"])
+
+
+class TaintScopeTests(unittest.TestCase):
+    """`impact-plan --scope` must reach the taint pass, not only the symbol graph."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.solc = Path(self.temp.name) / "build-info.json"
+        self.solc.write_text(json.dumps(two_file_fixture()), encoding="utf-8")
+        self.trees = semantic.load_solc(self.solc)
+        self.symbols = semantic.solidity_symbols(self.trees)
+
+    def test_lead_with_neither_end_in_scope_is_dropped_and_counted(self):
+        report = taint_paths.analyze(self.trees, self.symbols, semantic, scope=["src"])
+        self.assertTrue(report["leads"])
+        self.assertEqual(report["scope_filter"], ["src"])
+        for lead in report["leads"]:
+            self.assertFalse(lead["sink"]["path"].startswith("vendor/")
+                             and lead["source"]["path"].startswith("vendor/"))
+        self.assertGreater(report["leads_dropped_by_scope"], 0)
+        self.assertTrue(any(lead["sink"]["scope_role"] == "in-scope"
+                            for lead in report["leads"]))
+
+    def test_without_scope_every_lead_is_kept(self):
+        report = taint_paths.analyze(self.trees, self.symbols, semantic)
+        self.assertEqual(report["leads_dropped_by_scope"], 0)
+        self.assertTrue(any(lead["sink"]["path"].startswith("vendor/")
+                            for lead in report["leads"]))
+
+
+class LeadBudgetFairnessTests(unittest.TestCase):
+    """The budget is per sink: one sink cannot spend the whole cap."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        solc = Path(self.temp.name) / "build-info.json"
+        solc.write_text(json.dumps(two_file_fixture()), encoding="utf-8")
+        self.trees = semantic.load_solc(solc)
+        self.symbols = semantic.solidity_symbols(self.trees)
+
+    def test_each_sink_is_represented_before_any_sink_gets_a_second_lead(self):
+        original = taint_paths.MAX_LEADS
+        taint_paths.MAX_LEADS = 2
+        try:
+            report = taint_paths.analyze(self.trees, self.symbols, semantic)
+        finally:
+            taint_paths.MAX_LEADS = original
+        self.assertEqual(report["lead_count"], 2)
+        self.assertEqual(len({(lead["sink"]["function"], lead["sink"]["operand"])
+                              for lead in report["leads"]}), 2)
+        self.assertEqual({lead["sink"]["path"] for lead in report["leads"]}, {"src/App.sol"})
+        self.assertTrue(report["truncated"])
+        self.assertEqual(report["sinks_represented"], 2)
+
+    def test_counters_state_what_the_caps_left_out(self):
+        report = taint_paths.analyze(self.trees, self.symbols, semantic)
+        self.assertGreaterEqual(report["sinks_with_leads"], 2)
+        self.assertLessEqual(report["sinks_represented"], report["sinks_with_leads"])
+        self.assertEqual(report["limits"]["leads_per_sink"], taint_paths.MAX_LEADS_PER_SINK)
+        for lead in report["leads"]:
+            self.assertIn(lead["sink"]["scope_role"], ("in-scope", "dependency"))
+
+
+class LeadOrderTests(unittest.TestCase):
+    """Reading order: in-scope before vendored, control takeover before a generic call."""
+
+    @staticmethod
+    def row(sink_kind="low-level-call", sink_path="src/App.sol", sink_role="in-scope",
+            source_role="in-scope", source_path="src/App.sol"):
+        return {"source": {"kind": "external-parameter", "path": source_path,
+                           "scope_role": source_role, "line": 1},
+                "sink": {"kind": sink_kind, "path": sink_path, "scope_role": sink_role,
+                         "line": 1},
+                "flow": [], "crosses_persistent_state": False}
+
+    def test_in_scope_sink_outranks_a_vendored_sink(self):
+        # `@openzeppelin/...` sorts before `contracts/...`, which is how a vendored SafeERC20 call
+        # came to own every row of a real run's reading queue.
+        own = self.row(sink_path="contracts/protocol/Vault.sol")
+        vendored = self.row(sink_path="@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol",
+                            sink_role="dependency")
+        self.assertLess(taint_paths._lead_order(own), taint_paths._lead_order(vendored))
+
+    def test_delegatecall_outranks_a_generic_external_call(self):
+        self.assertLess(taint_paths._lead_order(self.row(sink_kind="delegatecall")),
+                        taint_paths._lead_order(self.row(sink_kind="address-functioncall")))
+        self.assertLess(taint_paths._lead_order(self.row(sink_kind="selfdestruct")),
+                        taint_paths._lead_order(self.row(sink_kind="low-level-call")))
+
+
 if __name__ == "__main__":
     unittest.main()

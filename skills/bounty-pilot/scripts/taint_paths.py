@@ -9,12 +9,35 @@ from bisect import bisect_right
 
 MAX_FLOW_EDGES = 40_000
 MAX_LEADS = 500
+# Budget per sink. The total cap used to be enforced inside the walk, so whichever sink was
+# enumerated first took every row: measured on a real build-info all 500 written leads pointed at
+# one vendored SafeERC20 call and no in-scope sink reached the file.
+MAX_LEADS_PER_SINK = 3
+MAX_SINK_CANDIDATES = 12
+MAX_SINKS = 2_000
 MAX_PATH_DEPTH = 12
 MAX_REVERSE_STEPS = 2_000
 ENV_SOURCE_NAMES = {"msg.sender", "tx.origin", "msg.value", "block.timestamp", "block.number"}
 SENSITIVE_STATE_TERMS = ("owner", "admin", "role", "implementation", "beacon", "guardian",
                          "operator", "signer", "oracle", "treasury", "pauser", "minter",
                          "upgrader", "authority", "validator", "fee")
+
+
+def _in_scope(path, prefixes):
+    """Whole-segment match, as bounty.path_in_scope does: `src` covers src/, never src-legacy/."""
+    if not prefixes:
+        return True
+    text = str(path or "")
+    for raw in prefixes:
+        prefix = str(raw or "").strip().replace("\\", "/")
+        while prefix.startswith("./"):
+            prefix = prefix[2:]
+        prefix = prefix.strip("/")
+        if prefix == ".":
+            prefix = ""
+        if not prefix or text == prefix or text.startswith(prefix + "/"):
+            return True
+    return False
 
 
 def _src_key(node):
@@ -221,9 +244,16 @@ def _entry_symbols(symbols):
     return result
 
 
-def analyze(trees, symbols, semantic):
-    """Trace bounded declaration-to-declaration flows in Solidity compiler ASTs."""
+def analyze(trees, symbols, semantic, scope=None):
+    """Trace bounded declaration-to-declaration flows in Solidity compiler ASTs.
+
+    `scope` takes the same path prefixes as `impact-plan --scope`. Out-of-scope code is still
+    traversed - a flow that passes through a vendored library and back into in-scope code is the
+    interesting case - but a lead whose source and sink both sit outside the scope is counted and
+    not written.
+    """
     contents = getattr(trees, "contents", {})
+    prefixes = [str(x) for x in (scope or []) if str(x).strip()]
     line_starts = {}
     for path, content in contents.items():
         encoded = content.encode("utf-8")
@@ -273,7 +303,9 @@ def analyze(trees, symbols, semantic):
     if not active:
         return {"schema": 1, "method": "compiler-ast-declaration-flow", "status": "no-solidity-ast",
                 "source_count": 0, "sink_count": 0, "lead_count": 0, "leads": [],
-                "truncated": False,
+                "truncated": False, "scope_filter": prefixes or None,
+                "sinks_with_leads": 0, "sinks_represented": 0,
+                "leads_dropped_by_scope": 0, "leads_suppressed_by_sink_cap": 0,
                 "notice": "No Solidity compiler AST functions were available; no taint analysis was run."}
 
     # Compiler declaration IDs are unique within the build-info output.
@@ -550,18 +582,33 @@ def analyze(trees, symbols, semantic):
                               or semantic._callee(node).get("name") or "external call")})
             seed_labels[key] = "external return value"
 
-    sink_rank = {"delegatecall": 0, "low-level-call": 0, "callcode": 0,
-                 "address-functioncall": 0, "address-functiondelegatecall": 0,
-                 "assembly-delegatecall": 0, "native-transfer": 0,
-                 "selfdestruct": 1, "token-pull": 1, "permit": 1,
-                 "token-transfer": 1, "sensitive-state-write": 1, "value-operation": 2}
-    sinks.sort(key=lambda row: (sink_rank.get(row["kind"], 2), row["path"],
+    # Control takeover ahead of an arbitrary call, an arbitrary call ahead of a token move. With
+    # one rank for both, thousands of vendored `address-functioncall` rows outran the handful of
+    # delegatecall and selfdestruct leads a 500-row window has to show.
+    sink_rank = {"delegatecall": 0, "callcode": 0, "assembly-delegatecall": 0,
+                 "address-functiondelegatecall": 0, "selfdestruct": 0,
+                 "low-level-call": 1, "address-functioncall": 1, "native-transfer": 1,
+                 "token-pull": 2, "permit": 2, "token-transfer": 2,
+                 "sensitive-state-write": 2, "value-operation": 3}
+    for row in sinks:
+        row["scope_role"] = "in-scope" if _in_scope(row["path"], prefixes) else "dependency"
+    # In-scope sinks are enumerated first. Ordering on the path alone put `@openzeppelin/...`
+    # ahead of `contracts/...` and handed the whole budget to the vendored tree.
+    sinks.sort(key=lambda row: (0 if row["scope_role"] == "in-scope" else 1,
+                                sink_rank.get(row["kind"], 3), row["path"],
                                 str(row["src"] or ""), row["operand"]))
     leads = []
     lead_keys = set()
     sink_count = len(sinks)
-    for sink in sinks:
+    dropped_by_scope = 0
+    per_sink = []
+    if len(sinks) > MAX_SINKS:
+        graph_truncated = True
+    for sink in sinks[:MAX_SINKS]:
+        candidates = []
         for destination in sink["references"]:
+            if len(candidates) >= MAX_SINK_CANDIDATES:
+                break
             queue = deque([(destination, [])])
             visited = {destination}
             steps = 0
@@ -578,14 +625,23 @@ def analyze(trees, symbols, semantic):
                                sink["function_id"], sink["src"], sink["operand"])
                         if key in lead_keys:
                             continue
+                        source_role = ("in-scope" if _in_scope(source.get("path"), prefixes)
+                                       else "dependency")
+                        if (prefixes and source_role == "dependency"
+                                and sink["scope_role"] == "dependency"):
+                            # Neither end touches the declared scope: a vendored library calling
+                            # itself, or a mock. Counted, never written.
+                            dropped_by_scope += 1
+                            continue
                         lead_keys.add(key)
                         path = list(reversed(reversed_path))
-                        leads.append({
+                        candidates.append({
                             "source": dict(source, value=seed_labels.get(current,
-                                                       variable_info.get(current, {}).get("name", "value"))),
-                            "sink": {key: sink[key] for key in (
+                                                       variable_info.get(current, {}).get("name", "value")),
+                                           scope_role=source_role),
+                            "sink": {name: sink[name] for name in (
                                 "function", "path", "kind", "member", "operand", "src",
-                                "line", "reachable_entries")},
+                                "line", "scope_role", "reachable_entries")},
                             "flow": [{"from": _value_label(edge["from"], variable_info, seed_labels),
                                       "to": _value_label(edge["to"], variable_info, seed_labels),
                                       "kind": edge["kind"], "function": edge["function"],
@@ -598,10 +654,9 @@ def analyze(trees, symbols, semantic):
                             "review": ["confirm each assignment/call argument at its source span",
                                        "check guards, reachability, ordering and the protected control",
                                        "prove a violated invariant and third-party impact"]})
-                        if len(leads) >= MAX_LEADS:
-                            graph_truncated = True
+                        if len(candidates) >= MAX_SINK_CANDIDATES:
                             break
-                    if len(leads) >= MAX_LEADS:
+                    if len(candidates) >= MAX_SINK_CANDIDATES:
                         break
                     continue
                 if len(reversed_path) >= MAX_PATH_DEPTH:
@@ -615,17 +670,41 @@ def analyze(trees, symbols, semantic):
                 if len(queue) > MAX_REVERSE_STEPS:
                     graph_truncated = True
                     break
-            if len(leads) >= MAX_LEADS:
-                break
-        if len(leads) >= MAX_LEADS:
+        if candidates:
+            candidates.sort(key=_lead_order)
+            per_sink.append(candidates)
+
+    # Round one gives every sink its single best lead, later rounds spend what is left. The cap
+    # can no longer go entirely to whichever sink happened to be enumerated first.
+    sinks_represented = 0
+    suppressed_by_sink_cap = sum(max(0, len(rows) - MAX_LEADS_PER_SINK) for rows in per_sink)
+    budget_spent = False
+    for depth in range(MAX_LEADS_PER_SINK):
+        if budget_spent:
             break
+        for candidates in per_sink:
+            if depth >= len(candidates):
+                continue
+            if len(leads) >= MAX_LEADS:
+                budget_spent = graph_truncated = True
+                break
+            leads.append(candidates[depth])
+            if depth == 0:
+                sinks_represented += 1
+    if suppressed_by_sink_cap:
+        graph_truncated = True
 
     leads.sort(key=_lead_order)
     return {"schema": 1, "method": "compiler-ast-declaration-flow",
             "status": "analyzed", "source_count": len(seeds), "sink_count": sink_count,
             "flow_edge_count": edge_count, "lead_count": len(leads), "leads": leads,
-            "truncated": graph_truncated,
+            "truncated": graph_truncated, "scope_filter": prefixes or None,
+            "sinks_with_leads": len(per_sink), "sinks_represented": sinks_represented,
+            "leads_dropped_by_scope": dropped_by_scope,
+            "leads_suppressed_by_sink_cap": suppressed_by_sink_cap,
             "limits": {"flow_edges": MAX_FLOW_EDGES, "leads": MAX_LEADS,
+                       "leads_per_sink": MAX_LEADS_PER_SINK,
+                       "sink_candidates": MAX_SINK_CANDIDATES, "sinks": MAX_SINKS,
                        "path_depth": MAX_PATH_DEPTH},
             "notice": "Static declaration-level flow hints only. No control-flow, modifier, "
                       "alias-completeness, arithmetic-safety, runtime reachability or exploit "
@@ -633,7 +712,12 @@ def analyze(trees, symbols, semantic):
                       "Persistent-state paths may require multiple transactions. External-call "
                       "operands are reported as boundaries; remote callee bodies and cross-contract "
                       "state are not traversed. Dynamic dispatch, assembly, external state and "
-                      "unsupported compiler output can hide or distort paths; confirm every hop in source."}
+                      "unsupported compiler output can hide or distort paths; confirm every hop in "
+                      "source. Each sink contributes at most `limits.leads_per_sink` rows and "
+                      "in-scope sinks are read first; `sinks_with_leads`, `sinks_represented`, "
+                      "`leads_dropped_by_scope` and `leads_suppressed_by_sink_cap` state what the "
+                      "caps left out, and a lead whose source and sink both sit outside `scope_filter` "
+                      "is never written."}
 
 
 def _value_label(value, variable_info, seed_labels):
@@ -644,16 +728,24 @@ def _value_label(value, variable_info, seed_labels):
 
 
 def _lead_order(row):
-    sink_rank = {"delegatecall": 0, "low-level-call": 0, "callcode": 0,
-                 "address-functioncall": 0, "address-functiondelegatecall": 0,
-                 "assembly-delegatecall": 0, "native-transfer": 0,
-                 "selfdestruct": 1, "token-pull": 1, "permit": 1,
-                 "token-transfer": 1, "sensitive-state-write": 1, "value-operation": 2}
+    # Control takeover ahead of an arbitrary call, an arbitrary call ahead of a token move. With
+    # one rank for both, thousands of vendored `address-functioncall` rows outran the handful of
+    # delegatecall and selfdestruct leads a 500-row window has to show.
+    sink_rank = {"delegatecall": 0, "callcode": 0, "assembly-delegatecall": 0,
+                 "address-functiondelegatecall": 0, "selfdestruct": 0,
+                 "low-level-call": 1, "address-functioncall": 1, "native-transfer": 1,
+                 "token-pull": 2, "permit": 2, "token-transfer": 2,
+                 "sensitive-state-write": 2, "value-operation": 3}
     source_rank = {"external-parameter": 0, "msg.sender": 1, "tx.origin": 1,
                    "msg.value": 1, "external-return": 2,
                    "block.timestamp": 3, "block.number": 3}
+    scope_rank = {"in-scope": 0, "dependency": 1}
     source = row["source"]
     sink = row["sink"]
-    return (sink_rank.get(sink["kind"], 2), row["crosses_persistent_state"],
+    # The declared scope decides first: a lead that stays inside a vendored dependency is reading
+    # material only once the in-scope ones are exhausted.
+    return (scope_rank.get(sink.get("scope_role"), 0),
+            scope_rank.get(source.get("scope_role"), 0),
+            sink_rank.get(sink["kind"], 3), row["crosses_persistent_state"],
             source_rank.get(source["kind"], 4), len(row["flow"]), sink["path"],
             sink["line"] or 0, source.get("path", ""), source.get("line") or 0)
