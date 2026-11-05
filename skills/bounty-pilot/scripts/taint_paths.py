@@ -17,6 +17,11 @@ MAX_SINK_CANDIDATES = 12
 MAX_SINKS = 2_000
 MAX_PATH_DEPTH = 12
 MAX_REVERSE_STEPS = 2_000
+# Modifier names that read like an access check. A cue, never a proof: a modifier can be a
+# no-op, its holder can be one key, and `nonReentrant` or `locked` is not authorization at all -
+# which is why a gated sink is read later and never dropped.
+AUTH_GUARD_CUES = ("only", "auth", "role", "owner", "admin", "governor", "permission",
+                   "restricted", "whitelist", "allowlist", "guardian", "privileged")
 _TEST_SEGMENTS = ("test", "tests", "spec", "mock", "mocks", "fixture", "fixtures",
                   "testing", "__tests__")
 ENV_SOURCE_NAMES = {"msg.sender", "tx.origin", "msg.value", "block.timestamp", "block.number"}
@@ -52,6 +57,24 @@ def _in_scope(path, prefixes):
         if not prefix or text == prefix or text.startswith(prefix + "/"):
             return True
     return False
+
+
+def _auth_guards(rows):
+    """Modifier-style guards on these symbol rows whose name reads like an access check.
+
+    `semantic_graph` records a function's modifiers and the values its requires read in one
+    `guards` list, path-qualifying the variables and constants. Only the unqualified entries are
+    modifier names, so a `src/Vault.sol:CONSOLIDATION_ROLE` constant is not read as a gate.
+    """
+    names = set()
+    for row in rows or ():
+        for token in row.get("guards") or ():
+            text = str(token)
+            if ":" in text:
+                continue
+            if any(cue in text.lower() for cue in AUTH_GUARD_CUES):
+                names.add(text)
+    return sorted(names)
 
 
 def _is_test_path(path):
@@ -337,6 +360,7 @@ def analyze(trees, symbols, semantic, scope=None):
                 "truncated": False, "scope_filter": prefixes or None,
                 "sinks_with_leads": 0, "sinks_represented": 0,
                 "sinks_in_test_paths": 0, "leads_in_test_paths": 0,
+                "sinks_behind_an_access_modifier": 0, "leads_behind_an_access_modifier": 0,
                 "leads_dropped_by_scope": 0, "leads_suppressed_by_sink_cap": 0,
                 "notice": "No Solidity compiler AST functions were available; no taint analysis was run."}
 
@@ -434,6 +458,18 @@ def analyze(trees, symbols, semantic, scope=None):
                 seeds[key].append(label)
                 seed_labels[key] = token
 
+    # Every public entry that reaches a sink, and whether all of them read as access-checked.
+    # Row one of two real queues was a call the deployment already restricts -
+    # `ObolValidatorManager.consolidate` (`onlyOwnerOrRoles`) on Obol obol-splits,
+    # `OUSDaiUtility.rescueETH` (`onlyAdmin`) on USDai - so a modifier-blind reading order spends
+    # a reader's first minutes there.
+    entry_guards = {declaration: _auth_guards(rows) for declaration, rows in entries.items()}
+
+    def _gating(declaration):
+        reached = sorted(set(reachable_entries[declaration]) & set(entry_guards))
+        names = sorted({name for entry in reached for name in entry_guards[entry]})
+        return (bool(reached) and all(entry_guards[entry] for entry in reached), names[:5])
+
     incoming = defaultdict(list)
     edge_count = 0
     graph_truncated = False
@@ -513,6 +549,8 @@ def analyze(trees, symbols, semantic, scope=None):
                                           str(function.get("name") or "function")),
                                       "path": function_paths[declaration],
                                       "kind": "sensitive-state-write",
+                                      "entries_all_gated": _gating(declaration)[0],
+                                      "entry_auth_modifiers": _gating(declaration)[1],
                                       "member": variable_info.get(target, {}).get("name", "state"),
                                       "operand": "write:%s" % variable_info.get(target, {}).get("name", "state"),
                                       "src": node.get("src"),
@@ -572,6 +610,8 @@ def analyze(trees, symbols, semantic, scope=None):
                                           str(function.get("name") or "function")),
                                       "path": function_paths[declaration],
                                       "kind": sink_kind,
+                                      "entries_all_gated": _gating(declaration)[0],
+                                      "entry_auth_modifiers": _gating(declaration)[1],
                                       "member": str(expression.get("memberName")
                                                     or expression.get("name") or "call"),
                                       "operand": operand, "src": node.get("src"),
@@ -677,7 +717,8 @@ def analyze(trees, symbols, semantic, scope=None):
                                            scope_role=source_role),
                             "sink": {name: sink[name] for name in (
                                 "function", "path", "kind", "member", "operand", "src",
-                                "line", "scope_role", "test_path", "reachable_entries")},
+                                "line", "scope_role", "test_path", "entries_all_gated",
+                                "entry_auth_modifiers", "reachable_entries")},
                             "flow": [{"from": _value_label(edge["from"], variable_info, seed_labels),
                                       "to": _value_label(edge["to"], variable_info, seed_labels),
                                       "kind": edge["kind"], "function": edge["function"],
@@ -737,6 +778,10 @@ def analyze(trees, symbols, semantic, scope=None):
             "truncated": graph_truncated, "scope_filter": prefixes or None,
             "sinks_with_leads": len(per_sink), "sinks_represented": sinks_represented,
             "sinks_in_test_paths": sum(1 for row in sinks if row.get("test_path")),
+            "sinks_behind_an_access_modifier": sum(1 for row in sinks
+                                                   if row.get("entries_all_gated")),
+            "leads_behind_an_access_modifier": sum(1 for row in leads
+                                                   if row["sink"].get("entries_all_gated")),
             "leads_in_test_paths": sum(1 for row in leads if row["sink"].get("test_path")),
             "leads_dropped_by_scope": dropped_by_scope,
             "leads_suppressed_by_sink_cap": suppressed_by_sink_cap,
@@ -757,7 +802,13 @@ def analyze(trees, symbols, semantic, scope=None):
                       "caps left out, and a lead whose source and sink both sit outside `scope_filter` "
                       "is never written. Tests, mocks and fixtures are kept but read last "
                       "within each scope role (`sink.test_path`, `sinks_in_test_paths`, "
-                      "`leads_in_test_paths`)."}
+                      "`leads_in_test_paths`), and a sink every reaching entry gates with a "
+                      "modifier that reads like an access check is read after the ungated ones "
+                      "and counted (`sink.entries_all_gated`, `sink.entry_auth_modifiers`, "
+                      "`sinks_behind_an_access_modifier`, `leads_behind_an_access_modifier`). "
+                      "The gate changes the reading order only: it never decides which rows are "
+                      "written. Both flags are cues - read the gate at its source span, and note "
+                      "that one ungated entry added later un-gates the sink."}
 
 
 def _value_label(value, variable_info, seed_labels):
@@ -786,6 +837,11 @@ def _lead_order(row):
     # material only once the in-scope ones are exhausted.
     return (scope_rank.get(sink.get("scope_role"), 0),
             1 if sink.get("test_path") else 0,
+            # The gate ranks a row down and nothing else. It is deliberately absent from the sink
+            # enumeration above, so which sinks get a row - and how many - is what it was without
+            # it: on the unscoped Boson artifact round one already truncates at 500 of 714 sinks,
+            # and demoting a gated sink there would have removed it from the file instead.
+            1 if sink.get("entries_all_gated") else 0,
             scope_rank.get(source.get("scope_role"), 0),
             sink_rank.get(sink["kind"], 3), row["crosses_persistent_state"],
             source_rank.get(source["kind"], 4), len(row["flow"]), sink["path"],
