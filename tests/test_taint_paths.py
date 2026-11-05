@@ -406,5 +406,37 @@ class LeadOrderTests(unittest.TestCase):
                         taint_paths._lead_order(self.row(sink_kind="low-level-call")))
 
 
+class StableRefOrderTests(unittest.TestCase):
+    """The same build-info must give the same queue twice.
+
+    References are gathered in a set that holds both declaration ids and `env:`/external-return
+    strings. A set mixing integers and strings iterates in an order that depends on
+    `PYTHONHASHSEED`, and that order reached the flow edges, so a run of the same command on the
+    same input wrote a different bounded queue each time.
+    """
+
+    def setUp(self):
+        self.a = Ast()
+        self.expr = self.a.call(
+            self.a.member(self.a.ident("abi", -1), "encodePacked", 900),
+            self.a.ident("b", 7),
+            self.a.member(self.a.ident("msg", _fc.MSG), "sender"),
+            self.a.ident("a", 3))
+
+    def test_stable_puts_ids_first_ascending_then_string_keys(self):
+        self.assertEqual(taint_paths._stable({"env:b", 7, 3, "env:a", 11}),
+                         [3, 7, 11, "env:a", "env:b"])
+
+    def test_variable_refs_returns_an_ordered_sequence_not_a_set(self):
+        refs = taint_paths._variable_refs(self.expr, {3, 7}, semantic, {})
+        self.assertIsInstance(refs, list)
+        self.assertEqual(refs, [3, 7, "env:msg.sender"])
+
+    def test_entry_scoped_environment_keys_keep_that_order(self):
+        refs = taint_paths._variable_refs(self.expr, {3, 7}, semantic, {},
+                                          ("Entry.g", "Entry.f"))
+        self.assertEqual(refs, [3, 7, "env:Entry.f:msg.sender", "env:Entry.g:msg.sender"])
+
+
 if __name__ == "__main__":
     unittest.main()
