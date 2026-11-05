@@ -18,7 +18,7 @@
 
 ---
 
-## Current release: 0.52.0 — a queue that aims at the scope and reads the same twice
+## Current release: 0.52.1 — a queue that aims at the scope and reads the same twice
 
 - The taint queue spends its budget across sinks instead of on whichever one was
   enumerated first: on a 357-sink target the written 500 rows covered 1 sink
@@ -37,6 +37,9 @@
 - Go imports resolve in the cross-file slice planner, so a Go tree gets a
   dependency graph instead of filename coincidences, and `impact-plan` names the
   languages it never opened.
+- 0.52.1 reads a declaration's gating once per declaration rather than three
+  times per sink: byte-identical output, and 1.9% at the minimum on an unscoped
+  714-sink target.
 - Still an unverified reading queue: no modifier, reachability or exploitability
   claim, and a path through persistent state may span transactions.
 
