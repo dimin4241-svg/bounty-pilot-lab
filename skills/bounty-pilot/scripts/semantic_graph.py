@@ -133,6 +133,14 @@ def load_solc(path, max_ast_bytes=MAX_AST_BYTES):
                         or ("language" in raw and "output" not in raw)):
         raise ValueError(BUILD_INFO_HINT)
     trees, skipped, contents = [], [], {}
+    # Hardhat and Foundry build-info keep the source text under `input.sources`; the compiler's own
+    # `output.sources` entry carries only `ast` and `id`. Without reading both halves every line
+    # number a consumer derives from a solc byte offset is None on real build-info, and only a
+    # hand-written fixture with `content` under `output` would ever produce one.
+    input_sources = raw.get("input") if isinstance(raw, dict) else None
+    input_sources = input_sources.get("sources") if isinstance(input_sources, dict) else None
+    if not isinstance(input_sources, dict):
+        input_sources = {}
     saw_source_entry = False
     for filename, desc in sorted(sources.items()):
         if not isinstance(desc, dict):
@@ -147,8 +155,12 @@ def load_solc(path, max_ast_bytes=MAX_AST_BYTES):
                                 "reason": "AST over %d nodes; not analysed" % MAX_NODES})
                 continue
             trees.append((filename, tree))
-            if isinstance(desc.get("content"), str):
-                contents[str(filename)] = desc["content"]
+            text = desc.get("content")
+            if not isinstance(text, str):
+                entry = input_sources.get(filename)
+                text = entry.get("content") if isinstance(entry, dict) else None
+            if isinstance(text, str):
+                contents[str(filename)] = text
     if not trees:
         if skipped:
             raise ValueError("every source AST is over the %d-node cap: %s"

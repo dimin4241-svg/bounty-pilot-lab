@@ -253,7 +253,8 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
         graph['scope_filter'] = prefixes
     paths = load_impact_helper('impact_paths').rank(graph)
     odd = load_impact_helper('odd_one_out').analyze(graph)
-    taint = load_impact_helper('taint_paths').analyze(trees, graph['symbols'], parsed)
+    taint = load_impact_helper('taint_paths').analyze(trees, graph['symbols'], parsed,
+                                                      scope=prefixes)
     dump(target / 'semantic-graph.json', graph)
     dump(target / 'impact-paths.json', paths)
     dump(target / 'odd-one-out.json', odd)
@@ -273,6 +274,10 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
               'impact_paths': str(target / 'impact-paths.json'),
               'taint_paths': str(target / 'taint-paths.json'),
               'taint_leads': taint.get('lead_count', 0),
+              'taint_sinks': taint.get('sink_count', 0),
+              'taint_sinks_represented': taint.get('sinks_represented', 0),
+              'taint_truncated': bool(taint.get('truncated')),
+              'taint_leads_dropped_by_scope': taint.get('leads_dropped_by_scope', 0),
               'symbols': len(graph['symbols']), 'paths': len(paths['ranked']),
               'scope_filter': list(scope) if scope else None,
               'symbols_dropped_by_scope': dropped,
