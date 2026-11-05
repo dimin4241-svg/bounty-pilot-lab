@@ -17,11 +17,20 @@ spec.loader.exec_module(shards)
 
 MAX_FILES = 10000
 MAX_BRIDGES = 200
+# Bridge the cues that are evidence before the ones that are coincidence.
+CUE_RANK = {"local-import-cue": 0, "go-package-import-cue": 0, "unique-file-stem-cue": 1}
 RELATIVE_IMPORT = re.compile(
     r"""(?:\bimport\s+(?:[^;\n]*?\bfrom\s+)?|\brequire\s*\()\s*["']([^"']+)["']"""
 )
 RUST_MOD = re.compile(r"\b(?:pub\s+)?mod\s+([A-Za-z_]\w*)\s*;")
 PY_IMPORT = re.compile(r"(?m)^\s*(?:from|import)\s+([A-Za-z_][\w.]*)")
+# A Go import names a package directory, not a file, and the usual form is a parenthesised
+# block, so neither RELATIVE_IMPORT nor _resolve ever matched one: measured on Obol charon
+# (--scope core) and go-ethereum (--scope core), every dependency edge was a filename-stem
+# coincidence and not one was an import.
+GO_IMPORT_BLOCK = re.compile(r"(?ms)^import\s*\((.*?)^\)")
+GO_IMPORT_SINGLE = re.compile(r"""(?m)^\s*import\s+(?:[A-Za-z_.]\w*\s+)?["']([^"']+)["']""")
+GO_IMPORT_SPEC = re.compile(r"""(?m)^\s*(?:[A-Za-z_.]\w*\s+)?["']([^"']+)["']""")
 IDENT = re.compile(r"\b[A-Za-z_]\w*\b")
 
 
@@ -62,13 +71,53 @@ def _resolve(request, origin, known):
     return next(iter(unique)) if len(unique) == 1 else None
 
 
+def _go_module(root):
+    """The module path declared in go.mod, which prefixes every in-module import."""
+    manifest = root / "go.mod"
+    try:
+        text = manifest.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.search(r"(?m)^\s*module\s+(\S+)", text)
+    return match.group(1).strip().strip('"') if match else None
+
+
+def _go_imports(text):
+    requests = [m.group(1) for m in GO_IMPORT_SINGLE.finditer(text)]
+    for block in GO_IMPORT_BLOCK.finditer(text):
+        requests.extend(m.group(1) for m in GO_IMPORT_SPEC.finditer(block.group(1)))
+    return requests
+
+
+def _go_package_files(request, origin, module, directories):
+    """Every scoped file of an imported in-module package; nothing for a third-party one.
+
+    The package is the unit a Go import names, so one import is an edge to each of that
+    package's files. Imports outside the module (and packages outside --scope) resolve to
+    nothing rather than to a guess.
+    """
+    if not module or not request.startswith(module):
+        return []
+    remainder = request[len(module):].strip("/")
+    if request != module and not request[len(module):].startswith("/"):
+        return []
+    return [path for path in directories.get(remainder, ()) if path != origin]
+
+
 def _cues(repo, paths):
     root = Path(repo).expanduser().resolve()
     known = set(paths)
     sizes = {p: (root / p).stat().st_size for p in paths}
     stem_index = {}
+    directories = {}
     for path in paths:
         stem_index.setdefault(Path(path).stem, []).append(path)
+        if path.endswith(".go"):
+            parent = Path(path).parent.as_posix()
+            directories.setdefault("" if parent == "." else parent, []).append(path)
+    for files in directories.values():
+        files.sort()
+    module = _go_module(root) if directories else None
     edges = {}
     for path in paths:
         text = (root / path).read_text(encoding="utf-8", errors="replace")
@@ -78,6 +127,10 @@ def _cues(repo, paths):
             imports.extend(m.group(1) for m in RUST_MOD.finditer(text))
         if path.endswith(".py"):
             imports.extend(m.group(1) for m in PY_IMPORT.finditer(text))
+        if path.endswith(".go"):
+            for request in _go_imports(text):
+                for dep in _go_package_files(request, path, module, directories):
+                    deps[dep] = "go-package-import-cue"
         for imported in imports:
             dep = _resolve(imported, path, known)
             if dep and dep != path:
@@ -130,7 +183,10 @@ def plan(repo, scope=None, max_source_bytes=160000, max_bridges=MAX_BRIDGES):
     # Create a separate two-file bridge rather than claiming the edge was read.
     bridges = []
     seen_pairs = set()
-    for src, dest, reason in sorted(unresolved):
+    # An import is evidence; a shared filename stem is a coincidence. When max_bridges binds —
+    # on charon's `core` the real Go imports alone exceed it — the evidence is bridged first.
+    ordered = sorted(unresolved, key=lambda row: (CUE_RANK.get(row[2], 9), row[0], row[1]))
+    for src, dest, reason in ordered:
         if owner[src] == owner[dest]:
             continue
         pair = tuple(sorted((src, dest)))
@@ -148,7 +204,7 @@ def plan(repo, scope=None, max_source_bytes=160000, max_bridges=MAX_BRIDGES):
     unrepresented_edges = [
         {"from": src, "to": dest, "cue": reason,
          "reason": "oversized-pair-or-bridge-cap"}
-        for src, dest, reason in sorted(unresolved)
+        for src, dest, reason in ordered
         if tuple(sorted((src, dest))) not in {
             tuple(b["paths"]) for b in bridges} and owner[src] != owner[dest]]
     return {
@@ -162,7 +218,10 @@ def plan(repo, scope=None, max_source_bytes=160000, max_bridges=MAX_BRIDGES):
         "oversized_single_files": primary["oversized_single_files"],
         "notice": ("Each primary path appears in exactly one primary shard; context and "
                    "bridge paths may repeat intentionally. Dependency links are "
-                   "import/name cues, not verified calls. Manually inspect unresolved edges "
+                   "import/name cues, not verified calls: a Go edge is an import of the "
+                   "package a file belongs to, not a call into that file, and a "
+                   "unique-file-stem-cue is only a name coincidence. Manually inspect "
+                   "unresolved edges "
                    "and ensure scoped runtime artifacts/configuration are included. "
                    "Every shard requires a fresh private run directory.")}
 
