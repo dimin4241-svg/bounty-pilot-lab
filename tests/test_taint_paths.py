@@ -504,5 +504,51 @@ class TestPathRankingTests(unittest.TestCase):
             self.assertTrue(taint_paths._is_test_path(path), path)
 
 
+class LeadOrderTotalityTests(unittest.TestCase):
+    """Two rows must never compare equal: a tie leaves the order to edge registration.
+
+    Measured on written queues: 40 of 151 obol-splits rows and 134 of 500 Boson v2.5.1 rows
+    tied on every key the comparison used, and `sort` is stable, so their order came from the
+    order the flow edges happened to be registered in.
+    """
+
+    @staticmethod
+    def row(**over):
+        base = {"source": {"kind": "external-parameter", "path": "src/App.sol",
+                           "scope_role": "in-scope", "line": 1, "function": "forward",
+                           "entry": None, "src": "10:4:0"},
+                "sink": {"kind": "low-level-call", "path": "src/App.sol",
+                         "scope_role": "in-scope", "test_path": False, "line": 1,
+                         "member": "call", "operand": "target", "src": "20:8:0"},
+                "flow": [], "crosses_persistent_state": False}
+        for section, values in over.items():
+            base[section] = dict(base[section], **values) if isinstance(values, dict) else values
+        return base
+
+    def test_rows_differing_only_in_the_operand_are_ordered(self):
+        first = taint_paths._lead_order(self.row(sink={"operand": "calldata[0]"}))
+        second = taint_paths._lead_order(self.row(sink={"operand": "target"}))
+        self.assertNotEqual(first, second)
+        self.assertLess(first, second)
+
+    def test_rows_differing_only_in_the_recorded_flow_are_ordered(self):
+        plain = self.row()
+        with_flow = self.row()
+        with_flow["flow"] = [{"kind": "assignment", "src": "30:2:0"}]
+        self.assertNotEqual(taint_paths._lead_order(plain),
+                            taint_paths._lead_order(with_flow))
+
+    def test_every_lead_of_a_real_fixture_has_its_own_key(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        solc = Path(temp.name) / "build-info.json"
+        solc.write_text(json.dumps(fixture()), encoding="utf-8")
+        trees = semantic.load_solc(solc)
+        leads = taint_paths.analyze(trees, semantic.solidity_symbols(trees), semantic)["leads"]
+        keys = [taint_paths._lead_order(lead) for lead in leads]
+        self.assertTrue(leads)
+        self.assertEqual(len(set(keys)), len(keys))
+
+
 if __name__ == "__main__":
     unittest.main()
