@@ -216,15 +216,29 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
             require_private_output(target, Path(top) if top else anchor, what='impact-plan --out')
     target.mkdir(parents=True, exist_ok=True)
     parsed = load_impact_helper('semantic_graph')
+    prefixes = [str(x) for x in scope or [] if str(x)]
     symbols, skipped_sources, trees = [], [], []
     if solc:
         trees = parsed.load_solc(solc)
         skipped_sources = list(getattr(trees, 'skipped', []))
         symbols.extend(parsed.solidity_symbols(trees))
+    unread_languages = {}
+    read_languages = {}
     if repo:
         symbols.extend(parsed.py_symbols(repo))
+        # This pass reads Python and Solidity only. On a Go, Rust or TypeScript checkout it
+        # returns a small symbol count from whatever Python happens to be tracked, which reads
+        # like a result: charon gave 33 symbols from two debug scripts while 553 .go files were
+        # never opened. Say so instead.
+        for path in (x for x in git(Path(repo), 'ls-files', '-z').split('\0') if x):
+            suffix = Path(path).suffix.lower()
+            if suffix not in SOURCE_SUFFIXES and suffix not in ('.py', '.sol'):
+                continue
+            if prefixes and not path_in_scope(path, prefixes):
+                continue
+            bucket = read_languages if suffix in ('.py', '.sol') else unread_languages
+            bucket[suffix] = bucket.get(suffix, 0) + 1
     dropped = kept_dependencies = 0
-    prefixes = [str(x) for x in scope or [] if str(x)]
     if prefixes:
         # Out-of-scope code an in-scope symbol calls or inherits stays, marked `dependency`:
         # `Vault.deposit` moves value inside the vendored ERC4626._deposit it inherits, and
@@ -279,6 +293,8 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
               'taint_truncated': bool(taint.get('truncated')),
               'taint_leads_dropped_by_scope': taint.get('leads_dropped_by_scope', 0),
               'symbols': len(graph['symbols']), 'paths': len(paths['ranked']),
+              'repo_languages_read': read_languages or None,
+              'repo_languages_not_read': unread_languages or None,
               'scope_filter': list(scope) if scope else None,
               'symbols_dropped_by_scope': dropped,
               'symbols_kept_as_dependencies': kept_dependencies,
@@ -296,6 +312,13 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
             '%d source file(s) were over the AST node cap and were not analysed; read them by '
             'hand: %s' % (len(skipped_sources),
                           ', '.join(x['path'] for x in skipped_sources[:10])))
+    if unread_languages:
+        result['languages_warning'] = (
+            'impact-plan reads Python (--repo) and Solidity (--solc) only; %s in this checkout '
+            'were not analysed, so these counts are not coverage. Use bundle/security_slices for '
+            'those stacks.' % ', '.join('%d %s file(s)' % (count, suffix)
+                                        for suffix, count in sorted(unread_languages.items(),
+                                                                    key=lambda kv: -kv[1])))
     if in_scope_sinks == 0 and paths.get('ranked'):
         result['warning'] = (
             'No ranked sink is in the in-scope sources: this queue aims at dependencies or tests '

@@ -246,3 +246,45 @@ class BlindBenchmarkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepoLanguageCensusTests(unittest.TestCase):
+    """A Go checkout must not come back as a symbol count that reads like coverage.
+
+    Measured on Obol charon: `impact-plan --repo` reported 33 symbols, all from two debug
+    Python scripts, while 553 tracked `.go` files were never opened.
+    """
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.checkout = self.root / "repo"
+        (self.checkout / "scripts").mkdir(parents=True)
+        (self.checkout / "core").mkdir(parents=True)
+        (self.checkout / "scripts/debug.py").write_text("def main():\n    return 1\n")
+        (self.checkout / "core/router.go").write_text("package core\n\nfunc Route() {}\n")
+        (self.checkout / "core/state.go").write_text("package core\n\nvar State int\n")
+        subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
+        subprocess.run(["git", "-C", str(self.checkout), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.checkout), "-c", "user.name=Test",
+                        "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+                        "commit", "-qm", "init"], check=True)
+
+    def test_unread_languages_are_counted_and_named(self):
+        result = bounty.impact_plan(repo=self.checkout, out=self.root / "private")
+        self.assertEqual(result["repo_languages_not_read"], {".go": 2})
+        self.assertEqual(result["repo_languages_read"], {".py": 1})
+        self.assertIn("2 .go file(s)", result["languages_warning"])
+        self.assertIn("not coverage", result["languages_warning"])
+
+    def test_a_python_only_checkout_carries_no_warning(self):
+        (self.checkout / "core/router.go").unlink()
+        (self.checkout / "core/state.go").unlink()
+        subprocess.run(["git", "-C", str(self.checkout), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.checkout), "-c", "user.name=Test",
+                        "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+                        "commit", "-qm", "drop go"], check=True)
+        result = bounty.impact_plan(repo=self.checkout, out=self.root / "private2")
+        self.assertIsNone(result["repo_languages_not_read"])
+        self.assertNotIn("languages_warning", result)
