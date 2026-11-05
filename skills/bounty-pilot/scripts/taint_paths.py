@@ -465,7 +465,13 @@ def analyze(trees, symbols, semantic, scope=None):
     # a reader's first minutes there.
     entry_guards = {declaration: _auth_guards(rows) for declaration, rows in entries.items()}
 
+    gating_cache = {}
+
     def _gating(declaration):
+        # Cached: every sink append reads all three values, and a declaration holding several
+        # sinks recomputes the same entry walk for each of them.
+        if declaration in gating_cache:
+            return gating_cache[declaration]
         reached = sorted(set(reachable_entries[declaration]) & set(entry_guards))
         names = sorted({name for entry in reached for name in entry_guards[entry]})
         # The count matters because the names alone mislead: `FundsBase.transferFundsOut:556`
@@ -473,7 +479,8 @@ def analyze(trees, symbols, semantic, scope=None):
         # `entries_all_gated` is false, because one of the entries reaching it carries none of
         # them. A reader skimming the names sees an admin-only row that is not one.
         open_entries = sum(1 for entry in reached if not entry_guards[entry])
-        return (bool(reached) and not open_entries, names[:5], open_entries)
+        gating_cache[declaration] = (bool(reached) and not open_entries, names[:5], open_entries)
+        return gating_cache[declaration]
 
     incoming = defaultdict(list)
     edge_count = 0
