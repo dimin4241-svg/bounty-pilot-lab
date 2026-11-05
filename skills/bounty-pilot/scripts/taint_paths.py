@@ -502,6 +502,9 @@ def analyze(trees, symbols, semantic, scope=None):
                   if isinstance(p, dict)}
         body = function.get("body") or {}
         return_params = ((function.get("returnParameters") or {}).get("parameters") or [])
+        # Once per declaration, not once per sink times once per field: both append sites below
+        # read all three values, and the walk depends on nothing that changes inside this loop.
+        gated, auth_names, open_entries = _gating(declaration)
 
         for node in semantic.walk_json(body):
             kind = node.get("nodeType")
@@ -554,9 +557,9 @@ def analyze(trees, symbols, semantic, scope=None):
                                           str(function.get("name") or "function")),
                                       "path": function_paths[declaration],
                                       "kind": "sensitive-state-write",
-                                      "entries_all_gated": _gating(declaration)[0],
-                                      "entry_auth_modifiers": _gating(declaration)[1],
-                                      "entries_without_access_check": _gating(declaration)[2],
+                                      "entries_all_gated": gated,
+                                      "entry_auth_modifiers": auth_names,
+                                      "entries_without_access_check": open_entries,
                                       "member": variable_info.get(target, {}).get("name", "state"),
                                       "operand": "write:%s" % variable_info.get(target, {}).get("name", "state"),
                                       "src": node.get("src"),
@@ -616,9 +619,9 @@ def analyze(trees, symbols, semantic, scope=None):
                                           str(function.get("name") or "function")),
                                       "path": function_paths[declaration],
                                       "kind": sink_kind,
-                                      "entries_all_gated": _gating(declaration)[0],
-                                      "entry_auth_modifiers": _gating(declaration)[1],
-                                      "entries_without_access_check": _gating(declaration)[2],
+                                      "entries_all_gated": gated,
+                                      "entry_auth_modifiers": auth_names,
+                                      "entries_without_access_check": open_entries,
                                       "member": str(expression.get("memberName")
                                                     or expression.get("name") or "call"),
                                       "operand": operand, "src": node.get("src"),
