@@ -632,5 +632,46 @@ class QueueReviewTests(unittest.TestCase):
                       bounty.lead_queue(self.run)["function_coverage"]["stale_inputs"])
 
 
+def mock_path_fixture():
+    """The same sources, with one file moved to a mock path inside the scope."""
+    data = review_fixture()
+    sources = data["output"]["sources"]
+    sources["src/test/mocks/MockRole.sol"] = sources.pop("src/Role.sol")
+    return data
+
+
+class TestPathLeadOrderTests(unittest.TestCase):
+    """A mock inside the declared scope is real surface, and still not the code under test.
+
+    Measured on Obol obol-splits with `--scope src/`: 10 of 21 odd-one-out leads were
+    `MockNFT` and `MockERC1155`.
+    """
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        trees = semantic.load_solc(write_fixture(temp.name, mock_path_fixture()))
+        self.graph = semantic.build(semantic.solidity_symbols(trees),
+                                    getattr(trees, "skipped", []))
+        self.report = odd.analyze(self.graph)
+
+    def test_a_mock_lead_is_flagged_and_counted(self):
+        mocks = [lead for lead in self.report["leads"] if lead["test_path"]]
+        self.assertTrue(mocks, "the moved mock produced no lead to rank")
+        self.assertEqual({lead["path"] for lead in mocks},
+                         {"src/test/mocks/MockRole.sol"})
+        self.assertEqual(self.report["leads_in_test_paths"], len(mocks))
+
+    def test_every_mock_lead_of_a_kind_sorts_after_the_production_leads(self):
+        for kind in {lead["kind"] for lead in self.report["leads"]}:
+            rows = [lead["test_path"] for lead in self.report["leads"]
+                    if lead["kind"] == kind]
+            self.assertEqual(rows, sorted(rows), kind)
+
+    def test_a_production_path_is_not_read_as_a_test_path(self):
+        self.assertFalse(odd._is_test_path("src/Attestation.sol"))
+        self.assertTrue(odd._is_test_path("src/test/mocks/MockRole.sol"))
+
+
 if __name__ == "__main__":
     unittest.main()
