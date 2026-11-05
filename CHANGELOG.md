@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.52.0 — a reading queue that aims at the declared scope and reads the same twice
+
+- Fix the taint queue spending its whole budget on whichever sink was enumerated
+  first: the cap was enforced inside the walk, so sorting afterwards only
+  reordered an already-biased set. Each sink now offers up to
+  `MAX_SINK_CANDIDATES` candidates and `MAX_LEADS_PER_SINK` are emitted in
+  rounds, so round one gives every sink its single best lead. Measured on a
+  357-sink Solidity target the written 500 rows covered 1 sink before and 338
+  after, and 456 rather than 0 of them aimed at in-scope code.
+- Pass `impact-plan --scope` into the taint pass. Each end of a lead is marked
+  `in-scope` or `dependency`, in-scope sinks are enumerated first, and a lead
+  whose source and sink both sit outside the scope is counted and not written.
+  Out-of-scope code is still traversed: a flow through a vendored library and
+  back into in-scope code is the interesting case.
+- Rank control takeover (the delegatecall family, `selfdestruct`) ahead of a
+  generic external call, and the declared scope ahead of both.
+- Read Solidity source text from `input.sources` when `output.sources` carries
+  only `ast` and `id`, as hardhat and foundry build-info do. Every line number in
+  `taint-paths.json` was `None` on real build-info; only a fixture with `content`
+  under `output` produced one.
+- State what the caps left out: `scope_filter`, `sinks_with_leads`,
+  `sinks_represented`, `leads_dropped_by_scope`, `leads_suppressed_by_sink_cap`
+  and `limits.leads_per_sink`.
+- Make the queue reproducible. References were collected in a set mixing integer
+  declaration ids with `env:<entry>:<token>` and external-return strings, and
+  every consumer iterated it directly, so string hashing decided the order flow
+  edges were registered and the same command on the same build-info wrote a
+  different queue on every run. References now come back in a documented order,
+  ids ascending then string keys lexicographically.
+- Complete that invariant in the comparison: `_lead_order` was not a total order,
+  so inside a tie a stable sort still took the row order from edge registration.
+  It now continues into the sink's member, operand and span, the source's
+  function, entry and span, and the flow as (kind, span) pairs, and the per-sink
+  candidate sort is total as well.
+- Read production code before test doubles. Sinks carry `test_path` and sort
+  after the production sinks of their kind in `taint-paths.json`, and a mock
+  ranks after the code it stands in for in `odd-one-out.json`. Where the lead cap
+  binds this is a behaviour change and not only an order: on an unscoped 714-sink
+  run, 163 of the 500 represented sinks changed, every one that left a test
+  double and every one that arrived production code.
+- Sort a sink whose every public entry carries an access modifier after the
+  ungated sinks of its kind, with `entries_all_gated` and `entry_auth_modifiers`
+  on the row and `sinks_behind_an_access_modifier` /
+  `leads_behind_an_access_modifier` in the report. `nonReentrant` is not an
+  access check, and a sink counts as gated only while every entry reaching it is
+  gated — one ungated entry added later un-gates it. The gate is kept out of the
+  sink enumeration and enters only the comparison, so it cannot decide which
+  sinks are represented: measured, it loses no sink of any kind and changes the
+  reading order alone. Row one of four real runs was an access-gated function.
+  A gate is a cue and not a proof — a modifier can be a no-op and an owner can
+  be a single key — so these rows are demoted, never dropped.
+- The two gated counters cannot be reconciled by arithmetic and are not meant to
+  be: `sinks_behind_an_access_modifier` counts gated sinks in the enumeration,
+  `leads_behind_an_access_modifier` counts written rows, and a gated sink that
+  the caps left unrepresented appears in the first and not the second.
+- Count the entries that reach a sink carrying no access check
+  (`entries_without_access_check`). `entry_auth_modifiers` lists what the gated
+  entries carry even when the sink itself is not gated, so the names alone
+  mislead: `FundsBase.transferFundsOut` reports four admin modifiers with
+  `entries_all_gated` false, because one entry reaching it carries none of them.
+  The count is 0 on every gated row and non-zero on every row that names
+  modifiers without being gated — 111 of 500 on a scoped Solidity run.
+- Say how to read a zero test-lead count: `sinks_in_test_paths: 0` is a scope
+  with no test material, while `leads_in_test_paths: 0` beside a non-zero sink
+  count means the cap bound and production code took every row.
+- Resolve Go imports in `security_slices`: the module path comes from `go.mod`,
+  both the single and parenthesised forms are read, and an in-module import
+  resolves to every scoped file of that package as `go-package-import-cue`, which
+  outranks a filename coincidence when the bridge cap binds. A Go tree used to
+  produce nothing but coincidence: `go-ethereum --scope core` went from 1,842
+  edges, every one a filename stem, to 5,674 of which 3,836 are imports. The
+  bridge cap is now the limiting factor there and says so.
+- Name the languages `impact_plan` never opened — `repo_languages_not_read` plus
+  a warning pointing at `bundle` and `security_slices` — after a `--repo` run
+  reported 33 symbols from two Python files while 553 Go files went untouched.
+- None of this is a claim about reachability or exploitability. The rows remain an
+  unverified reading queue: no branch or modifier proof, no complete alias model,
+  no remote callee traversal, no cross-contract state, no transaction ordering.
+  A persistent-state path may need more than one transaction.
+
 ## 0.51.0 — experimental compiler-AST taint-path leads
 
 - Add bounded Solidity declaration-flow tracing from public inputs, EVM

@@ -4,6 +4,21 @@ description: The experimental "lab" line of Bounty Pilot, ahead of the stable bo
 ---
 # Bounty Pilot Lab
 
+## Experimental Lab 0.52 — the taint queue aims at the scope
+
+`taint-paths.json` is still a reading queue and still proves nothing, but it is now worth reading
+top-down: every sink gets its best lead before any sink gets a second, `--scope` marks and orders
+both ends of a lead, control-takeover sinks outrank a generic external call, line numbers resolve on
+hardhat and foundry build-info, and the same build-info gives the same queue twice.
+`sinks_represented`, `leads_dropped_by_scope` and `leads_suppressed_by_sink_cap` state what the caps
+left out. Test and mock sinks sort after production ones here and in `odd-one-out.json`, and so does
+a sink every one of whose public entries sits behind an access modifier — `entries_all_gated` and
+`entry_auth_modifiers` say which, and nothing is dropped to achieve it. Read `entry_auth_modifiers`
+beside `entries_without_access_check`, never alone: the names are listed even when the sink is not
+gated, and that count is how many public entries reach it carrying none of them. Treat that flag as a cue and
+not a verdict: a modifier can be a no-op, an owner can be a single key, and the gate disappears the
+moment one ungated entry is added, so check authorization at the source span either way.
+
 ## Experimental Lab 0.51 — compiler-AST taint-path leads
 
 `impact-plan` now also writes `taint-paths.json`: bounded compiler-AST paths from public

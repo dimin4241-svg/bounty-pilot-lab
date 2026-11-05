@@ -18,7 +18,29 @@
 
 ---
 
-## Current release: 0.51.0 — experimental Solidity data-flow leads
+## Current release: 0.52.0 — a queue that aims at the scope and reads the same twice
+
+- The taint queue spends its budget across sinks instead of on whichever one was
+  enumerated first: on a 357-sink target the written 500 rows covered 1 sink
+  before and 338 after, with 456 of them aimed at in-scope code rather than 0.
+- `impact-plan --scope` now reaches the taint pass. Each end of a lead is marked
+  in-scope or dependency, in-scope sinks are read first, and a lead outside the
+  scope at both ends is counted, not written.
+- Line numbers are real: the source text is read from `input.sources`, where
+  hardhat and foundry build-info keep it.
+- The same build-info gives the same queue twice, and the reports say what the
+  caps left out.
+- Production code is read before test doubles, and a sink reachable only behind an
+  access modifier sorts after the ungated ones of its kind without being dropped.
+  Each row says how many of the entries reaching it carry no access check, so a
+  list of admin modifier names cannot be mistaken for an admin-only path.
+- Go imports resolve in the cross-file slice planner, so a Go tree gets a
+  dependency graph instead of filename coincidences, and `impact-plan` names the
+  languages it never opened.
+- Still an unverified reading queue: no modifier, reachability or exploitability
+  claim, and a path through persistent state may span transactions.
+
+## Previous release: 0.51.0 — experimental Solidity data-flow leads
 
 - `impact-plan` traces bounded compiler-AST data flows from external inputs,
   entry-scoped environment values and external-call returns into sensitive
