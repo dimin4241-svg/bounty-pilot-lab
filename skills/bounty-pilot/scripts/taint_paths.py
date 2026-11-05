@@ -17,6 +17,8 @@ MAX_SINK_CANDIDATES = 12
 MAX_SINKS = 2_000
 MAX_PATH_DEPTH = 12
 MAX_REVERSE_STEPS = 2_000
+_TEST_SEGMENTS = ("test", "tests", "spec", "mock", "mocks", "fixture", "fixtures",
+                  "testing", "__tests__")
 ENV_SOURCE_NAMES = {"msg.sender", "tx.origin", "msg.value", "block.timestamp", "block.number"}
 SENSITIVE_STATE_TERMS = ("owner", "admin", "role", "implementation", "beacon", "guardian",
                          "operator", "signer", "oracle", "treasury", "pauser", "minter",
@@ -50,6 +52,23 @@ def _in_scope(path, prefixes):
         if not prefix or text == prefix or text.startswith(prefix + "/"):
             return True
     return False
+
+
+def _is_test_path(path):
+    """Tests, mocks and fixtures, by the cues `bounty._is_test_path` uses.
+
+    They are kept - a mock is sometimes the only written statement of an assumption - but a
+    bounded reading queue reads the production code first. `--scope src/` on a Foundry project
+    whose tests live in `src/test` otherwise spends the budget on them: measured on Obol
+    obol-splits, 17 of 151 rows sat in `src/test`, mocks included.
+    """
+    lowered = str(path or "").replace("\\", "/").lower()
+    parts = [segment for segment in lowered.split("/") if segment]
+    name = parts[-1] if parts else ""
+    # Directory segments and the filename's own cues only. A substring test over the name would
+    # read `Attestation.sol` as a test file.
+    return (any(segment in _TEST_SEGMENTS for segment in parts[:-1])
+            or "mock" in name or name.endswith((".t.sol", "test.sol", "tests.sol")))
 
 
 def _src_key(node):
@@ -317,6 +336,7 @@ def analyze(trees, symbols, semantic, scope=None):
                 "source_count": 0, "sink_count": 0, "lead_count": 0, "leads": [],
                 "truncated": False, "scope_filter": prefixes or None,
                 "sinks_with_leads": 0, "sinks_represented": 0,
+                "sinks_in_test_paths": 0, "leads_in_test_paths": 0,
                 "leads_dropped_by_scope": 0, "leads_suppressed_by_sink_cap": 0,
                 "notice": "No Solidity compiler AST functions were available; no taint analysis was run."}
 
@@ -606,9 +626,11 @@ def analyze(trees, symbols, semantic, scope=None):
                  "sensitive-state-write": 2, "value-operation": 3}
     for row in sinks:
         row["scope_role"] = "in-scope" if _in_scope(row["path"], prefixes) else "dependency"
+        row["test_path"] = _is_test_path(row["path"])
     # In-scope sinks are enumerated first. Ordering on the path alone put `@openzeppelin/...`
     # ahead of `contracts/...` and handed the whole budget to the vendored tree.
     sinks.sort(key=lambda row: (0 if row["scope_role"] == "in-scope" else 1,
+                                1 if row["test_path"] else 0,
                                 sink_rank.get(row["kind"], 3), row["path"],
                                 str(row["src"] or ""), row["operand"]))
     leads = []
@@ -655,7 +677,7 @@ def analyze(trees, symbols, semantic, scope=None):
                                            scope_role=source_role),
                             "sink": {name: sink[name] for name in (
                                 "function", "path", "kind", "member", "operand", "src",
-                                "line", "scope_role", "reachable_entries")},
+                                "line", "scope_role", "test_path", "reachable_entries")},
                             "flow": [{"from": _value_label(edge["from"], variable_info, seed_labels),
                                       "to": _value_label(edge["to"], variable_info, seed_labels),
                                       "kind": edge["kind"], "function": edge["function"],
@@ -714,6 +736,8 @@ def analyze(trees, symbols, semantic, scope=None):
             "flow_edge_count": edge_count, "lead_count": len(leads), "leads": leads,
             "truncated": graph_truncated, "scope_filter": prefixes or None,
             "sinks_with_leads": len(per_sink), "sinks_represented": sinks_represented,
+            "sinks_in_test_paths": sum(1 for row in sinks if row.get("test_path")),
+            "leads_in_test_paths": sum(1 for row in leads if row["sink"].get("test_path")),
             "leads_dropped_by_scope": dropped_by_scope,
             "leads_suppressed_by_sink_cap": suppressed_by_sink_cap,
             "limits": {"flow_edges": MAX_FLOW_EDGES, "leads": MAX_LEADS,
@@ -731,7 +755,9 @@ def analyze(trees, symbols, semantic, scope=None):
                       "in-scope sinks are read first; `sinks_with_leads`, `sinks_represented`, "
                       "`leads_dropped_by_scope` and `leads_suppressed_by_sink_cap` state what the "
                       "caps left out, and a lead whose source and sink both sit outside `scope_filter` "
-                      "is never written."}
+                      "is never written. Tests, mocks and fixtures are kept but read last "
+                      "within each scope role (`sink.test_path`, `sinks_in_test_paths`, "
+                      "`leads_in_test_paths`)."}
 
 
 def _value_label(value, variable_info, seed_labels):
@@ -759,6 +785,7 @@ def _lead_order(row):
     # The declared scope decides first: a lead that stays inside a vendored dependency is reading
     # material only once the in-scope ones are exhausted.
     return (scope_rank.get(sink.get("scope_role"), 0),
+            1 if sink.get("test_path") else 0,
             scope_rank.get(source.get("scope_role"), 0),
             sink_rank.get(sink["kind"], 3), row["crosses_persistent_state"],
             source_rank.get(source["kind"], 4), len(row["flow"]), sink["path"],

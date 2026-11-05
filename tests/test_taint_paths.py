@@ -438,5 +438,71 @@ class StableRefOrderTests(unittest.TestCase):
         self.assertEqual(refs, [3, 7, "env:Entry.f:msg.sender", "env:Entry.g:msg.sender"])
 
 
+def mock_and_production_fixture():
+    """A production sink and a mock sink, both inside one declared scope prefix."""
+    a = Ast()
+
+    def forwarder(contract_id, name, func_id, target_id, data_id):
+        return Ast.contract(contract_id, name, [
+            a.func(func_id, "forward", [a.stmt(a.call(
+                a.member(a.ident("target", target_id), "call"), a.ident("data", data_id)))],
+                params=[typed(spanned(a.param(target_id, "target")), "address"),
+                        typed(spanned(a.param(data_id, "data")), "bytes calldata")])])
+
+    return {"output": {"sources": {
+        "src/Vault.sol": {"ast": Ast.unit(forwarder(900, "Vault", 901, 902, 903)),
+                          "content": "contract Vault {\n" * 40},
+        "src/test/mocks/MockVault.sol": {
+            "ast": Ast.unit(forwarder(910, "MockVault", 911, 912, 913)),
+            "content": "contract MockVault {\n" * 40}}}}
+
+
+class TestPathRankingTests(unittest.TestCase):
+    """Tests, mocks and fixtures are kept, and read after the production code they exercise."""
+
+    def result(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        solc = Path(temp.name) / "build-info.json"
+        solc.write_text(json.dumps(mock_and_production_fixture()), encoding="utf-8")
+        trees = semantic.load_solc(solc)
+        return taint_paths.analyze(trees, semantic.solidity_symbols(trees), semantic,
+                                   scope=["src/"])
+
+    def test_production_sink_is_read_before_the_mock(self):
+        paths = [lead["sink"]["path"] for lead in self.result()["leads"]]
+        self.assertIn("src/Vault.sol", paths)
+        self.assertIn("src/test/mocks/MockVault.sol", paths)
+        self.assertLess(paths.index("src/Vault.sol"),
+                        paths.index("src/test/mocks/MockVault.sol"))
+
+    def test_report_counts_and_flags_the_test_paths_it_kept(self):
+        result = self.result()
+        self.assertEqual(result["sinks_in_test_paths"], 2)
+        self.assertGreaterEqual(result["leads_in_test_paths"], 1)
+        flagged = {lead["sink"]["path"]: lead["sink"]["test_path"] for lead in result["leads"]}
+        self.assertTrue(flagged["src/test/mocks/MockVault.sol"])
+        self.assertFalse(flagged["src/Vault.sol"])
+
+    def test_a_mock_sink_loses_a_scarce_row_to_production_code(self):
+        # The budget is what makes the order matter: with one row to spend, it goes to the
+        # contract under test, not to the mock that stands in for a counterparty.
+        rows = [taint_paths._lead_order(
+            {"source": {"kind": "external-parameter", "path": path, "scope_role": "in-scope",
+                        "line": 1},
+             "sink": {"kind": "low-level-call", "path": path, "scope_role": "in-scope",
+                      "test_path": taint_paths._is_test_path(path), "line": 1},
+             "flow": [], "crosses_persistent_state": False})
+            for path in ("src/test/mocks/MockVault.sol", "src/Vault.sol")]
+        self.assertLess(rows[1], rows[0])
+
+    def test_a_production_file_is_not_a_test_file_for_holding_the_word(self):
+        self.assertFalse(taint_paths._is_test_path("src/Attestation.sol"))
+        self.assertFalse(taint_paths._is_test_path("contracts/protocol/ProtocolBase.sol"))
+        for path in ("src/test/Vault.sol", "src/mocks/Thing.sol", "src/MockThing.sol",
+                     "test/Vault.t.sol", "src/VaultTest.sol", "src/__tests__/Vault.sol"):
+            self.assertTrue(taint_paths._is_test_path(path), path)
+
+
 if __name__ == "__main__":
     unittest.main()
