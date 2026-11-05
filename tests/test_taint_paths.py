@@ -496,6 +496,28 @@ class TestPathRankingTests(unittest.TestCase):
             for path in ("src/test/mocks/MockVault.sol", "src/Vault.sol")]
         self.assertLess(rows[1], rows[0])
 
+    def test_a_displaced_mock_is_still_visible_in_the_sink_count(self):
+        # Measured on the unscoped Boson artifact: the cap binds at 500 of 714 sinks, 163 of the
+        # represented sinks swap, every one that leaves is a test double - and
+        # `leads_in_test_paths` then reads 0, the same value a scope with no test material gives.
+        # `sinks_in_test_paths` is what tells the two apart, so it must count the displaced ones.
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        solc = Path(temp.name) / "build-info.json"
+        solc.write_text(json.dumps(mock_and_production_fixture()), encoding="utf-8")
+        trees = semantic.load_solc(solc)
+        previous = taint_paths.MAX_LEADS
+        taint_paths.MAX_LEADS = 1
+        try:
+            result = taint_paths.analyze(trees, semantic.solidity_symbols(trees), semantic,
+                                         scope=["src/"])
+        finally:
+            taint_paths.MAX_LEADS = previous
+        self.assertEqual(result["lead_count"], 1)
+        self.assertEqual(result["leads"][0]["sink"]["path"], "src/Vault.sol")
+        self.assertEqual(result["leads_in_test_paths"], 0)
+        self.assertEqual(result["sinks_in_test_paths"], 2)
+
     def test_a_production_file_is_not_a_test_file_for_holding_the_word(self):
         self.assertFalse(taint_paths._is_test_path("src/Attestation.sol"))
         self.assertFalse(taint_paths._is_test_path("contracts/protocol/ProtocolBase.sol"))
