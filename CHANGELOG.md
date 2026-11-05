@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.52.1 — the same queue, one entry walk per declaration
+
+- Read a declaration's gating once per declaration instead of three times per
+  sink. `entries_without_access_check` left `_gating(declaration)[0]`, `[1]` and
+  `[2]` inline at both sink append sites, two loops deep inside
+  `for declaration in sorted(reachable)`, and the walk depends on nothing that
+  changes inside that loop. One unpack at the top of it and three local reads at
+  each append site remove every repeated call. Output is byte-identical on both
+  Solidity artifacts the queue is checked against, so a 0.52.0 queue and a 0.52.1
+  queue compare row for row; on an unscoped 714-sink target, the two variants
+  alternating in one process over 20 rounds each measured 489.0 → 479.6 ms at
+  the minimum, 1.9%.
+- Record in `AGENTS.md` that a red suite needs the machine to itself before it is
+  believed. The tests spawn git, solc and shelled-out runners with patched PATHs,
+  so a second full run on the same machine lands as subprocess timeouts in files
+  that have nothing to do with the change under test: measured 5 November 2026,
+  50 failures across files that each pass alone, and 1386 passed with the machine
+  free. Redirect the output to a file and read the file — piping through `tail`
+  keeps the count and loses the names.
+
+Nothing else changed, and no behaviour did.
+
 ## 0.52.0 — a reading queue that aims at the declared scope and reads the same twice
 
 - Fix the taint queue spending its whole budget on whichever sink was enumerated
