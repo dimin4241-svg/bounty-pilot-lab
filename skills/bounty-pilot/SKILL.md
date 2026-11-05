@@ -4,6 +4,17 @@ description: The experimental "lab" line of Bounty Pilot, ahead of the stable bo
 ---
 # Bounty Pilot Lab
 
+## Experimental Lab 0.51 — compiler-AST taint-path leads
+
+`impact-plan` now also writes `taint-paths.json`: bounded compiler-AST paths from public
+parameters, entry-scoped EVM environment values and external-call return values to sensitive
+call targets/calldata, native ETH recipients/amounts, token transfer/pull, permit and other
+operation operands, including paths across internal calls and persistent state. Read these as source
+navigation leads; this analysis does not model control flow, modifiers, complete aliases, runtime
+reachability or exploitability. Confirm every hop, authorization check, transaction sequence and
+protected control in the target source before treating a path as a hypothesis. See
+`references/impact-first.md` for how the impact-first and high-impact passes consume the report.
+
 ## Experimental Lab 0.50 — native feedback and no-drop discovery
 
 See references/lab-050-research-loop.md for the new optional tools.
@@ -358,8 +369,22 @@ Pass `--scope`: without it a build-info file drags `lib/` into every ranking. Ou
 that in-scope contracts call or inherit is kept and marked `dependency`.
 
 `impact-plan` writes `semantic-graph.json` (per function: entry, guards, writes, reads, calls,
-sinks), `impact-paths.json` (paths to value-moving sinks, including arbitrary calls) and
-**`odd-one-out.json`** — the mechanical half of "the odd one out":
+sinks), `impact-paths.json` (paths to value-moving sinks, including arbitrary calls),
+`taint-paths.json` (bounded Solidity compiler-AST data-flow leads from external inputs, EVM
+environment values scoped to each external entry, and external-call return values (including nested
+expressions) through assignments, internal-call arguments and storage to sensitive call, native ETH,
+token transfer/pull, permit and other operation operands, plus writes to named privilege state) and
+**`odd-one-out.json`** — the mechanical half of
+"the odd one out":
+
+`taint-paths.json` is a reading queue, not a vulnerability detector. It does not establish branch
+conditions, modifier behavior, complete storage aliases, runtime reachability or transaction ordering;
+a persistent-state path may require more than one transaction. Follow every source span in the pinned
+checkout, check caller authority and the protected control, and leave the result as a lead until a
+native candidate/control proves the invariant violation and impact. External-call arguments are
+reported as boundaries; the trace does not continue through remote callee bodies or cross-contract
+state. Dynamic dispatch, assembly and external state can hide or distort flows. Lead order is for
+reading and does not estimate severity.
 
 - `guard-asymmetry`: a writer of a state variable that lacks a guard most other writers carry;
 - `paired-write-omission`: a function that updates one of two variables normally updated together;
@@ -404,6 +429,7 @@ python3 $S bundle --repo <checkout> --run <run> --lens attack --include <run>/de
 ```
 
 Bundles automatically carry the run's mechanical outputs when they exist — `impact-paths.json`,
+`taint-paths.json`,
 `odd-one-out.json`, the unexamined entry points from `function-coverage.json` — to the lenses that
 use them, with any truncation stated (`passes.md` lists which lens gets what). Credentials in bundled
 **Assembling a bundle and then reading it yourself is not a pass.** Independent contexts are the

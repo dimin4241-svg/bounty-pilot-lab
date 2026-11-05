@@ -88,8 +88,9 @@ questions (`hunt-agents/classic-agent.md`). The `config` group is `live-reality`
 check what is true of the deployment rather than the source. Add `--lens anchor-account` for a
 Solana program. Each bundle carries the SOP, the shared rules, that lens's procedure, the impact
 ladder, the precedent catalogue, the run context, all in-scope source, and — when the run has them —
-the mechanical outputs that lens uses: `impact-paths.json` for `impact-first` and `seam` (and every
-lens of the `high-impact` group when that group is bundled), `coverage-priority.json` and
+the mechanical outputs that lens uses: `impact-paths.json` and Solidity `taint-paths.json` for
+`impact-first` and `seam` (and every lens of the `high-impact` group when that group is bundled),
+`coverage-priority.json` and
 `state-graph.json` for `impact-first` and `seam` only, `odd-one-out.json` for `privileged-path`,
 `accounting`, `business-logic`, `classic` and `seam`, and the unexamined entry points of
 `function-coverage.json` for `coverage-gap`, `classic` and `seam`. The `classic` bundle also carries the

@@ -216,7 +216,7 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
             require_private_output(target, Path(top) if top else anchor, what='impact-plan --out')
     target.mkdir(parents=True, exist_ok=True)
     parsed = load_impact_helper('semantic_graph')
-    symbols, skipped_sources = [], []
+    symbols, skipped_sources, trees = [], [], []
     if solc:
         trees = parsed.load_solc(solc)
         skipped_sources = list(getattr(trees, 'skipped', []))
@@ -253,9 +253,11 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
         graph['scope_filter'] = prefixes
     paths = load_impact_helper('impact_paths').rank(graph)
     odd = load_impact_helper('odd_one_out').analyze(graph)
+    taint = load_impact_helper('taint_paths').analyze(trees, graph['symbols'], parsed)
     dump(target / 'semantic-graph.json', graph)
     dump(target / 'impact-paths.json', paths)
     dump(target / 'odd-one-out.json', odd)
+    dump(target / 'taint-paths.json', taint)
     by_id = {sym.get('id'): sym for sym in graph.get('symbols', [])}
     in_scope_sinks = 0
     for ranked in paths.get('ranked', []):
@@ -269,6 +271,8 @@ def impact_plan(repo=None, solc=None, out=None, scope=None):
             in_scope_sinks += 1
     result = {'graph': str(target / 'semantic-graph.json'),
               'impact_paths': str(target / 'impact-paths.json'),
+              'taint_paths': str(target / 'taint-paths.json'),
+              'taint_leads': taint.get('lead_count', 0),
               'symbols': len(graph['symbols']), 'paths': len(paths['ranked']),
               'scope_filter': list(scope) if scope else None,
               'symbols_dropped_by_scope': dropped,
@@ -4875,6 +4879,7 @@ RUN_BOOKKEEPING = {'run.json', 'findings.json', 'experiments.json', 'program.jso
                    # The run's own mechanical outputs: as evidence they show nothing either.
                    EXAMINED_FILE, READINGS_LEDGER, FUNCTION_COVERAGE_FILE,
                    ODD_ONE_OUT_REVIEW_FILE, 'semantic-graph.json', 'impact-paths.json',
+                   'taint-paths.json',
                    'odd-one-out.json', 'coverage-priority.json', 'state-graph.json',
                    'stack-route.json', 'delta.json'}
 RUN_BOOKKEEPING_DIRS = {'deployments', 'bundles'}
@@ -8483,13 +8488,23 @@ ANALYSIS_MAX_BYTES = 60_000
 # `seam` always, and - for impact-paths.json - every lens of the `high-impact` group when the run
 # bundles that group. The same privileged-path lens bundled under `attack` stays near its own size.
 ANALYSIS_STRUCTURE_LENSES = ('impact-first', 'seam')
-ANALYSIS_GROUP_LENSES = {'impact-paths.json': ('high-impact', HIGH_IMPACT_LENSES)}
+ANALYSIS_GROUP_LENSES = {'impact-paths.json': ('high-impact', HIGH_IMPACT_LENSES),
+                         'taint-paths.json': ('high-impact', HIGH_IMPACT_LENSES)}
 ANALYSIS_FILES = (
     ('impact-paths.json', ANALYSIS_STRUCTURE_LENSES,
      'Static source-to-sink paths ranked by impact_paths.py over a lexical/AST graph. An edge is '
      'not reachability and a rank is not severity. Use it as a reading order: start at the '
      'top-ranked sinks your lens applies to, and confirm every hop in the source before '
      'reporting anything.'),
+    ('taint-paths.json', ANALYSIS_STRUCTURE_LENSES,
+     'Bounded compiler-AST declaration-flow leads from external parameters, EVM environment values '
+     'scoped to their public entry, and external-call return values, including nested expressions, '
+     'to sensitive call targets/calldata, native ETH value/recipient, token transfer/pull, permit '
+     'and value-operation operands. '
+     'It also flags tainted writes to state names associated with privilege. This does not model '
+     'control flow, modifiers, full aliases or runtime authorization; paths through '
+     'persistent state may span transactions. Follow the source spans, check the exact caller and '
+     'transaction sequence, and keep every result an unverified lead.'),
     ('coverage-priority.json', ANALYSIS_STRUCTURE_LENSES,
      'Symbols nobody recorded as reviewed, ranked by lexical signals (coverage_graph.py). '
      'Priority is not vulnerability likelihood, and "reviewed" is self-reported. Spend this '

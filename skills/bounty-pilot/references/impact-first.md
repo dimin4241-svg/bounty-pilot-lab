@@ -9,16 +9,26 @@
    writers/readers, calls, externally reachable operations and the decisions
    where a wrong value would cause asset loss, insolvency, control takeover,
    message replay or unwithdrawable funds.
-3. Run `semantic_graph.py` then `impact_paths.py` on an explicit
-   compiler JSON (Solidity) or tracked Python checkout. A program's compiler
-   JSON, trusted for structural data **only**, should be from the exact
-   pinned revision. Rust remains on the existing heuristic graph plus
+3. Run `impact-plan` on an explicit compiler JSON (Solidity) or tracked Python
+   checkout. For Solidity it writes both `impact-paths.json` and
+   `taint-paths.json`; the latter traces declaration-level input flows into
+   sensitive call targets/calldata, native ETH recipients/amounts, token
+   transfers/pulls, permit and named value-operation operands. EVM environment
+   sources are scoped to each external entry and its syntactically reachable
+   internal functions. A
+   program's compiler JSON, trusted for structural data **only**, should be
+   from the exact pinned revision. Rust remains on the existing heuristic graph plus
    rust-analyzer/native test guidance. This release does **not** claim native
    Rust compiler IR support or a generic sound call graph.
-4. Run the `impact-first` lens independently. Work backwards from each
-   proposed sink until a *source-confirmed* entry with an unprivileged
-   capability reaches it. Distinguish a static call path from a sequence of
-   stateful transactions: a state-dependency edge only proposes a test.
+4. Run the `impact-first` lens independently. Read taint paths first as
+   candidate value flows, then work backwards from each proposed sink until a
+   *source-confirmed* entry with an unprivileged capability reaches it. Confirm
+   every assignment and call argument at its source span. The taint pass does
+   not model branches, modifiers, complete aliases or runtime authorization;
+   distinguish a static call path from a sequence of stateful transactions: a
+   persistent-state edge only proposes a test. External-call operands are
+   boundaries; the current pass does not traverse remote callee bodies or
+   cross-contract state. Its lead order is not a severity estimate.
 5. Author an explicit state-machine model for a strong lead, including real
    actors, guards, actions, failure/retry and invariants. Run
    `scenario_fuzz.py` within a finite state/depth budget and a separate

@@ -1,0 +1,659 @@
+#!/usr/bin/env python3
+"""Bounded compiler-AST data-flow leads from external inputs to sensitive operations.
+
+These paths are source-reading aids. They do not prove control flow, authorization,
+transaction ordering or exploitability; storage paths can span multiple transactions.
+"""
+from collections import defaultdict, deque
+from bisect import bisect_right
+
+MAX_FLOW_EDGES = 40_000
+MAX_LEADS = 500
+MAX_PATH_DEPTH = 12
+MAX_REVERSE_STEPS = 2_000
+ENV_SOURCE_NAMES = {"msg.sender", "tx.origin", "msg.value", "block.timestamp", "block.number"}
+SENSITIVE_STATE_TERMS = ("owner", "admin", "role", "implementation", "beacon", "guardian",
+                         "operator", "signer", "oracle", "treasury", "pauser", "minter",
+                         "upgrader", "authority", "validator", "fee")
+
+
+def _src_key(node):
+    return str(node.get("src") or "")
+
+
+def _line_for(line_starts, path, src):
+    """Best-effort line number from solc's byte offset when build-info includes source text."""
+    starts = line_starts.get(str(path))
+    if starts is None or not isinstance(src, str):
+        return None
+    try:
+        offset = int(src.split(":", 1)[0])
+    except ValueError:
+        return None
+    return bisect_right(starts, offset)
+
+
+def _external_return_key(node, declaration, active, semantic):
+    """Stable source key for a non-void call whose body is outside this AST model."""
+    if node.get("nodeType") != "FunctionCall":
+        return None
+    target = _callee_target(node, semantic)
+    expression = semantic._callee(node)
+    if target in active or node.get("kind") == "typeConversion":
+        return None
+    if expression.get("nodeType") == "Identifier" and semantic._builtin(expression):
+        return None
+    base = expression.get("expression") or {}
+    if (expression.get("nodeType") == "MemberAccess"
+            and base.get("nodeType") == "Identifier" and semantic._builtin(base)
+            and base.get("name") in ("abi", "bytes", "string")):
+        return None
+    type_string = str((node.get("typeDescriptions") or {}).get("typeString") or "")
+    if not type_string or type_string in ("tuple()", "void"):
+        return None
+    return "external-return:%d:%s" % (declaration, _src_key(node))
+
+
+def _variable_refs(expr, variable_ids, semantic, aliases=None, env_entries=None,
+                   function_declaration=None, active=None):
+    """Variable declarations and caller/environment values used by an expression."""
+    aliases = aliases or {}
+    refs = set()
+
+    def add_environment(token):
+        if not token:
+            return
+        if env_entries:
+            refs.update("env:%s:%s" % (entry, token) for entry in env_entries)
+        else:
+            refs.add("env:" + token)
+
+    for node in semantic.walk_json(expr or {}):
+        kind = node.get("nodeType")
+        if kind in ("Identifier", "MemberAccess"):
+            ident = node.get("referencedDeclaration")
+            if ident in variable_ids:
+                refs.add(aliases.get(ident, ident))
+        token = semantic._env_token(node)
+        if token in ENV_SOURCE_NAMES:
+            add_environment(token)
+        if kind == "FunctionCall" and semantic._sender_call(node):
+            add_environment("msg.sender")
+        if function_declaration is not None and active is not None:
+            external_return = _external_return_key(node, function_declaration,
+                                                    active, semantic)
+            if external_return:
+                refs.add(external_return)
+    return refs
+
+
+def _lhs_targets(expr, variable_ids, semantic, aliases=None):
+    """Storage/local values written by an l-value; mapping keys are not destinations."""
+    aliases = aliases or {}
+    if not isinstance(expr, dict):
+        return set()
+    kind = expr.get("nodeType")
+    if kind == "TupleExpression":
+        result = set()
+        for child in expr.get("components") or []:
+            result |= _lhs_targets(child, variable_ids, semantic, aliases)
+        return result
+    if kind == "IndexAccess":
+        return _lhs_targets(expr.get("baseExpression"), variable_ids, semantic, aliases)
+    result = set()
+    if kind in ("Identifier", "MemberAccess"):
+        ident = expr.get("referencedDeclaration")
+        if ident in variable_ids:
+            result.add(aliases.get(ident, ident))
+    if kind == "MemberAccess":
+        result |= _lhs_targets(expr.get("expression"), variable_ids, semantic, aliases)
+    return result
+
+
+def _lhs_groups(expr, variable_ids, semantic, aliases=None):
+    if isinstance(expr, dict) and expr.get("nodeType") == "TupleExpression":
+        return [_lhs_targets(child, variable_ids, semantic, aliases)
+                for child in expr.get("components") or []]
+    return [_lhs_targets(expr, variable_ids, semantic, aliases)]
+
+
+def _callee_target(call, semantic):
+    expression = semantic._callee(call)
+    return expression.get("referencedDeclaration")
+
+
+def _function_label(symbols_by_decl, declaration, fallback):
+    rows = symbols_by_decl.get(declaration) or []
+    return str(rows[0].get("name") or fallback) if rows else fallback
+
+
+def _sink_operands(call, semantic, params, state_info, libraries):
+    """Sensitive values at a compiler-resolved sink, as (label, expression) pairs."""
+    expression = semantic._callee(call)
+    args = [a for a in call.get("arguments") or [] if isinstance(a, dict)]
+    detail = semantic._call_sink(call, params, state_info, libraries)
+    if detail:
+        kind = detail.get("kind")
+        if kind == "selfdestruct":
+            return [("beneficiary", args[0])] if args else []
+        if kind in ("low-level-call", "delegatecall", "callcode",
+                    "address-functioncall", "address-functiondelegatecall"):
+            base = expression.get("expression") or {}
+            library = semantic._library_style(base, libraries)
+            target = args[0] if library and args else base
+            data = args[1:] if library else args[:1]
+            result = [("target", target)] if isinstance(target, dict) else []
+            result.extend(("calldata[%d]" % index, arg) for index, arg in enumerate(data))
+            # solc wraps `addr.call{value: amount}` in FunctionCallOptions. The normal
+            # callee helper unwraps that node, so read the option from the original call.
+            option_node = call.get("expression") or {}
+            while option_node.get("nodeType") == "FunctionCallOptions":
+                names = option_node.get("names") or []
+                values = option_node.get("options") or []
+                result.extend(("native-value", value) for name, value in zip(names, values)
+                              if name == "value" and isinstance(value, dict))
+                option_node = option_node.get("expression") or {}
+            if (library and expression.get("memberName") == "functionCallWithValue"
+                    and len(args) > 2):
+                result.append(("native-value", args[2]))
+            return result
+        if kind == "token-pull":
+            base = expression.get("expression") or {}
+            offset = 1 if semantic._library_style(base, libraries) else 0
+            labels = ("from", "to", "amount", "data")
+            token = args[0] if offset and args else base
+            result = [("token", token)] if isinstance(token, dict) else []
+            result.extend((labels[index] if index < len(labels) else "argument[%d]" % index, arg)
+                          for index, arg in enumerate(args[offset:]))
+            return result
+        if kind == "permit":
+            base = expression.get("expression") or {}
+            offset = 1 if semantic._library_style(base, libraries) else 0
+            token = args[0] if offset and args else base
+            result = [("token", token)] if isinstance(token, dict) else []
+            result.extend(("permit-argument[%d]" % index, arg)
+                          for index, arg in enumerate(args[offset:]))
+            return result
+
+    # Native ETH sends expose both the recipient (the member-call base) and amount.
+    # `transfer` is also an ERC-20 method, so classify it by the compiler's base type.
+    if expression.get("nodeType") == "MemberAccess":
+        member = expression.get("memberName")
+        base = expression.get("expression") or {}
+        base_type = str((base.get("typeDescriptions") or {}).get("typeString") or "")
+        if member == "send" or (member == "transfer" and base_type.startswith("address")):
+            result = [("recipient", base)] if isinstance(base, dict) else []
+            if args:
+                result.append(("amount", args[0]))
+            return result
+        if member in ("transfer", "safeTransfer"):
+            library = semantic._library_style(base, libraries)
+            offset = 1 if library else 0
+            token = args[0] if offset and args else base
+            labels = ("to", "amount", "data")
+            result = [("token", token)] if isinstance(token, dict) else []
+            result.extend((labels[index] if index < len(labels) else "argument[%d]" % index, arg)
+                          for index, arg in enumerate(args[offset:]))
+            return result
+
+    # Existing impact families cover many named operations (withdraw, claim, upgrade, etc.).
+    # Keep those as argument leads too, while the name is only a sink classifier.
+    name = (expression.get("name") or expression.get("memberName") or "")
+    normalized = str(name).lower().replace("_", "")
+    terms = {term.replace("_", "") for values in semantic.SINK_TERMS.values() for term in values}
+    if any(term in normalized for term in terms):
+        return [("argument[%d]" % index, arg) for index, arg in enumerate(args)]
+    return []
+
+
+def _entry_symbols(symbols):
+    """Compiler function declarations that can be reached as deployed public entries."""
+    result = defaultdict(list)
+    for symbol in symbols:
+        declaration = symbol.get("declaration")
+        if (symbol.get("language") != "solidity" or not isinstance(declaration, int)
+                or not symbol.get("entry")):
+            continue
+        if symbol.get("scope_role") == "dependency" and not symbol.get("inherits"):
+            continue
+        if symbol.get("contract_deployable") or symbol.get("inherits"):
+            result[declaration].append(symbol)
+    return result
+
+
+def analyze(trees, symbols, semantic):
+    """Trace bounded declaration-to-declaration flows in Solidity compiler ASTs."""
+    contents = getattr(trees, "contents", {})
+    line_starts = {}
+    for path, content in contents.items():
+        encoded = content.encode("utf-8")
+        starts, cursor = [0], 0
+        while True:
+            newline = encoded.find(b"\n", cursor)
+            if newline < 0:
+                break
+            starts.append(newline + 1)
+            cursor = newline + 1
+        line_starts[str(path)] = starts
+    function_nodes, function_paths, variable_info = {}, {}, {}
+    state_ids, state_info, libraries = set(), {}, set()
+    for path, tree in trees or []:
+        for node in semantic.walk_json(tree):
+            kind = node.get("nodeType")
+            if kind == "ContractDefinition" and node.get("contractKind") == "library":
+                if isinstance(node.get("id"), int):
+                    libraries.add(node["id"])
+            if kind == "VariableDeclaration" and isinstance(node.get("id"), int):
+                ident = node["id"]
+                variable_info[ident] = {"name": str(node.get("name") or "value_%d" % ident),
+                                        "path": str(path),
+                                        "state": bool(node.get("stateVariable")),
+                                        "src": node.get("src")}
+                if node.get("stateVariable"):
+                    state_ids.add(ident)
+                    mutability = node.get("mutability") or (
+                        "constant" if node.get("constant") else "mutable")
+                    state_info[ident] = (mutability if mutability in ("constant", "immutable")
+                                         else "state")
+            if kind == "FunctionDefinition" and isinstance(node.get("id"), int):
+                declaration = node["id"]
+                if node.get("implemented", True) and isinstance(node.get("body"), dict):
+                    function_nodes[declaration] = node
+                    function_paths[declaration] = str(path)
+
+    symbols_by_decl = defaultdict(list)
+    for symbol in symbols or []:
+        declaration = symbol.get("declaration")
+        if symbol.get("language") == "solidity" and isinstance(declaration, int):
+            symbols_by_decl[declaration].append(symbol)
+    for rows in symbols_by_decl.values():
+        rows.sort(key=lambda row: not bool(row.get("contract_deployable")))
+    active = set(function_nodes) & set(symbols_by_decl)
+    entries = {ident: rows for ident, rows in _entry_symbols(symbols).items() if ident in active}
+    if not active:
+        return {"schema": 1, "method": "compiler-ast-declaration-flow", "status": "no-solidity-ast",
+                "source_count": 0, "sink_count": 0, "lead_count": 0, "leads": [],
+                "truncated": False,
+                "notice": "No Solidity compiler AST functions were available; no taint analysis was run."}
+
+    # Compiler declaration IDs are unique within the build-info output.
+    variable_ids = set(variable_info)
+    aliases = {}
+    for declaration, function in function_nodes.items():
+        if declaration not in active:
+            continue
+        for node in semantic.walk_json(function.get("body") or {}):
+            if node.get("nodeType") != "VariableDeclarationStatement":
+                continue
+            value = node.get("initialValue") or {}
+            for local in node.get("declarations") or []:
+                if not isinstance(local, dict) or local.get("storageLocation") != "storage":
+                    continue
+                local_id = local.get("id")
+                if not isinstance(local_id, int):
+                    continue
+                roots = _variable_refs(value, variable_ids, semantic, aliases) & state_ids
+                if roots:
+                    aliases[local_id] = sorted(roots)[0]
+
+    # Reachability is only a syntactic call-reference closure. It limits environmental sources;
+    # it does not assert that runtime control flow or modifiers permit the call.
+    calls_by_function = defaultdict(set)
+    calls = {}
+    for declaration in active:
+        function = function_nodes[declaration]
+        for node in semantic.walk_json(function.get("body") or {}):
+            if node.get("nodeType") != "FunctionCall":
+                continue
+            target = _callee_target(node, semantic)
+            if target in active:
+                calls_by_function[declaration].add(target)
+                calls[(declaration, _src_key(node))] = node
+    reachable_entries = defaultdict(set)
+    queue = deque()
+    for declaration in entries:
+        reachable_entries[declaration].add(declaration)
+        queue.append(declaration)
+    while queue:
+        caller = queue.popleft()
+        for callee in calls_by_function.get(caller, ()):
+            added = reachable_entries[callee] | reachable_entries[caller]
+            if added != reachable_entries[callee]:
+                reachable_entries[callee] = added
+                queue.append(callee)
+    reachable = set(reachable_entries)
+
+    # Seed public parameters and environment values at entry/reachable functions.
+    seeds = defaultdict(list)
+    seed_labels = {}
+    for declaration, rows in entries.items():
+        function = function_nodes[declaration]
+        params = ((function.get("parameters") or {}).get("parameters") or [])
+        for index, param in enumerate(params):
+            ident = param.get("id") if isinstance(param, dict) else None
+            if ident not in variable_ids:
+                continue
+            label = {"kind": "external-parameter", "function": _function_label(
+                        symbols_by_decl, declaration, str(function.get("name") or "function")),
+                     "parameter": str(param.get("name") or "arg_%d" % index),
+                     "path": function_paths[declaration], "src": param.get("src"),
+                     "line": _line_for(line_starts, function_paths[declaration], param.get("src")),
+                     "entry": True}
+            seeds[ident].append(label)
+            seed_labels[ident] = variable_info.get(ident, {}).get("name", label["parameter"])
+
+    for declaration in reachable:
+        function = function_nodes[declaration]
+        for node in semantic.walk_json(function.get("body") or {}):
+            token = semantic._env_token(node)
+            if token not in ENV_SOURCE_NAMES:
+                if node.get("nodeType") == "FunctionCall" and semantic._sender_call(node):
+                    token = "msg.sender"
+                else:
+                    continue
+            entry_declarations = sorted(reachable_entries[declaration])
+            entry_names = sorted({str(row.get("name")) for entry in reachable_entries[declaration]
+                                  for row in entries.get(entry, [])})
+            for entry in entry_declarations:
+                key = "env:%s:%s" % (entry, token)
+                label = {"kind": token, "function": _function_label(
+                            symbols_by_decl, declaration,
+                            str(function.get("name") or "function")),
+                         "entry": _function_label(symbols_by_decl, entry, str(entry)),
+                         "path": function_paths[declaration], "src": node.get("src"),
+                         "line": _line_for(line_starts, function_paths[declaration],
+                                           node.get("src")),
+                         "reachable_entries": entry_names[:5]}
+                # Environment values are shared only across functions reachable from the
+                # same external entry. A msg.sender read in one public method must not become
+                # an apparent source for a different method (or another transaction).
+                seeds[key].append(label)
+                seed_labels[key] = token
+
+    incoming = defaultdict(list)
+    edge_count = 0
+    graph_truncated = False
+
+    def add_flow(source, target, kind, declaration, node):
+        nonlocal edge_count, graph_truncated
+        if source is None or target is None or source == target:
+            return
+        if edge_count >= MAX_FLOW_EDGES:
+            graph_truncated = True
+            return
+        function = function_nodes[declaration]
+        edge = {"from": source, "to": target, "kind": kind,
+                "function": _function_label(symbols_by_decl, declaration,
+                                            str(function.get("name") or "function")),
+                "path": function_paths[declaration], "src": node.get("src"),
+                "line": _line_for(line_starts, function_paths[declaration], node.get("src"))}
+        incoming[target].append(edge)
+        edge_count += 1
+
+    sinks = []
+    for declaration in sorted(reachable):
+        function = function_nodes[declaration]
+        params = {p.get("id") for p in ((function.get("parameters") or {}).get("parameters") or [])
+                  if isinstance(p, dict)}
+        body = function.get("body") or {}
+        return_params = ((function.get("returnParameters") or {}).get("parameters") or [])
+
+        for node in semantic.walk_json(body):
+            kind = node.get("nodeType")
+            if kind == "VariableDeclarationStatement":
+                targets = [({aliases.get(d.get("id"), d.get("id"))}
+                            if isinstance(d, dict) and d.get("id") in variable_ids else set())
+                           for d in node.get("declarations") or []]
+                value = node.get("initialValue") or {}
+                sources = _variable_refs(value, variable_ids, semantic, aliases,
+                                         reachable_entries[declaration], declaration, active)
+                for target_set in targets:
+                    for source in sources:
+                        for target in target_set:
+                            add_flow(source, target,
+                                     "persistent-state-write" if target in state_ids else "assignment",
+                                     declaration, node)
+                if value.get("nodeType") == "FunctionCall":
+                    callee = _callee_target(value, semantic)
+                    callee_node = function_nodes.get(callee)
+                    returns = ((callee_node.get("returnParameters") or {}).get("parameters") or []) \
+                        if callee_node else []
+                    for index, target_set in enumerate(targets):
+                        if index < len(returns):
+                            ret_id = returns[index].get("id")
+                            for target in target_set:
+                                add_flow(ret_id, target, "call-return", declaration, node)
+
+            elif kind == "Assignment":
+                targets = _lhs_targets(node.get("leftHandSide"), variable_ids, semantic, aliases)
+                target_groups = _lhs_groups(node.get("leftHandSide"), variable_ids,
+                                            semantic, aliases)
+                sources = _variable_refs(node.get("rightHandSide"), variable_ids, semantic, aliases,
+                                         reachable_entries[declaration], declaration, active)
+                if node.get("operator") != "=":
+                    sources |= _variable_refs(node.get("leftHandSide"), variable_ids,
+                                              semantic, aliases,
+                                              reachable_entries[declaration], declaration, active)
+                for source in sources:
+                    for target in targets:
+                        add_flow(source, target,
+                                 "persistent-state-write" if target in state_ids else "assignment",
+                                 declaration, node)
+                for target in targets & state_ids:
+                    state_name = variable_info.get(target, {}).get("name", "").lower().replace("_", "")
+                    if sources and any(term in state_name for term in SENSITIVE_STATE_TERMS):
+                        sinks.append({"function_id": declaration,
+                                      "function": _function_label(symbols_by_decl, declaration,
+                                          str(function.get("name") or "function")),
+                                      "path": function_paths[declaration],
+                                      "kind": "sensitive-state-write",
+                                      "member": variable_info.get(target, {}).get("name", "state"),
+                                      "operand": "write:%s" % variable_info.get(target, {}).get("name", "state"),
+                                      "src": node.get("src"),
+                                      "line": _line_for(line_starts, function_paths[declaration],
+                                                        node.get("src")),
+                                      "references": [target],
+                                      "reachable_entries": sorted({str(row.get("name"))
+                                          for entry in reachable_entries[declaration]
+                                          for row in entries.get(entry, [])})[:5]})
+                value = node.get("rightHandSide") or {}
+                if value.get("nodeType") == "FunctionCall":
+                    callee = _callee_target(value, semantic)
+                    callee_node = function_nodes.get(callee)
+                    returns = ((callee_node.get("returnParameters") or {}).get("parameters") or []) \
+                        if callee_node else []
+                    for index, ret in enumerate(returns):
+                        if index >= len(target_groups):
+                            break
+                        ret_id = ret.get("id")
+                        for target in target_groups[index]:
+                            add_flow(ret_id, target, "call-return", declaration, node)
+
+            elif kind == "Return":
+                values = node.get("expression") or {}
+                value_groups = ([component for component in values.get("components") or []]
+                                if values.get("nodeType") == "TupleExpression" else [values])
+                for index, ret in enumerate(return_params):
+                    if index >= len(value_groups):
+                        break
+                    ret_id = ret.get("id") if isinstance(ret, dict) else None
+                    if ret_id in variable_ids:
+                        sources = _variable_refs(value_groups[index], variable_ids,
+                                                 semantic, aliases,
+                                                 reachable_entries[declaration], declaration,
+                                                 active)
+                        for source in sources:
+                            add_flow(source, ret_id, "return", declaration, node)
+
+            elif kind == "FunctionCall":
+                for operand, expr in _sink_operands(node, semantic, params, state_info, libraries):
+                    refs = _variable_refs(expr, variable_ids, semantic, aliases,
+                                          reachable_entries[declaration], declaration, active)
+                    if refs:
+                        expression = semantic._callee(node)
+                        call_detail = semantic._call_sink(node, params, state_info, libraries)
+                        member = semantic._callee(node).get("memberName")
+                        base = (semantic._callee(node).get("expression") or {})
+                        base_type = str((base.get("typeDescriptions") or {}).get("typeString") or "")
+                        sink_kind = ((call_detail or {}).get("kind")
+                                     or ("native-transfer" if member == "send" or
+                                         (member == "transfer" and
+                                          base_type.startswith("address")) else
+                                         "token-transfer" if member in
+                                         ("transfer", "safeTransfer") else "value-operation"))
+                        sinks.append({"function_id": declaration,
+                                      "function": _function_label(symbols_by_decl, declaration,
+                                          str(function.get("name") or "function")),
+                                      "path": function_paths[declaration],
+                                      "kind": sink_kind,
+                                      "member": str(expression.get("memberName")
+                                                    or expression.get("name") or "call"),
+                                      "operand": operand, "src": node.get("src"),
+                                      "line": _line_for(line_starts, function_paths[declaration],
+                                                        node.get("src")),
+                                      "references": sorted(refs, key=str),
+                                      "reachable_entries": sorted({str(row.get("name"))
+                                          for entry in reachable_entries[declaration]
+                                          for row in entries.get(entry, [])})[:5]})
+
+    # Link internal-call parameters after all bodies are indexed; these edges preserve the
+    # call-site source span, so the reader can check the argument mapping in context.
+    for (caller, _), call in calls.items():
+        if caller not in reachable:
+            continue
+        callee = _callee_target(call, semantic)
+        if callee not in reachable:
+            continue
+        target_params = ((function_nodes[callee].get("parameters") or {}).get("parameters") or [])
+        for index, argument in enumerate(call.get("arguments") or []):
+            if index >= len(target_params) or not isinstance(argument, dict):
+                continue
+            target = target_params[index].get("id")
+            for source in _variable_refs(argument, variable_ids, semantic, aliases,
+                                         reachable_entries[caller], caller, active):
+                add_flow(source, target, "call-argument", caller, call)
+
+    # External return values are an independent trust boundary, including when nested directly
+    # inside an expression or passed to a sensitive operation without a temporary variable.
+    for declaration in sorted(reachable):
+        function = function_nodes[declaration]
+        for node in semantic.walk_json(function.get("body") or {}):
+            key = _external_return_key(node, declaration, active, semantic)
+            if not key:
+                continue
+            expression = semantic._callee(node)
+            seeds[key].append({"kind": "external-return", "function": _function_label(
+                symbols_by_decl, declaration, str(function.get("name") or "function")),
+                "path": function_paths[declaration], "src": node.get("src"),
+                "line": _line_for(line_starts, function_paths[declaration], node.get("src")),
+                "callee": str(semantic._callee(node).get("memberName")
+                              or semantic._callee(node).get("name") or "external call")})
+            seed_labels[key] = "external return value"
+
+    sink_rank = {"delegatecall": 0, "low-level-call": 0, "callcode": 0,
+                 "address-functioncall": 0, "address-functiondelegatecall": 0,
+                 "assembly-delegatecall": 0, "native-transfer": 0,
+                 "selfdestruct": 1, "token-pull": 1, "permit": 1,
+                 "token-transfer": 1, "sensitive-state-write": 1, "value-operation": 2}
+    sinks.sort(key=lambda row: (sink_rank.get(row["kind"], 2), row["path"],
+                                str(row["src"] or ""), row["operand"]))
+    leads = []
+    lead_keys = set()
+    sink_count = len(sinks)
+    for sink in sinks:
+        for destination in sink["references"]:
+            queue = deque([(destination, [])])
+            visited = {destination}
+            steps = 0
+            while queue:
+                current, reversed_path = queue.popleft()
+                steps += 1
+                if steps > MAX_REVERSE_STEPS:
+                    graph_truncated = True
+                    break
+                if current in seeds:
+                    for source in seeds[current]:
+                        key = (source.get("kind"), source.get("function"), source.get("src"),
+                               source.get("entry"),
+                               sink["function_id"], sink["src"], sink["operand"])
+                        if key in lead_keys:
+                            continue
+                        lead_keys.add(key)
+                        path = list(reversed(reversed_path))
+                        leads.append({
+                            "source": dict(source, value=seed_labels.get(current,
+                                                       variable_info.get(current, {}).get("name", "value"))),
+                            "sink": {key: sink[key] for key in (
+                                "function", "path", "kind", "member", "operand", "src",
+                                "line", "reachable_entries")},
+                            "flow": [{"from": _value_label(edge["from"], variable_info, seed_labels),
+                                      "to": _value_label(edge["to"], variable_info, seed_labels),
+                                      "kind": edge["kind"], "function": edge["function"],
+                                      "path": edge["path"], "src": edge["src"],
+                                      "line": edge["line"]}
+                                     for edge in path],
+                            "crosses_persistent_state": any(
+                                edge["kind"] == "persistent-state-write" for edge in path),
+                            "confidence": "static-taint-lead",
+                            "review": ["confirm each assignment/call argument at its source span",
+                                       "check guards, reachability, ordering and the protected control",
+                                       "prove a violated invariant and third-party impact"]})
+                        if len(leads) >= MAX_LEADS:
+                            graph_truncated = True
+                            break
+                    if len(leads) >= MAX_LEADS:
+                        break
+                    continue
+                if len(reversed_path) >= MAX_PATH_DEPTH:
+                    continue
+                for edge in incoming.get(current, ()):
+                    previous = edge["from"]
+                    if previous in visited:
+                        continue
+                    visited.add(previous)
+                    queue.append((previous, reversed_path + [edge]))
+                if len(queue) > MAX_REVERSE_STEPS:
+                    graph_truncated = True
+                    break
+            if len(leads) >= MAX_LEADS:
+                break
+        if len(leads) >= MAX_LEADS:
+            break
+
+    leads.sort(key=_lead_order)
+    return {"schema": 1, "method": "compiler-ast-declaration-flow",
+            "status": "analyzed", "source_count": len(seeds), "sink_count": sink_count,
+            "flow_edge_count": edge_count, "lead_count": len(leads), "leads": leads,
+            "truncated": graph_truncated,
+            "limits": {"flow_edges": MAX_FLOW_EDGES, "leads": MAX_LEADS,
+                       "path_depth": MAX_PATH_DEPTH},
+            "notice": "Static declaration-level flow hints only. No control-flow, modifier, "
+                      "alias-completeness, arithmetic-safety, runtime reachability or exploit "
+                      "claim is established. Rows are ordered for reading, not severity. "
+                      "Persistent-state paths may require multiple transactions. External-call "
+                      "operands are reported as boundaries; remote callee bodies and cross-contract "
+                      "state are not traversed. Dynamic dispatch, assembly, external state and "
+                      "unsupported compiler output can hide or distort paths; confirm every hop in source."}
+
+
+def _value_label(value, variable_info, seed_labels):
+    if value in variable_info:
+        info = variable_info[value]
+        return ("state:" if info["state"] else "value:") + info["name"]
+    return seed_labels.get(value, str(value))
+
+
+def _lead_order(row):
+    sink_rank = {"delegatecall": 0, "low-level-call": 0, "callcode": 0,
+                 "address-functioncall": 0, "address-functiondelegatecall": 0,
+                 "assembly-delegatecall": 0, "native-transfer": 0,
+                 "selfdestruct": 1, "token-pull": 1, "permit": 1,
+                 "token-transfer": 1, "sensitive-state-write": 1, "value-operation": 2}
+    source_rank = {"external-parameter": 0, "msg.sender": 1, "tx.origin": 1,
+                   "msg.value": 1, "external-return": 2,
+                   "block.timestamp": 3, "block.number": 3}
+    source = row["source"]
+    sink = row["sink"]
+    return (sink_rank.get(sink["kind"], 2), row["crosses_persistent_state"],
+            source_rank.get(source["kind"], 4), len(row["flow"]), sink["path"],
+            sink["line"] or 0, source.get("path", ""), source.get("line") or 0)

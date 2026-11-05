@@ -127,7 +127,7 @@ def run(manifest, repo, max_variants=12, rounds=2, execute=False,
         raise ValueError("rounds must be 2 or 3")
     status = _validate(manifest, root)
     if execute and not (isolation_attested and no_network_attested):
-        raise ValueError("execution requires independently enforced isolated, network-blocked environment attestation")
+        raise ValueError("execution requires an attestation of independently enforced isolation and blocked network access")
     if execute and status != "clean" and not allow_dirty_poc:
         raise ValueError("executing in a dirty checkout requires explicit allow_dirty_poc and source review")
     pending = list(manifest["variants"])
