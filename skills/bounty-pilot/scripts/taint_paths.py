@@ -468,7 +468,12 @@ def analyze(trees, symbols, semantic, scope=None):
     def _gating(declaration):
         reached = sorted(set(reachable_entries[declaration]) & set(entry_guards))
         names = sorted({name for entry in reached for name in entry_guards[entry]})
-        return (bool(reached) and all(entry_guards[entry] for entry in reached), names[:5])
+        # The count matters because the names alone mislead: `FundsBase.transferFundsOut:556`
+        # reports hasRole, onlyOwner, onlyProtocol and onlyRole(FEE_COLLECTOR) while
+        # `entries_all_gated` is false, because one of the entries reaching it carries none of
+        # them. A reader skimming the names sees an admin-only row that is not one.
+        open_entries = sum(1 for entry in reached if not entry_guards[entry])
+        return (bool(reached) and not open_entries, names[:5], open_entries)
 
     incoming = defaultdict(list)
     edge_count = 0
@@ -551,6 +556,7 @@ def analyze(trees, symbols, semantic, scope=None):
                                       "kind": "sensitive-state-write",
                                       "entries_all_gated": _gating(declaration)[0],
                                       "entry_auth_modifiers": _gating(declaration)[1],
+                                      "entries_without_access_check": _gating(declaration)[2],
                                       "member": variable_info.get(target, {}).get("name", "state"),
                                       "operand": "write:%s" % variable_info.get(target, {}).get("name", "state"),
                                       "src": node.get("src"),
@@ -612,6 +618,7 @@ def analyze(trees, symbols, semantic, scope=None):
                                       "kind": sink_kind,
                                       "entries_all_gated": _gating(declaration)[0],
                                       "entry_auth_modifiers": _gating(declaration)[1],
+                                      "entries_without_access_check": _gating(declaration)[2],
                                       "member": str(expression.get("memberName")
                                                     or expression.get("name") or "call"),
                                       "operand": operand, "src": node.get("src"),
@@ -718,7 +725,8 @@ def analyze(trees, symbols, semantic, scope=None):
                             "sink": {name: sink[name] for name in (
                                 "function", "path", "kind", "member", "operand", "src",
                                 "line", "scope_role", "test_path", "entries_all_gated",
-                                "entry_auth_modifiers", "reachable_entries")},
+                                "entry_auth_modifiers", "entries_without_access_check",
+                                "reachable_entries")},
                             "flow": [{"from": _value_label(edge["from"], variable_info, seed_labels),
                                       "to": _value_label(edge["to"], variable_info, seed_labels),
                                       "kind": edge["kind"], "function": edge["function"],
@@ -809,6 +817,10 @@ def analyze(trees, symbols, semantic, scope=None):
                       "modifier that reads like an access check is read after the ungated ones "
                       "and counted (`sink.entries_all_gated`, `sink.entry_auth_modifiers`, "
                       "`sinks_behind_an_access_modifier`, `leads_behind_an_access_modifier`). "
+                      "`entry_auth_modifiers` lists what the gated entries carry even when the "
+                      "sink is not gated, so read it beside `entries_without_access_check`: a "
+                      "non-zero count is how many public entries reach that sink carrying none "
+                      "of those modifiers. "
                       "The gate changes the reading order only: it never decides which rows are "
                       "written. Both flags are cues - read the gate at its source span, and note "
                       "that one ungated entry added later un-gates the sink."}
