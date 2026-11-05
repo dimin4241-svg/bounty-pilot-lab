@@ -24,6 +24,11 @@ GUARD_MIN_CARRIERS = 2
 PAIR_MIN_COWRITERS = 2
 PAIR_MIN_RATIO = 2.0 / 3.0
 MAX_LEADS_PER_KIND = 400
+# The same cues as bounty._is_test_path and taint_paths._is_test_path. A mock inside the
+# declared scope is real surface and is kept, but it is not the code under test: on Obol
+# obol-splits with `--scope src/`, 10 of 21 leads were MockNFT and MockERC1155.
+TEST_SEGMENTS = ("test", "tests", "spec", "mock", "mocks", "fixture", "fixtures",
+                 "testing", "__tests__")
 # Name-paired operations that should mirror each other's checks and accounting.
 SIBLING_VERBS = (
     ("deposit", "withdraw"), ("deposit", "redeem"), ("mint", "burn"), ("mint", "redeem"),
@@ -52,6 +57,14 @@ NOTICE = ("Heuristic over the compiler AST: each row is a lead to read, not a fi
           "functions included; a lead on an inherited vendored function says so in "
           "function_inherited_from. Confirm reachability, the deployed revision and real loss "
           "before any severity.")
+
+
+def _is_test_path(path):
+    lowered = str(path or "").replace("\\", "/").lower()
+    parts = [segment for segment in lowered.split("/") if segment]
+    name = parts[-1] if parts else ""
+    return (any(segment in TEST_SEGMENTS for segment in parts[:-1])
+            or "mock" in name or name.endswith((".t.sol", "test.sol", "tests.sol")))
 
 
 def _short(sym):
@@ -428,8 +441,12 @@ def analyze(graph):
              "unguarded-hook": unguarded_hooks(symbols)}
     leads, truncated = [], {}
     for kind, rows in found.items():
-        # Leads on inherited vendored code last: they are real surface, but rarely the bug.
-        rows.sort(key=lambda r: (r["_vendored"], -r["_strength"], str(r["path"]), r["id"]))
+        for row in rows:
+            row["test_path"] = _is_test_path(row.get("path"))
+        # Tests and mocks last, then leads on inherited vendored code: both are real surface,
+        # and neither is usually the bug.
+        rows.sort(key=lambda r: (r["test_path"], r["_vendored"], -r["_strength"],
+                                 str(r["path"]), r["id"]))
         truncated[kind] = len(rows) > MAX_LEADS_PER_KIND
         for row in rows[:MAX_LEADS_PER_KIND]:
             row.pop("_strength", None)
@@ -438,6 +455,9 @@ def analyze(graph):
     result = {"schema": 1, "method": "odd-one-out-heuristic",
               "counts": {kind: min(len(rows), MAX_LEADS_PER_KIND) for kind, rows in found.items()},
               "found": {kind: len(rows) for kind, rows in found.items()},
+              "leads_in_test_paths": sum(1 for kind, rows in found.items()
+                                         for row in rows[:MAX_LEADS_PER_KIND]
+                                         if row.get("test_path")),
               "truncated": truncated,
               "thresholds": {"guard_min_carriers": GUARD_MIN_CARRIERS,
                              "guard_carriers": "strict majority of the other writers",
