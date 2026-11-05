@@ -550,5 +550,102 @@ class LeadOrderTotalityTests(unittest.TestCase):
         self.assertEqual(len(set(keys)), len(keys))
 
 
+def gated_and_open_fixture():
+    """The same arbitrary call three times: behind `onlyOwner`, behind nothing, behind a lock.
+
+    `Admin` sorts before `Open` by path, so the sink enumeration reaches the gated contract
+    first - which is what makes the representation test below meaningful.
+    """
+    a = Ast()
+
+    def forward(func_id, name, target_id, data_id, modifiers=()):
+        return a.func(func_id, name, [a.stmt(a.call(
+            a.member(a.ident("target", target_id), "call"), a.ident("data", data_id)))],
+            modifiers=list(modifiers),
+            params=[typed(spanned(a.param(target_id, "target")), "address"),
+                    typed(spanned(a.param(data_id, "data")), "bytes calldata")])
+
+    admin = Ast.contract(920, "Admin", [
+        forward(921, "adminForward", 922, 923, modifiers=[a.mod("onlyOwner", 51)])])
+    open_router = Ast.contract(930, "Open", [
+        forward(931, "openForward", 932, 933),
+        forward(941, "lockedForward", 942, 943, modifiers=[a.mod("nonReentrant", 52)])])
+    return {"output": {"sources": {
+        "src/Admin.sol": {"ast": Ast.unit(admin), "content": "contract Admin {\n" * 60},
+        "src/Open.sol": {"ast": Ast.unit(open_router),
+                         "content": "contract Open {\n" * 60}}}}
+
+
+class ModifierGateRankingTests(unittest.TestCase):
+    """An entry the deployment already restricts is read after the ones it does not.
+
+    Row one of two real queues was a modifier-gated call - `ObolValidatorManager.consolidate`
+    (`onlyOwnerOrRoles`) on Obol obol-splits, where 63 of 151 rows sat on a function carrying a
+    modifier, and `OUSDaiUtility.rescueETH` (`onlyAdmin`) on USDai. The gate is a cue, so the
+    row is read later and never dropped.
+    """
+
+    def analyze(self, **limits):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        solc = Path(temp.name) / "build-info.json"
+        solc.write_text(json.dumps(gated_and_open_fixture()), encoding="utf-8")
+        trees = semantic.load_solc(solc)
+        previous = {name: getattr(taint_paths, name) for name in limits}
+        for name, value in limits.items():
+            setattr(taint_paths, name, value)
+        try:
+            return taint_paths.analyze(trees, semantic.solidity_symbols(trees), semantic,
+                                       scope=["src/"])
+        finally:
+            for name, value in previous.items():
+                setattr(taint_paths, name, value)
+
+    def setUp(self):
+        self.result = self.analyze()
+        self.by_function = {}
+        for lead in self.result["leads"]:
+            self.by_function.setdefault(lead["sink"]["function"], lead)
+
+    def test_an_ungated_entry_is_read_before_a_gated_one(self):
+        order = [lead["sink"]["function"] for lead in self.result["leads"]]
+        self.assertLess(order.index("Open.openForward"), order.index("Admin.adminForward"))
+
+    def test_the_gate_is_named_on_the_row(self):
+        gated = self.by_function["Admin.adminForward"]["sink"]
+        self.assertTrue(gated["entries_all_gated"])
+        self.assertEqual(gated["entry_auth_modifiers"], ["onlyOwner"])
+
+    def test_reentrancy_is_not_an_access_check(self):
+        locked = self.by_function["Open.lockedForward"]["sink"]
+        self.assertFalse(locked["entries_all_gated"])
+        self.assertEqual(locked["entry_auth_modifiers"], [])
+        self.assertFalse(self.by_function["Open.openForward"]["sink"]["entries_all_gated"])
+
+    def test_the_report_counts_what_it_ranked_down(self):
+        self.assertGreaterEqual(self.result["sinks_behind_an_access_modifier"], 1)
+        self.assertEqual(self.result["leads_behind_an_access_modifier"],
+                         sum(1 for lead in self.result["leads"]
+                             if lead["sink"]["entries_all_gated"]))
+
+    def test_a_scarce_budget_still_reaches_the_gated_sink(self):
+        # The guarantee: the gate decides reading order, never which rows are written. The sink
+        # enumeration reaches `src/Admin.sol` first, so the only row a one-row budget can write
+        # is the gated one - as it would be without any gating at all. On the unscoped Boson
+        # artifact round one already truncates at 500 of 714 sinks, and a gated sink pushed to
+        # the end of that enumeration would have left the file silently.
+        scarce = self.analyze(MAX_LEADS=1)
+        self.assertEqual(scarce["lead_count"], 1)
+        row = scarce["leads"][0]["sink"]
+        self.assertEqual(row["path"], "src/Admin.sol")
+        self.assertTrue(row["entries_all_gated"])
+
+    def test_a_constant_the_require_reads_is_not_a_modifier(self):
+        self.assertEqual(taint_paths._auth_guards(
+            [{"guards": ["src/Vault.sol:CONSOLIDATION_ROLE", "nonReentrant",
+                         "onlyOwnerOrRoles(CONSOLIDATION_ROLE)"]}]),
+            ["onlyOwnerOrRoles(CONSOLIDATION_ROLE)"])
+
+
 if __name__ == "__main__":
     unittest.main()
