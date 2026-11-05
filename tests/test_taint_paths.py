@@ -587,6 +587,21 @@ def gated_and_open_fixture():
             params=[typed(spanned(a.param(target_id, "target")), "address"),
                     typed(spanned(a.param(data_id, "data")), "bytes calldata")])
 
+    shared = Ast.contract(950, "Shared", [
+        a.func(951, "_move", [a.stmt(a.call(
+            a.member(a.ident("target", 952), "call"), a.ident("data", 953)))],
+            visibility="internal",
+            params=[spanned(a.param(952, "target")), spanned(a.param(953, "data"))]),
+        a.func(954, "adminMove", [a.stmt(a.call(a.ident("_move", 951),
+                                                a.ident("target", 955), a.ident("data", 956)))],
+               modifiers=[a.mod("onlyOwner", 51)],
+               params=[typed(spanned(a.param(955, "target")), "address"),
+                       typed(spanned(a.param(956, "data")), "bytes calldata")]),
+        a.func(957, "openMove", [a.stmt(a.call(a.ident("_move", 951),
+                                               a.ident("target", 958), a.ident("data", 959)))],
+               params=[typed(spanned(a.param(958, "target")), "address"),
+                       typed(spanned(a.param(959, "data")), "bytes calldata")]),
+    ])
     admin = Ast.contract(920, "Admin", [
         forward(921, "adminForward", 922, 923, modifiers=[a.mod("onlyOwner", 51)])])
     open_router = Ast.contract(930, "Open", [
@@ -595,7 +610,9 @@ def gated_and_open_fixture():
     return {"output": {"sources": {
         "src/Admin.sol": {"ast": Ast.unit(admin), "content": "contract Admin {\n" * 60},
         "src/Open.sol": {"ast": Ast.unit(open_router),
-                         "content": "contract Open {\n" * 60}}}}
+                         "content": "contract Open {\n" * 60},
+        "src/Shared.sol": {"ast": Ast.unit(shared),
+                           "content": "contract Shared {\n" * 60}}}}
 
 
 class ModifierGateRankingTests(unittest.TestCase):
@@ -661,6 +678,25 @@ class ModifierGateRankingTests(unittest.TestCase):
         row = scarce["leads"][0]["sink"]
         self.assertEqual(row["path"], "src/Admin.sol")
         self.assertTrue(row["entries_all_gated"])
+
+    def test_a_half_gated_sink_says_how_many_entries_carry_no_check(self):
+        # The names alone mislead: a real row, `FundsBase.transferFundsOut:556`, reports hasRole,
+        # onlyOwner, onlyProtocol and onlyRole(FEE_COLLECTOR) while `entries_all_gated` is false,
+        # because one entry reaching it carries none of them.
+        shared = self.by_function["Shared._move"]["sink"]
+        self.assertFalse(shared["entries_all_gated"])
+        self.assertEqual(shared["entry_auth_modifiers"], ["onlyOwner"])
+        self.assertEqual(shared["entries_without_access_check"], 1)
+
+    def test_a_fully_gated_sink_has_no_entry_without_a_check(self):
+        gated = self.by_function["Admin.adminForward"]["sink"]
+        self.assertTrue(gated["entries_all_gated"])
+        self.assertEqual(gated["entries_without_access_check"], 0)
+
+    def test_an_ungated_sink_counts_its_open_entries_and_names_nothing(self):
+        open_sink = self.by_function["Open.openForward"]["sink"]
+        self.assertEqual(open_sink["entry_auth_modifiers"], [])
+        self.assertEqual(open_sink["entries_without_access_check"], 1)
 
     def test_a_constant_the_require_reads_is_not_a_modifier(self):
         self.assertEqual(taint_paths._auth_guards(
