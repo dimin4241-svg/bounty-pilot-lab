@@ -19,10 +19,10 @@ class SecuritySlicesTests(unittest.TestCase):
         (self.repo / "src").mkdir(parents=True)
         (self.repo / "lib").mkdir(parents=True)
         (self.repo / "lib/Vault.sol").write_text(
-            "contract Vault { function withdraw() public {} }\n" + (" " * 400))
+            "contract Vault { function withdraw() public {} }\n" + (" " * 700))
         (self.repo / "src/Dummy.sol").write_text("contract Dummy {}\n" + (" " * 1100))
         (self.repo / "src/Router.sol").write_text(
-            'import "../lib/Vault.sol";\ncontract Router { Vault vault; }\n' + (" " * 400))
+            'import "../lib/Vault.sol";\ncontract Router { Vault vault; }\n' + (" " * 700))
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
         subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
         subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=Fixture",
@@ -30,14 +30,14 @@ class SecuritySlicesTests(unittest.TestCase):
                         "-qm", "fixtures"], check=True)
 
     def test_bridge_restores_cross_shard_source_context(self):
-        report = slices.plan(self.repo, max_source_bytes=1350)
+        report = slices.plan(self.repo, max_source_bytes=1600)
         primary = [x for x in report["shards"] if x["kind"] == "primary-with-context"]
         names = [p for x in primary for p in x["core_paths"]]
         self.assertEqual(set(names), {"lib/Vault.sol", "src/Dummy.sol", "src/Router.sol"})
         self.assertEqual(len(names), len(set(names)))
         self.assertTrue(any({"lib/Vault.sol", "src/Router.sol"}.issubset(x["paths"])
                             for x in report["shards"]))
-        self.assertTrue(all(x["source_bytes"] <= 1350 or x["requires_manual_file_split"]
+        self.assertTrue(all(x["source_bytes"] <= 1600 or x["requires_manual_file_split"]
                             for x in report["shards"]))
 
     def test_unresolved_edges_are_visible_when_bridge_budget_is_zero(self):

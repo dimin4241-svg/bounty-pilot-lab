@@ -104,9 +104,10 @@ def _node_count(node, limit):
 class SourceTrees(list):
     """The SourceUnit ASTs load_solc returns, plus the sources it skipped and why."""
 
-    def __init__(self, trees=(), skipped=()):
+    def __init__(self, trees=(), skipped=(), contents=None):
         super().__init__(trees)
         self.skipped = list(skipped)
+        self.contents = dict(contents or {})
 
 
 BUILD_INFO_HINT = (
@@ -131,7 +132,7 @@ def load_solc(path, max_ast_bytes=MAX_AST_BYTES):
     if not sources and (isinstance(raw.get("source_id_to_path"), dict)
                         or ("language" in raw and "output" not in raw)):
         raise ValueError(BUILD_INFO_HINT)
-    trees, skipped = [], []
+    trees, skipped, contents = [], [], {}
     saw_source_entry = False
     for filename, desc in sorted(sources.items()):
         if not isinstance(desc, dict):
@@ -146,6 +147,8 @@ def load_solc(path, max_ast_bytes=MAX_AST_BYTES):
                                 "reason": "AST over %d nodes; not analysed" % MAX_NODES})
                 continue
             trees.append((filename, tree))
+            if isinstance(desc.get("content"), str):
+                contents[str(filename)] = desc["content"]
     if not trees:
         if skipped:
             raise ValueError("every source AST is over the %d-node cap: %s"
@@ -154,7 +157,7 @@ def load_solc(path, max_ast_bytes=MAX_AST_BYTES):
             # sources present but none carry an AST → the AST output was not requested.
             raise ValueError(BUILD_INFO_HINT)
         raise ValueError("no Solidity SourceUnit AST; " + BUILD_INFO_HINT)
-    return SourceTrees(trees, skipped)
+    return SourceTrees(trees, skipped, contents)
 
 ETH_MOVE_MEMBERS = ("send", "transfer")
 

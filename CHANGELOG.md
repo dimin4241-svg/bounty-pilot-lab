@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.51.0 — experimental compiler-AST taint-path leads
+
+- Add bounded Solidity declaration-flow tracing from public inputs, EVM
+  environment values, and external-call return values (including nested
+  expressions) into sensitive
+  call targets/calldata, native ETH value/recipient, token transfer/pull,
+  permit, and named value-operation operands. Environment values are scoped to
+  their public entry and syntactically reachable internal helpers to avoid
+  spurious cross-entry paths.
+- Carry source spans and possible persistent-state crossings in
+  `taint-paths.json`; include the report in impact-first, seam, and high-impact
+  bundles as an unverified reading queue.
+- State the limits explicitly: no branch/modifier proof, complete alias model,
+  runtime reachability, remote callee traversal, cross-contract state,
+  transaction-order proof, exploitability, or recall claim.
+
 ## 0.50.0 — experimental native feedback and cross-file hypothesis continuity
 
 - Score all AVRE candidates before global budget selection, retain deferred

@@ -657,7 +657,8 @@ class BundleInputTests(SearchFixture):
         result = bounty.bundle(self.repo, self.run, ['impact-first'],
                                includes=[str(self.run / 'impact-paths.json')])
         text = (self.run / 'bundles/impact-first-bundle.md').read_text()
-        self.assertEqual(text.count('impact-paths.json'), 1)
+        self.assertEqual(text.count('## Included: impact-paths.json'), 1)
+        self.assertNotIn('## Precomputed analysis: impact-paths.json', text)
         self.assertEqual(result['analysis_included'], {})
 
 

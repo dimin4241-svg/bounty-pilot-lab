@@ -46,7 +46,7 @@ class SecureOpusRunnerTests(unittest.TestCase):
         self.assertEqual(opus.TARGET, "https://github.com/ObolNetwork/charon")
 
     def test_safely_validates_clean_pinned_checkout(self):
-        self.assertEqual(opus.verify_target(self.repo), self.repo)
+        self.assertEqual(opus.verify_target(self.repo), self.repo.resolve())
 
     def test_fails_on_wrong_git_revision(self):
         with mock.patch.object(opus, "PIN", "a"*40):
@@ -173,6 +173,7 @@ class SecureOpusRunnerTests(unittest.TestCase):
         }).encode()
         err = opus.urllib.error.HTTPError(opus.API_URL, 400, "Bad request",
                                            {}, io.BytesIO(response))
+        self.addCleanup(err.close)
         with mock.patch.object(opus.urllib.request, "urlopen", side_effect=err):
             with self.assertRaisesRegex(ValueError, "usage limits") as ctx:
                 opus.request_opus("secret-key-not-to-echo", "test")
@@ -189,6 +190,7 @@ class SecureOpusRunnerTests(unittest.TestCase):
         }).encode()
         err = opus.urllib.error.HTTPError(opus.API_URL, 400, "Bad request",
                                            {}, io.BytesIO(response))
+        self.addCleanup(err.close)
         text = str(opus._http_error(err, secret))
         self.assertNotIn(secret, text)
         self.assertNotIn("abc123secret", text)
@@ -200,6 +202,7 @@ class SecureOpusRunnerTests(unittest.TestCase):
         data = b"x" * 9000
         err = opus.urllib.error.HTTPError(opus.API_URL, 400, "Bad request",
                                            {}, io.BytesIO(data))
+        self.addCleanup(err.close)
         text = str(opus._http_error(err, "secret-not-for-logs"))
         self.assertIn("HTTP 400", text)
         self.assertLess(len(text), 500)
@@ -345,9 +348,10 @@ class SecureOpusRunnerTests(unittest.TestCase):
         self.assertNotIn("secret", sink.getvalue())
 
     def test_request_error_does_not_echo_provider_secret(self):
+        err = opus.urllib.error.HTTPError(opus.API_URL, 401, "dummy", {}, None)
+        self.addCleanup(err.close)
         with mock.patch.object(opus.urllib.request, "urlopen",
-                               side_effect=opus.urllib.error.HTTPError(
-                                   opus.API_URL, 401, "dummy", {}, None)):
+                               side_effect=err):
             with self.assertRaisesRegex(ValueError, "HTTP 401") as ctx:
                 opus.request_opus("secret-key-not-to-echo", "test")
         self.assertNotIn("secret-key-not-to-echo", str(ctx.exception))

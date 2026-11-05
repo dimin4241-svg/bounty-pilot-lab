@@ -18,19 +18,29 @@
 
 ---
 
-## Current release: 0.50.0 — experimental native evidence feedback and cross-file discovery
+## Current release: 0.51.0 — experimental Solidity data-flow leads
 
-- AVRE now scores before capping and preserves deferred, distinct invariant leads.
-- Static compiler-AST adapter and cross-file security slices provide additional
-  *unverified* state/dependency context.
-- Local replay helper, measured economic frontier and layered outcome analyzer
-  support targeted reproducibility studies, not automatic exploit proof.
+- `impact-plan` traces bounded compiler-AST data flows from external inputs,
+  entry-scoped environment values and external-call returns into sensitive
+  call targets/calldata, native ETH value/recipient, token transfer/pull, permit
+  and value-operation operands or named privilege-state writes.
+- `taint-paths.json` is handed to `impact-first`, `seam` and high-impact lenses
+  as an unverified reading queue. Persistent-state paths may span transactions.
+- External-call operands are endpoints; remote contract bodies and cross-contract
+  state are not traversed.
+- The trace does not prove control flow, modifier behavior, runtime reachability
+  or exploitability; confirm each hop and test a protected control.
 - New helpers require a scope-approved, pinned test environment. Native target
   execution stays on the isolated self-hosted Mac runner.
-- The full CI run and real-world blind improvement remain unverified until
-  recorded test results are available.
 
-## Previous release: 0.49.5 — Claude, Codex and DeepSeek discovery handoff
+## Previous release: 0.50.0 — native evidence feedback and cross-file discovery
+
+- AVRE scores before capping and preserves deferred, distinct invariant leads.
+- Compiler-AST state links and bounded cross-file slices add unverified context.
+- Local replay, measured economic frontier and outcome review support targeted
+  reproducibility studies without proving an exploit.
+
+## Earlier release: 0.49.5 — Claude, Codex and DeepSeek discovery handoff
 
 - Independent multi-model research through `agent_dispatch.py`: Claude Code,
   Codex and DeepSeek (via OpenCode with an explicit DeepSeek model ID).
