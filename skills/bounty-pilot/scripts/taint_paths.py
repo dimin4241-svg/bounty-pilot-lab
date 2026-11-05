@@ -23,6 +23,18 @@ SENSITIVE_STATE_TERMS = ("owner", "admin", "role", "implementation", "beacon", "
                          "upgrader", "authority", "validator", "fee")
 
 
+def _stable(values):
+    """A deterministic order for refs that mix declaration ids with environment/return keys.
+
+    References are collected in a set, and a set holding both integers and strings iterates in an
+    order that depends on `PYTHONHASHSEED`. That order reached `incoming`, so the same command on
+    the same build-info wrote a different bounded queue on every run. Ids come first, ascending,
+    then the string keys lexicographically.
+    """
+    return sorted(values, key=lambda value: (1, 0, str(value)) if isinstance(value, str)
+                  else (0, value, ""))
+
+
 def _in_scope(path, prefixes):
     """Whole-segment match, as bounty.path_in_scope does: `src` covers src/, never src-legacy/."""
     if not prefixes:
@@ -107,7 +119,7 @@ def _variable_refs(expr, variable_ids, semantic, aliases=None, env_entries=None,
                                                     active, semantic)
             if external_return:
                 refs.add(external_return)
-    return refs
+    return _stable(refs)
 
 
 def _lhs_targets(expr, variable_ids, semantic, aliases=None):
@@ -324,7 +336,7 @@ def analyze(trees, symbols, semantic, scope=None):
                 local_id = local.get("id")
                 if not isinstance(local_id, int):
                     continue
-                roots = _variable_refs(value, variable_ids, semantic, aliases) & state_ids
+                roots = set(_variable_refs(value, variable_ids, semantic, aliases)) & state_ids
                 if roots:
                     aliases[local_id] = sorted(roots)[0]
 
@@ -463,9 +475,11 @@ def analyze(trees, symbols, semantic, scope=None):
                 sources = _variable_refs(node.get("rightHandSide"), variable_ids, semantic, aliases,
                                          reachable_entries[declaration], declaration, active)
                 if node.get("operator") != "=":
-                    sources |= _variable_refs(node.get("leftHandSide"), variable_ids,
-                                              semantic, aliases,
-                                              reachable_entries[declaration], declaration, active)
+                    # A compound assignment reads its own left side; merge through `_stable` so the
+                    # union cannot reintroduce a hash-dependent order.
+                    sources = _stable(set(sources) | set(_variable_refs(
+                        node.get("leftHandSide"), variable_ids, semantic, aliases,
+                        reachable_entries[declaration], declaration, active)))
                 for source in sources:
                     for target in targets:
                         add_flow(source, target,
@@ -543,7 +557,7 @@ def analyze(trees, symbols, semantic, scope=None):
                                       "operand": operand, "src": node.get("src"),
                                       "line": _line_for(line_starts, function_paths[declaration],
                                                         node.get("src")),
-                                      "references": sorted(refs, key=str),
+                                      "references": _stable(refs),
                                       "reachable_entries": sorted({str(row.get("name"))
                                           for entry in reachable_entries[declaration]
                                           for row in entries.get(entry, [])})[:5]})
