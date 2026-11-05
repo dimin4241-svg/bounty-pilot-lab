@@ -789,4 +789,13 @@ def _lead_order(row):
             scope_rank.get(source.get("scope_role"), 0),
             sink_rank.get(sink["kind"], 3), row["crosses_persistent_state"],
             source_rank.get(source["kind"], 4), len(row["flow"]), sink["path"],
-            sink["line"] or 0, source.get("path", ""), source.get("line") or 0)
+            sink["line"] or 0, source.get("path", ""), source.get("line") or 0,
+            # The keys above tie often - 40 of 151 obol-splits rows and 134 of 500 Boson rows
+            # sit in a tied group - and `sort` is stable, so a tie left the row order to the
+            # order the flow edges happened to be registered in. The rest of the row decides
+            # it instead, which also makes candidate selection inside one sink total.
+            str(sink.get("member") or ""), str(sink.get("operand") or ""),
+            str(sink.get("src") or ""), str(source.get("function") or ""),
+            str(source.get("entry") or ""), str(source.get("src") or ""),
+            tuple((str(edge.get("kind") or ""), str(edge.get("src") or ""))
+                  for edge in row["flow"]))
