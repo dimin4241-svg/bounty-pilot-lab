@@ -204,6 +204,14 @@ Preserve these invariants when editing:
   Patch variants reuse ecosystem intelligence rather than creating a parallel
   security-patch detector.
 
+- **A red suite needs the machine to itself before you believe it.** The tests spawn git, solc
+  and shelled-out runners with patched PATHs, so a second full run on the same machine makes
+  unrelated tests fail on subprocess timeouts. Measured 5 Nov 2026: 50 failures across files that
+  each pass alone, while two suites from another checkout ran in the same window; a rerun with
+  the machine free gave 1386 passed, 0 failed. Redirect the output to a file and read the file -
+  piping through `tail` keeps the count and loses the names - and re-run alone before blaming a
+  change.
+
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.
 Bump `VERSION` and `skills/bounty-pilot/VERSION` together; `.claude-plugin/plugin.json` carries the
