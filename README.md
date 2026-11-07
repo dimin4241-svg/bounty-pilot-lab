@@ -37,7 +37,8 @@ mechanical reads: `legacy-sweep`, `config-snapshot`, `nday-scan`, `rounding-map`
 > **Target intelligence + Web/API (experimental branch):** three new offline-first
 > workflows for program/scope change intelligence, local JavaScript bundle
 > change analysis (optional jsluice), and two-owned-account API authorization
-> checks (dry-run default). OpenAPI/HAR-derived GET path inventory is supported.
+> checks (dry-run default). OpenAPI/HAR-derived GET path inventory and a
+> unified review-first correlation queue are supported.
 > See [Target Intelligence + Web/API Lab](skills/bounty-pilot/references/target-intel-webapi.md).
 > Active API requests are never run by CI and require explicit scope,
 > authorization and a vetted Mac execution environment. No real finding,
