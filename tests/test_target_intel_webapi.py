@@ -27,6 +27,7 @@ scope = load("program_scope_radar")
 js = load("js_change_intel")
 auth = load("web_auth_lab")
 openapi = load("api_surface_import")
+queue = load("target_intel_queue")
 
 
 def programs(at, assets=None, program_type="paid_bounty"):
