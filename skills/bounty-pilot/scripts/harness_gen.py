@@ -307,8 +307,8 @@ def render_invariants(contract, functions, properties, framework, preset=None, f
         out.append("        selectors[%d] = %s.%s.selector;" % (i, handler, fn["handler"]))
     out += ["        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));",
             "    }", ""]
-    props = properties or [{"name": "todo_property",
-                            "text": "no INVARIANT: line was supplied; write at least one"}]
+    props = properties or ([] if preset else [{"name": "todo_property",
+                            "text": "no INVARIANT: line was supplied; write at least one"}])
     for prop in props:
         out += ["    /// %s" % _sol_string(prop["text"]),
                 "    function invariant_%s() public {" % prop["name"],
