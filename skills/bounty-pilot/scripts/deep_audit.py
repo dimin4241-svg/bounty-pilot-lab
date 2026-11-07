@@ -95,6 +95,7 @@ def plan(spec, flows_limit=3, lenses_limit=4, native_budget=12):
     if not selected:
         raise ValueError("no in-scope flows")
     for row in selected:
+        row["score"] = str(row["score"])
         row["lenses"] = list(LENSES[row["kind"]][:lenses_limit])
         row["next_steps"] = [
             "Write actor/state model with external dependencies and trust boundaries",
