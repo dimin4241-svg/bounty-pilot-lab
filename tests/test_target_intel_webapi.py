@@ -249,5 +249,50 @@ class WebAuthLabTests(unittest.TestCase):
         self.assertNotIn("secret-outsider-token", json.dumps(got))
 
 
+
+class UnifiedQueueTests(unittest.TestCase):
+    def test_correlates_changed_scope_to_js_and_openapi(self):
+        a = programs("2026-11-01T00:00:00Z", [])
+        b = programs("2026-11-02T00:00:00Z", [
+            {"name": "app.example.test", "asset_type": "website",
+             "bounty_eligible": True}])
+        program_delta = scope.compare(a, b)
+        js_delta = {"schema_version": 1, "leads": [{
+            "kind": "endpoint-added", "script_id": "main",
+            "script_url": "https://app.example.test/app.js",
+            "endpoint": "/api/new-users",
+            "parameter_names": [],
+        }]}
+        api_delta = {"schema_version": 1, "leads": [{
+            "method": "GET", "path_template": "/api/users/{id}",
+            "review_category": "object-identifier-review",
+        }]}
+        got = queue.merge(program_delta, js_delta, api_delta,
+                          api_host="app.example.test")
+        self.assertEqual(got["total_generated"], 3)
+        js_row = next(x for x in got["leads"] if x["source"] == "javascript")
+        self.assertEqual(js_row["priority_score"], 87)
+        self.assertTrue(js_row["matching_scope_change_urls"])
+        self.assertTrue(got["execution"].startswith("offline"))
+        self.assertNotIn("PRIVATE-INVOICE", json.dumps(got))
+
+    def test_caps_queue_without_silent_discard(self):
+        report = {"schema_version": 1, "leads": [
+            {"kind": "endpoint-added", "script_id": str(i),
+             "script_url": "https://api.example.test/app.js",
+             "endpoint": "/api/" + str(i)} for i in range(5)]}
+        got = queue.merge(javascript=report, max_queue=2)
+        self.assertEqual(got["written"], 2)
+        self.assertEqual(got["truncated"], 3)
+        self.assertEqual(got["total_generated"], 5)
+
+    def test_reject_unknown_host_and_schema(self):
+        with self.assertRaisesRegex(ValueError, "exact hostname"):
+            queue.merge(openapi={"schema_version": 1, "leads": []},
+                        api_host="*.example.test")
+        with self.assertRaisesRegex(ValueError, "schema_version"):
+            queue.merge(javascript={"schema_version": 9, "leads": []})
+
+
 if __name__ == "__main__":
     unittest.main()
