@@ -72,3 +72,36 @@ hardware device. It is not the dApp page that builds a transaction — that is `
   published extension or package differ, and the published one is what users run.
 - Never test against another person's wallet, account or funds; a local install with your own
   test keys is the only acceptable subject.
+
+## Cryptographic implementation
+
+The display gap is not the only way a wallet loses keys. Read the signing and key-generation code
+itself, because a flaw there leaks the key to anyone who reads the chain.
+
+- **Ed25519 nonce derivation.** The per-signature nonce must hash the secret prefix of the expanded
+  key with the message. SecondFi (ex-Yoroi) on Cardano, Jun 2026, $2.4M: the nonce omitted the
+  secret prefix, so private keys were recoverable from on-chain signatures. Quote the nonce
+  derivation and compare it with RFC 8032; for ECDSA, check RFC 6979 or a vetted RNG.
+- **RNG and entropy build configuration.** Read the build flags and preprocessor guards around the
+  entropy source, not only the call site. Coldcard, Jul–Aug 2026, roughly $88–116M: a macro guard
+  checked whether the RNG macro was defined rather than enabled, so seeds came from a weak PRNG
+  with about 72 bits of entropy. Check the shipped build's configuration.
+- **MPC and TSS selective abort.** Find every error the threshold library returns and follow it to
+  the integration layer. ChainSecurity showed that library errors swallowed at the integration
+  layer let one compromised signer recover the full key through repeated aborts; Vultisig was
+  among the affected. THORChain, May 2026, $10.8M, is suspected to involve GG20 but this is NOT
+  confirmed.
+- **Mobile WebView permission inheritance.** A dApp page loaded in the wallet's in-app browser must
+  not inherit the wallet app's native permissions (camera, storage, clipboard, the JS bridge).
+  OtterSec, Jun 2026, found this across 20+ mobile wallets.
+- **Hardware supply chain.** A device implanted via a reseller (Ledger, Oct 2026) is physical and
+  usually out of scope; emit it only if the program lists the supply path.
+- **Safe and multisig transaction display.** Compare what each signer is shown with the
+  `safeTxHash` they actually sign: `to`, `value`, `data`, `operation` (call versus delegatecall),
+  gas fields and nonce. Bybit, Feb 2025: malicious JavaScript in Safe{Wallet}'s S3 bucket made
+  signers blind-sign a delegatecall that swapped the Safe's implementation. A signer UI that
+  renders a decoded call while the hash covers `operation = 1` is the shape to look for.
+
+Proof for this section is a local reproduction with your own test keys: two signatures that
+recover the key, a seed generated under the shipped build flags, an abort sequence in the
+library's own test harness, or a rendered screen beside the hash that was signed.

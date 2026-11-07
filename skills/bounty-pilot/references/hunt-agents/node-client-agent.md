@@ -73,3 +73,39 @@ block do to a node that keeps running the rest of the network?**
   excluded shape. Find who sets it in production before claiming it.
 - **Measure the client's share before pricing severity** when the rubric grades by it: a share
   you cannot change caps every severity on that target.
+
+## Verification caches, mempool validation and precompile state bridges
+
+Three places where a node accepts something it never verified: a cache that remembers a verdict,
+a mempool that admits what block building cannot handle, and a precompile that moves value between
+the EVM and native module state.
+
+1. **Check every verification cache key against every input the verdict depends on.** A cache hit
+   must be at least as strict as the miss path. Liquid/Elements, Sep 2026, roughly $320M: on a
+   range-proof cache hit, `secp256k1_rangeproof_verify` and the min-value checks were skipped, so
+   3,998 unbacked L-BTC were created. Aptos Move VM, Feb 2026 (Hexens): a stale cache led to type
+   confusion, and Aptos disputes practical exploitability. For each cache, list the inputs the
+   verifier reads and the fields in the key; a missing field is the finding.
+2. **Diff mempool admission against block building.** Every rule block building assumes must be
+   enforced at admission. Nethermind, Feb 2026, $50k Ethereum Foundation bounty: blob transactions
+   with more `blobVersionedHashes` than blobs entered the mempool, block building then produced
+   null entries, and every Nethermind proposer missed its slot. It was found by an AI tool and
+   validated by a human.
+3. **Measure asymmetric CPU on P2P paths.** ETH Rangers, 2026, reported 14 bugs across all five
+   execution clients, many of them flooding and work-asymmetry shapes. Price each message by the
+   work it causes before the peer is penalised.
+4. **Probe state-root edge cases.** Empty accounts, self-destructed and recreated storage, and
+   reorg boundaries where two code paths compute the root (Reth, Nov 2026).
+5. **Read precompiles that bridge EVM and native module state.** Every balance a precompile reads
+   or writes on the native side must stay in sync with the EVM view, including vesting and locked
+   balances. Cosmos EVM ASA-2026-002, Aug 2026, concerned the ICS20 precompile. A vesting/locked
+   balance sync underflowed `0 - 1` to `MAX_UINT` and was exploited on six chains after a silent
+   upstream patch; on any fork, run `bounty.py nday-scan` (see `references/nday-scan.md`) to find
+   upstream fixes the fork has not taken.
+6. **Check sync liveness.** A peer that can stall block sync is a liveness finding: CometBFT
+   blocksync stall, Apr 2026, CVSS 7.1.
+
+For Cosmos SDK chains, read `references/adapters/cosmos-sdk.md` for module, precompile and
+`BeginBlock` specifics. Proof is a native test in the client's own harness: the cached input that
+skips verification, the admitted transaction that breaks block building, or the precompile call
+sequence whose native and EVM balances diverge.

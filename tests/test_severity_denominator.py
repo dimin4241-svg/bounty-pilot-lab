@@ -223,7 +223,9 @@ class SeverityDenominatorTests(unittest.TestCase):
         numbers = [int(m) for m in re.findall(r"(?m)^## (\d+)\.", misses)]
         self.assertEqual(sorted(numbers), list(range(1, len(numbers) + 1)),
                          "misses.md item numbers must be contiguous with no duplicates")
-        words = {31: "thirty-one", 32: "thirty-two", 33: "thirty-three", 34: "thirty-four"}
+        words = {31: "thirty-one", 32: "thirty-two", 33: "thirty-three", 34: "thirty-four",
+                 35: "thirty-five", 36: "thirty-six", 37: "thirty-seven", 38: "thirty-eight",
+                 39: "thirty-nine", 40: "forty", 41: "forty-one", 42: "forty-two"}
         passes = (ROOT / "skills/bounty-pilot/references/passes.md").read_text(encoding="utf-8")
         self.assertIn(f"lists {words[max(numbers)]} ways", passes)
 

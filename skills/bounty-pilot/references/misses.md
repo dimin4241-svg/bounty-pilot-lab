@@ -391,3 +391,51 @@ rendered text appears in the added ones. `blind-spots.md` §4 has the worked cas
 numbers and the caution about what may be written up where. The commit vocabulary alone is not the
 signal — it passed 46% of commits on the calibration target — so do not ship the grep without the
 diff test.
+
+## 35. Did you read the deployed configuration, or only the setters?
+
+Thresholds, verifier sets (DVNs, oracles, relayers), timelock delays, signer counts and the members
+of every role. A setter with a correct bound says nothing about the value it was called with. The
+2026 configuration losses in `hack-patterns.md` were all correct code with a fatal value. Run
+`config-snapshot` and write the table down, even when every value looks right (`blind-spots.md` §16).
+
+## 36. Did you test the cheapest repetition of every user-favourable rounding?
+
+Not the direction of one operation: the drift after the caller loops it inside one transaction at
+balances pushed toward zero. `rounding-map` lists the sites and `templates/RepetitionDrift.t.sol`
+measures the drift (`blind-spots.md` §17). "Rounds down, so it is safe" is an answer to a different
+question.
+
+## 37. Did you diff the pinned dependencies against upstream security fixes?
+
+For a fork or any pinned library: which security fixes did upstream ship after the pinned revision,
+and which of them did this repository take? `nday-scan` produces the list (`blind-spots.md` §18).
+If you had no upstream clone, write that as the gap.
+
+## 38. Did you sweep the repository history for deprecated contracts that still hold value?
+
+The previous version, the old vault, the retired proxy. Run `legacy-sweep` and read every address
+still holding a balance, an approval or a role on a live contract (`blind-spots.md` §19).
+
+## 39. Does every privileged mint have an on-chain cap?
+
+For each function that creates supply or releases escrow, name the on-chain bound that holds if the
+caller's key belongs to someone else: a cap, a rate limit, an oracle or a collateral check
+(`blind-spots.md` §23).
+
+## 40. For every cache in a verification path, does its key cover every input?
+
+List the inputs of the cached computation and the fields of the key; any input missing from the key
+is a lead (`blind-spots.md` §20).
+
+## 41. Were deployment and initialization atomic?
+
+For every proxy and clone, the deploy and initialize transactions, read on chain. If they differ,
+who called the initializer, and does any slot hold a value the team did not set (`blind-spots.md`
+§22)?
+
+## 42. For ZK targets, are all public inputs absorbed before each challenge?
+
+And is each public input compared by the contract against the state it then acts on? Transcript
+order and public-input binding are the two checks that settle the largest share of soundness
+questions (`adapters/zk.md`).

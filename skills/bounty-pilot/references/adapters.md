@@ -13,7 +13,8 @@ conservative manifest-based shortlist, then confirm the real runtime. `bounty.py
 <checkout>` prints the same data. Logic bundles include detected adapter instructions.
 
 Read the matching files in `adapters/`: `rust-native.md`, `rust-solana.md`,
-`rust-cosmwasm.md`, `rust-substrate.md`, `move.md`, `cairo.md`, `go.md`, or `web-backend.md`.
+`rust-cosmwasm.md`, `rust-substrate.md`, `move.md`, `cairo.md`, `go.md`, `web-backend.md`,
+`cosmos-sdk.md` or `zk.md`.
 Do this **in addition to** the basic workflow, not instead of scope, evidence and triage.
 A Cargo.toml alone does not mean Solana: distinguish the exact VM/framework and mixed
 native worker crates. A manifest pulling `frame-support`/`frame-system`/`sp-runtime` is
@@ -31,6 +32,8 @@ for each and add `semantic-mismatch` and `recovery-failure` across the boundary.
 | Move | `lenses.md` and this core workflow | abilities, resource ownership, friend/module visibility, object/shared-object authority, transaction ordering | Aptos/Sui Move tests; Aptos Move Prover only for supported specifications and runtime; name the exact VM/runtime |
 | Cairo / Starknet | `lenses.md` and this core workflow | caller/storage context, L1↔L2 message authentication, replay/consumption, upgrade and class-hash transitions | Cairo tests and local devnet; verify the deployed class hash |
 | CosmWasm | this core workflow plus Rust/wasm procedures | message authorization, reply/submessage behavior, funds attached to execute, migration, chain-specific bank/staking messages | `cw-multi-test` plus chain-specific integration tests |
+| Cosmos SDK app chain / IBC / Cosmos EVM (`cosmos-sdk`) | `adapters/cosmos-sdk.md`, `node-client` lens; `adapters/rust-cosmwasm.md` for wasm contracts | ante handler, BeginBlock/EndBlock panics and loops, determinism, EVM-module precompile revert semantics, IBC refunds and denoms, unpatched upstream fixes | chain simulation or local testnet with the exact binary; `nday-scan` against the upstream clone |
+| ZK circuits, provers, zkVMs, on-chain verifiers (`zk`) | `adapters/zk.md`, `zk-soundness` lens; `node-client` for provers | transcript order, unconstrained witnesses, range and field aliasing, public-input binding, verifying-key management, recursion boundaries | a forged witness or proof that verifies, or a valid statement that cannot be proved; Picus/Ecne/ZKAP, `MockProver`, differential proving |
 | Off-chain service or keeper | this core workflow plus the language's available analyzers | authentication, job retries/idempotency, queue ordering, reorgs, stale reads, signing boundary, reconciliation and failure recovery | integration tests with adversarial RPC/service responses; never use production credentials |
 
 This table is routing guidance, not a claim that every feature has a complete specialist lens. If a
@@ -94,12 +97,14 @@ when scope depends on another file, pass it explicitly with `--include` and reco
 Never assume a tracked deployment config equals production; establish that from an authoritative
 source or mark it unknown.
 
-## Stacks with no adapter here
+## Stacks with only a checklist, or no adapter here
 
-- **ZK circuits (Circom, Noir).** Source is bundled and counted, but this package has no circuit
-  lens. Soundness — an under-constrained signal, a missing range check, a value computed but never
-  constrained — is its own discipline; delegate a bounded stage to `zksecurity/zk-skills`
-  `circom-auditor` for Circom and say in `coverage.md` that Noir had no specialised review.
+- **ZK circuits and verifiers** now have `adapters/zk.md` and the `zk-soundness` lens, but that is a
+  soundness checklist, not a full methodology: it says which questions pay and which tools answer
+  them, and it leaves the cryptography to specialists. For Circom, delegating a bounded stage to
+  `zksecurity/zk-skills` `circom-auditor` is still worth it; say in `coverage.md` which checklist
+  items you could not settle, and that Noir, halo2 and zkVM internals had no specialised tool run
+  when that is true.
 - **TON (FunC, Tact).** Asynchronous messages, bounce handling and send modes have no EVM analogue.
   Use `sanbir/ton-auditor-skills` as a vector list and model every message chain, including the
   bounced one, as separate transactions.

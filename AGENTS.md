@@ -212,6 +212,25 @@ Preserve these invariants when editing:
   piping through `tail` keeps the count and loses the names - and re-run alone before blaming a
   change.
 
+- **Lab 0.53 mechanical reads stay leads, offline where they can be.** `nday-scan` reads only
+  local clones the operator fetched and never contacts a forge or advisory database; an unmerged
+  public fix it lists is disclosed privately or not at all. `config-snapshot` and `legacy-sweep`
+  use read-only JSON-RPC methods from an allowlist, write `"endpoint": "not recorded"` and scrub
+  the URL, its hostname and any key from every error; never add a signing or sending method.
+  Selectors, event topics and storage slots in them stay derived with the bundled keccak.
+  `rounding-map` and `init-race` are lexical: a `favors_user` row or a split deploy is a reading
+  order, never a finding. `harness-gen` writes skeletons whose property stubs FAIL until a human
+  writes the property; never make a stub pass by default or generate attack sequences.
+- **A template never ships a default that can fake a result.** `RepetitionDrift.t.sol` reverts
+  in `_attackerValue()` until it is filled, because counting the asset balance alone booked a
+  withdrawal of the attacker's own deposit as profit in the 0.53 calibration run.
+- **Every frontier lens has an instruction file and a route.** The seven lenses in
+  `FRONTIER_LENSES` are bundled by name or as `frontier`, and `stack_route.py` adds each only on
+  a stack or surface signal; a surface lens selected with no signal reads nothing.
+- **A version that learned from an incident cannot be measured on it.** `holdout-2026.md` names
+  the earlier versions each case is still blind for. When the skill is edited in response to an
+  incident, mark the case as no longer blind for that version and every later one.
+
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.
 Bump `VERSION` and `skills/bounty-pilot/VERSION` together; `.claude-plugin/plugin.json` carries the

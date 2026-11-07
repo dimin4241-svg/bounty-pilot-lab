@@ -68,3 +68,11 @@ output, DDoS on UI/API/RPC infrastructure, and anything reachable only by a trus
 against its own documented intent. A role any user can create or take is not a trusted role, so
 this last exclusion does not cover it. Each of these is a real-sounding report that is rejected by rule,
 not by judgment.
+
+**Configuration is not the same as centralisation.** "Admin key risk" excludes a trusted role
+misusing its power. It does not obviously exclude a *deployed value* that lets an untrusted party
+act — a verifier threshold of one, an oracle accepting unsigned updates, a stale permission on a
+replaced contract, a mint with no cap held by a relayer. Whether such a value is eligible is the
+program's call, and many treat it as out of scope; read the rubric's wording on misconfiguration
+and on which roles are trusted, quote it in `severity_rationale`, and file only when the attacker in
+your sequence is not the role holder (`blind-spots.md` §16 and §23).

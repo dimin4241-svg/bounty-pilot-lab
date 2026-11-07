@@ -63,6 +63,10 @@ rules (isolation, inputs, what the output does **not** establish) are in
 `references/lab-releases.md` and the reference named on the line. None of them promotes a lead to a
 finding, sends live target traffic, or replaces the stages below.
 
+- **Frontier surfaces (0.53)** — seven lenses (`frontier`), the `zk` and `cosmos-sdk`
+  adapters, and six mechanical reads: `legacy-sweep`, `config-snapshot`, `rounding-map`,
+  `init-race`, `nday-scan`, `harness-gen`. Built from the 2025-2026 losses and payouts in
+  `references/hack-patterns.md`; post-June-2026 blind cases are in `references/holdout-2026.md`.
 - **Taint queue (0.51–0.52)** — `impact-plan` also writes `taint-paths.json`, a top-down reading
   queue over compiler-AST data flow; read `entry_auth_modifiers` beside
   `entries_without_access_check`, never alone (`references/impact-first.md`).
@@ -174,7 +178,20 @@ python3 $S audit-inventory --repo <checkout> --run <run> --gate
 python3 $S verify-deployment --rpc <url> --address <addr> --artifact <build-artifact.json> --run <run>
 python3 $S solc-bugs --repo <checkout>
 python3 $S selectors --rpc <url> --address <addr> --abi <build-artifact.json> --run <run>
+python3 $S legacy-sweep --repo <checkout> --program <run>/program.json [--rpc <url>] --out <run>/legacy-sweep.json
+python3 $S config-snapshot --rpc <url> --targets <run>/config-targets.json --known <addresses.json> --out <run>/config-snapshot.json
 ```
+
+**Read the deployment's configuration, and its history.** The largest 2026 losses were settings
+no source review sees — a 1-of-1 messaging verifier, a confirmation threshold of 1, an oracle
+verifier accepting zero signatures, a 2-of-5 multisig with no timelock, a replaced contract that
+kept its role — and contracts the project stopped mentioning that still held value.
+`legacy-sweep` lists every address the repository's history recorded and HEAD no longer does, with
+code and balances when an RPC is given; `config-snapshot` reads thresholds, owners, modules,
+delays, role members, DVN/ISM verifier counts and feed freshness at one block for the addresses
+you list (`references/legacy-sweep.md`, `references/config-snapshot.md`). Both are leads: a
+misconfiguration pays only where an unprivileged actor gains or the program covers it, and a
+deprecated contract only where its scope does.
 
 Duplicate work comes first because `dup-map.json` travels in every bundle: a lens that meets a
 burned surface says so in its reading instead of re-deriving it. It does **not** skip the ground —
@@ -287,6 +304,23 @@ python3 $S function-coverage --run <run>
 Pass `--scope`: without it a build-info file drags `lib/` into every ranking. Out-of-scope code
 that in-scope contracts call or inherit is kept and marked `dependency`.
 
+Three more mechanical reads, each a reading order for the lenses that consume it:
+
+```sh
+python3 $S rounding-map --repo <checkout> --scope <source roots> --out <run>/rounding-map.json
+python3 $S init-race --repo <checkout> --out <run>/init-race.json
+python3 $S nday-scan --repo <checkout> --upstream <name>=<local upstream clone> --out <run>/nday-scan.json
+```
+
+`rounding-map` pairs every rounding site with the value it feeds and whether the function repeats
+cheaply: a rounding that favours the user is harmless once and a drain after a thousand batched
+calls, which is the class both audits and AI agents detect worst (`references/rounding-map.md`).
+`init-race` finds proxies deployed and initialized in separate transactions and implementations
+that can still be initialized (`references/stateful-harness.md`). `nday-scan` lists the upstream
+security fixes newer than the version a fork or vendored library pins — the shape of the 2026
+Cosmos EVM loss, exploited the day after a silent patch (`references/nday-scan.md`). Disclose such
+a gap privately; a public fix the target never took is still sensitive.
+
 `impact-plan` writes `semantic-graph.json` (per function: entry, guards, writes, reads, calls,
 sinks), `impact-paths.json` (paths to value-moving sinks, including arbitrary calls),
 `taint-paths.json` (bounded Solidity compiler-AST data-flow leads from external inputs, EVM
@@ -334,7 +368,10 @@ Read `references/passes.md`; it settles lens selection, dispatch and stop rules.
    built bundle, package or image, `wallet-app` for a user-facing wallet, and `signing` for
    an in-scope off-chain signer, HSM/MPC adapter, withdrawal API or worker. This lens
    is also in `cross-stack` and conditionally in `recommended` when local source
-   suggests signing infrastructure.
+   suggests signing infrastructure. The surface lenses go by name when the shape is there:
+   `bridge-messaging`, `zk-soundness`, `oracle-listing`, `governance-capture`,
+   `account-abstraction`, `hooks-keepers` and `agent-wallet`, or all seven as `frontier`;
+   `recommended` adds each one when the source or manifests show its surface.
    The last three are where this skill's own confirmed Highs and six of the seven largest public
    bounties came from, and none of them is reached by a contract lens (`lenses.md`).
 3. **Classic classes.** The `attack` group includes `classic`: Part A (post-2023 EVM semantics —
@@ -506,6 +543,16 @@ rounding, share math or a multi-step state sequence, run an invariant campaign a
 tool version, budget, seed and result in `experiments.json`, and treat a broken invariant as a
 candidate that still needs a concrete PoC. A clean campaign is coverage of that property, not proof
 of safety (`references/verify-tools.md`).
+
+`harness-gen` writes the handler and a **deliberately failing** invariant file from the ABIs, one
+stub per `INVARIANT:` line in `model.md`, so the campaign cannot pass until a human writes the
+property. For a rounding lead, `templates/RepetitionDrift.t.sol` measures the drift of N repeated
+micro-operations against a negative control (`references/stateful-harness.md`,
+`references/rounding-map.md`):
+
+```sh
+python3 $S harness-gen --artifact out/<Contract>.sol/<Contract>.json --model <run>/model.md --out-dir <private-dir>
+```
 
 A passing test proves its assertions and nothing more; a revert is not a vulnerability. Never grant
 the attacker privileges, replace the component under test with a permissive mock, or write storage

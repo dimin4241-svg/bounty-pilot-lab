@@ -728,6 +728,125 @@ curated screen never had, §13 a suppression gate with no witness, §14 a displa
 meaningful sentinel, §15 a screen a redesign deleted. That is a set built entirely out of bugs
 somebody already paid for - which is the only reason to believe any of them.
 
+## 16. Deployed configuration nobody read
+
+§1 says the controls exist only as live configuration. This is the same surface measured by its
+losses: in 2026 a 1-of-1 verifier set, a confirmation threshold of 1, an oracle accepting zero
+signatures, a multisig with no timelock and a permission left on a replaced component each took
+real money while the code beneath them was correct (`hack-patterns.md`, "Deployed configuration as
+the vulnerability"). None of them appears in a diff.
+
+Make the reading mechanical and complete rather than remembered:
+
+```sh
+python3 <skill-dir>/scripts/bounty.py config-snapshot --rpc <url> --targets <addresses.json> \
+    --out <run>/config-snapshot.json
+```
+
+`references/config-snapshot.md` lists what it reads. Then ask, for each value, what the cheapest
+attacker needs given that value: one key, one signature, one block. A threshold that equals the
+number of keys an attacker must hold is the finding, and its severity depends on who holds them —
+which the program's rubric, not this file, decides (`impact-classes.md`).
+
+## 17. Repetition turns a rounding into a drain
+
+Every reviewer checks the rounding direction of one operation. Almost nobody checks what happens
+when the caller repeats it a thousand times in one transaction at balances it pushed to a few wei.
+Balancer v2, Bunni, zkLend and yETH are this one shape (`hack-patterns.md`, "Rounding amplified by
+repetition").
+
+```sh
+python3 <skill-dir>/scripts/bounty.py rounding-map --repo <checkout> --out <run>/rounding-map.json
+```
+
+`rounding-map.json` lists each rounding site and its beneficiary (`references/rounding-map.md`).
+For every site that favours the caller on a path the caller can loop, run the cheapest repetition
+in `templates/RepetitionDrift.t.sol` and record the drift per iteration. A drift of zero after the
+loop closes the site; a drift that grows linearly is a lead whose size is set by the gas limit.
+
+## 18. The fix upstream shipped and the fork never took
+
+A fork inherits its upstream's bugs and none of its later fixes. Security fixes are often merged
+with an unremarkable message and announced only after downstream chains upgrade, so nobody reading
+the fork's own history sees them. Cosmos EVM chains in 2026 were exploited after the upstream fix
+existed (`hack-patterns.md`, "Silent patches and dependency N-days").
+
+```sh
+python3 <skill-dir>/scripts/bounty.py nday-scan --repo <checkout> --upstream <name>=<upstream-clone> \
+    --out <run>/nday-scan.json
+```
+
+Read `references/nday-scan.md` for how candidates are ranked. A candidate is a lead until you show
+the unfixed code is reachable in the fork's configuration and the fork's version is the one
+deployed. Check the program's rules on N-days: some exclude bugs already public upstream, some pay
+them in full when the deployment is vulnerable.
+
+## 19. Abandoned contracts that still hold value or keys
+
+The current source tree is what everyone reads. The contracts it replaced are still on chain, often
+still in scope by address, sometimes still holding funds, approvals or a role on the live system.
+Truebit and Aztec Connect lost money from contracts nobody maintained (`hack-patterns.md`,
+"Abandoned but funded").
+
+```sh
+python3 <skill-dir>/scripts/bounty.py legacy-sweep --repo <checkout> --program <run>/program.json \
+    --out <run>/legacy-sweep.json
+```
+
+`references/legacy-sweep.md` describes how it walks the repository history for deployed addresses.
+For each one still holding value or authority, read the compiler version (`solc-bugs`), the
+initializer state and every role it still holds on a current contract.
+
+## 20. A verification cache keyed on less than the verdict depends on
+
+A cache in a verification path is an assertion that two inputs with the same key get the same
+verdict. When the key omits an input the verdict depends on — a script flag, a context, a height, a
+version — an attacker gets a valid verdict computed for one input reused for another. Liquid
+Network's 2026 loss was reported as this shape (`hack-patterns.md`), and the same question applies
+to bytecode-verifier caches such as Aptos's; find and cite the vendor's own advisory before naming
+a precedent in a report.
+
+For every cache, memo table or "already verified" set on a path that admits value: list the inputs
+of the function being cached, list the fields of the key, and diff the two lists. Any input not in
+the key is the lead.
+
+## 21. Existence proven, meaning assumed
+
+The proof, signature or Merkle path verifies, so the message exists. The bug is that the fields the
+contract then acts on — amount, recipient, count, chain — were never shown to be the ones the proof
+covered. Verus, Aztec Connect and CrossCurve are the 2026 cases (`hack-patterns.md`, "A message
+exists is not a message means").
+
+For each verified message, write two columns: fields the verifier binds, fields the action reads.
+Every field in the second column and not the first is a candidate, and in a ZK verifier it is a
+public input that is not compared against state (`adapters/zk.md`).
+
+## 22. Deploy and initialize in two transactions
+
+A proxy deployed in one transaction and initialized in the next can be initialized by anyone in
+between — and a careful attacker initializes it with the team's own expected values plus a hidden
+foothold, so nothing looks wrong. Kinto is the 2025 case (`hack-patterns.md`, "Deploy and
+initialize in two transactions"). Read deployment scripts and the deployment transactions, not the
+contract: the contract is correct in both cases.
+
+```sh
+python3 <skill-dir>/scripts/bounty.py init-race --repo <checkout> --out <run>/init-race.json
+```
+
+For every proxy, record the deploy and initialize transactions; if they differ, check who called
+the initializer and whether any slot holds a value the team did not set.
+
+## 23. A privileged mint with no on-chain bound
+
+Admin-key risk is excluded on most programs, so reviewers skip every role-gated mint. The question
+that is not excluded is what bounds the mint when the role holder is a hot key, a relayer or a
+keeper: an on-chain cap, a rate limit, an oracle or a collateral check. Resolv, Echo eBTC and StablR
+lost money through mints with none (`hack-patterns.md`, "Uncapped privileged mint").
+
+List every function that creates supply or releases escrow. For each, name the bound that would hold
+if the caller's key were someone else's. "None" is a design fact worth a sentence in `coverage.md`,
+and on a program that lists the role holder as lower-trust it is a lead.
+
 ## Recording a clean result
 
 For each item above, write the surface, the method, and the readings — not "checked". A closed

@@ -50,14 +50,19 @@ or justified in `scope.md`. Pick by shape, and say in `coverage.md` which you ch
 
 | Target shape | Run first | Then |
 | --- | --- | --- |
-| Lending / CDP / money market | `economics`, `accounting`, `privileged-path` | `live-reality`, `liveness`, `delta` |
+| Lending / CDP / money market | `economics`, `accounting`, `privileged-path` | `oracle-listing`, `live-reality`, `liveness`, `delta` |
 | DEX / AMM / concentrated liquidity | `economics`, `accounting`, `external-call` | `upstream-diff`, `coverage-gap` |
 | Vault / ERC-4626 / yield aggregator | `accounting`, `economics`, `external-call` | `privileged-path`, `liveness` |
-| Bridge / cross-chain messaging | `integration-auth`, `privileged-path`, `external-call` | `live-reality`, `upgrade` |
+| Bridge / cross-chain messaging | `integration-auth`, `bridge-messaging`, `privileged-path`, `external-call` | `live-reality`, `upgrade` |
 | Router / aggregator / zapper | `external-call`, `integration-auth` | `privileged-path`, `accounting`; measure approval exposure, not balance |
 | Staking / LST / restaking | `accounting`, `privileged-path`, `economics` | `liveness`, `upgrade` |
-| Perps / options / structured | `economics`, `accounting`, `live-reality` | `liveness`, `coverage-gap` |
-| Governance / timelock / treasury | `privileged-path`, `upgrade` | `liveness`, `delta` |
+| Perps / options / structured | `economics`, `accounting`, `live-reality` | `oracle-listing`, `liveness`, `coverage-gap` |
+| Governance / DAO / timelock / treasury | `privileged-path`, `upgrade`, `governance-capture` | `liveness`, `delta` |
+| ZK circuits / verifiers / zkVM / rollup prover | `zk-soundness` (`adapters/zk.md`) | `node-client` for the prover, `integration-auth` for the on-chain verifier |
+| Smart accounts / EIP-7702 / ERC-4337 / passkey wallets | `account-abstraction`, `privileged-path` | `classic`, `signing-control-plane` when a bundler or paymaster service is in scope |
+| Uniswap v4 hooks / keepers / automation / routers | `hooks-keepers`, `external-call` | `integration-auth`, `accounting` |
+| AI agent product holding or moving funds | `agent-wallet` | `signing-control-plane`, `web-api-boundary` |
+| Cosmos SDK chain / IBC / Cosmos EVM | `node-client` (`adapters/cosmos-sdk.md`) | `upstream-diff`, `semantic-mismatch` across the EVM-module boundary |
 | Any fork of a known upstream | `upstream-diff`, `delta` | the shape's own row |
 | Any target with a public documentation site, integration guide or SDK | `spec-divergence` | the shape's own row |
 | Any upgradeable deployment | `upgrade`, `privileged-path` | the shape's own row |
@@ -70,6 +75,39 @@ or justified in `scope.md`. Pick by shape, and say in `coverage.md` which you ch
 | A website or dApp listed in scope | `web-frontend` + `web-api-boundary` + `web-integrity` (`--lens web`) | exact-origin exclusions, local financial/intent candidate-control, pinned JS artifact comparison |
 | In-scope Web3 backend, payment API or wallet login | `web-api-boundary` + `privileged-path` | `recovery-failure`, `semantic-mismatch`, `reality-boundary` |
 | Any EVM target | `classic` (Part A always; Part B unless `solidity-auditor` ran) | — |
+
+The seven lenses added in this table — `bridge-messaging`, `zk-soundness`, `oracle-listing`,
+`governance-capture`, `account-abstraction`, `hooks-keepers`, `agent-wallet` — are also bundled
+together as the `frontier` group (`lenses.md`). Pick from it by shape rather than bundling all
+seven on every target.
+
+### Mechanical pre-reads, and which lens reads each
+
+Six helpers produce files that later lenses consume. They are reading aids, not findings: each one
+lists sites, values or candidates, and none establishes that anything is exploitable. Run the ones
+the target's shape calls for before Stage B, so the bundles carry their output.
+
+| Helper | Output | Consumed by | Reference |
+| --- | --- | --- | --- |
+| `config-snapshot` | `config-snapshot.json` | `live-reality`, `privileged-path`, `bridge-messaging`, `oracle-listing`, `governance-capture` | `references/config-snapshot.md` |
+| `rounding-map` | `rounding-map.json` | `accounting`, `economics`, `classic`, `seam` | `references/rounding-map.md` |
+| `nday-scan` | `nday-scan.json` | `upstream-diff`, `delta`, `node-client` | `references/nday-scan.md` |
+| `legacy-sweep` | `legacy-sweep.json` | `live-reality`, `privileged-path`, `impact-first` | `references/legacy-sweep.md` |
+| `init-race` | `init-race.json` | `upgrade`, `privileged-path` | `blind-spots.md` §22 |
+| `harness-gen` | a stateful test harness in a private directory | the experiment step, not a lens | `references/stateful-harness.md` |
+
+```sh
+python3 $S config-snapshot --rpc <url> --targets <addresses.json> --out <run>/config-snapshot.json
+python3 $S rounding-map --repo <checkout> --out <run>/rounding-map.json
+python3 $S nday-scan --repo <checkout> --upstream <name>=<upstream-clone> --out <run>/nday-scan.json
+python3 $S legacy-sweep --repo <checkout> --program <run>/program.json --out <run>/legacy-sweep.json
+python3 $S init-race --repo <checkout> --out <run>/init-race.json
+python3 $S harness-gen --repo <checkout> --out-dir <private-dir>
+```
+
+A helper that could not run — no RPC, no upstream clone, a shallow checkout — is a gap to record in
+`coverage.md`, never an empty result. The `blind-spots.md` sections §16–§23 explain what each
+output is for.
 
 Two lenses run on essentially every target, because their yield does not depend on the protocol's
 shape: **`privileged-path`** (access control and initialization are the categories automated
@@ -358,7 +396,7 @@ more useful than three inflated ones: say which surfaces you closed and on what 
 ## Before you report — answer `misses.md`
 
 The last step of the loop is not a pass; it is a check against your own output.
-`references/misses.md` lists thirty-four ways a hunt stops short, each with a cheap fix: concluding from
+`references/misses.md` lists forty-two ways a hunt stops short, each with a cheap fix: concluding from
 a name, stopping at the first consequence, skipping the privileged path because a checklist said
 "do not report admin can rug", never reading the dependency, never checking the compiler, auditing
 HEAD when scope is pinned to deployed addresses, dropping leads silently, and letting an unanchored

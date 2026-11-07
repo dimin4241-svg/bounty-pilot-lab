@@ -201,6 +201,31 @@ then decide how much week to spend — and where the ceiling is low, prefer the 
 every implementation shares, over any single implementation, because that is the only way to move
 the ceiling itself.
 
+## Where the 2026 payouts concentrated — context, not a forecast
+
+Public write-ups from 2026 cluster in the infrastructure layer rather than in application
+contracts: ZK verifiers and circuits ([OtterSec on zkVMs](https://osec.io/blog/zkvms-unfaithful-claims/),
+[zkSecurity on OpenVM](https://blog.zksecurity.xyz/posts/openvm-bugs/)), VM type systems, client
+mempool and DoS paths (a high-severity Nethermind bug paid $50k,
+[Octane](https://www.octane.security/post/octane-securitys-ai-catches-high-severity-ethereum-client-bug)),
+and Cosmos EVM precompiles (`adapters/cosmos-sdk.md`). That is a list of what got written up, which
+over-represents research teams; it is a reason to read `adapters/zk.md` and the `node-client` lens
+before dismissing an infrastructure scope, not evidence that this skill finds such bugs.
+
+Immunefi's own published numbers set expectations for a contract scope
+([Immunefi](https://immunefi.com/blog/research/nearly-every-long-running-bug-bounty-program-on-immunefi-has-found-a-critical-bug/)):
+a median critical payout around $20k against a mean around $114k, so a few large payouts carry the
+average; roughly one confirmed report in five is critical; and 61% of programs older than a year,
+94% of those older than five, have paid at least one critical. A long-running program is therefore
+not proof that the ground is exhausted — but its criticals were paid to someone, and
+`dup-map.md` is how you learn which.
+
+Programs are also starting to charge for submissions because of AI-generated spam: Firedancer
+introduced a fee of 1 SOL per report
+([CoinCentral](https://coincentral.com/solana-firedancer-introduces-new-fee-after-ai-bug-reports-surge)).
+Expect more of this. A fee or a reputation burn turns every rejected report into a cost, which is
+one more reason the gates in `adjudicate.md` and `check --submission` run before you file, not after.
+
 ## Duplicate risk is decided here, not at submission
 
 The dominant cause of loss across recorded hunts is not a wrong finding, it is a correct one

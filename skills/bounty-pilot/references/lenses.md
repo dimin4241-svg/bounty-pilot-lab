@@ -110,6 +110,32 @@ sources when the target ships them and the ordinary source tree otherwise. The e
 decides the class: **a precondition of a compromised host pays nothing** on every programme in it,
 so the entry point has to be remote — a page, a link, a message, a peer.
 
+## The frontier group
+
+Seven aimed lenses for surfaces where 2025–2026 losses and payouts concentrated and the older
+lenses read only part of the mechanism. `--lens frontier` bundles all seven; select individually by
+the target's shape (`passes.md`), because on a target without the surface each reads nothing.
+
+- **`bridge-messaging` → `hunt-agents/bridge-messaging-agent.md`.** The deployed verifier set,
+  thresholds and execution paths of a messaging route, and whether every field the payout reads is
+  bound to what was verified.
+- **`zk-soundness` → `hunt-agents/zk-soundness-agent.md`.** Circuits, provers and verifiers:
+  transcript order, unconstrained witnesses, field aliasing, public-input binding, verifying-key
+  management; the checklist is `adapters/zk.md`.
+- **`oracle-listing` → `hunt-agents/oracle-listing-agent.md`.** Each listed asset's feed, signer
+  quorum and freshness, and its live market depth against the cap that trusts it.
+- **`governance-capture` → `hunt-agents/governance-capture-agent.md`.** The market cost of the
+  voting power that passes a proposal, against the value the proposal can move.
+- **`account-abstraction` → `hunt-agents/account-abstraction-agent.md`.** Smart accounts, EIP-7702
+  delegations, ERC-4337 validation and paymasters, passkey and session-key wallets.
+- **`hooks-keepers` → `hunt-agents/hooks-keepers-agent.md`.** Code that runs on somebody else's call
+  — v4 hooks, keeper tasks, automation, Safe modules, routers — and the approvals it holds.
+- **`agent-wallet` → `hunt-agents/agent-wallet-agent.md`.** An AI agent that can sign or transfer:
+  what untrusted text can instruct it to do, and what the wallet bounds regardless.
+
+The mechanical pre-reads several of them consume (`config-snapshot`, `rounding-map`, `nday-scan`,
+`legacy-sweep`, `init-race`) are listed with their consumers in `passes.md`.
+
 ## Other languages
 
 Route from `adapters.md`. Build the model from primary documentation and the project's own tooling,

@@ -21,6 +21,8 @@ ADAPTERS = {
     "cairo-starknet": "adapters/cairo.md",
     "go": "adapters/go.md",
     "web-backend": "adapters/web-backend.md",
+    "zk": "adapters/zk.md",
+    "cosmos-sdk": "adapters/cosmos-sdk.md",
 }
 LENSES = {
     "solidity-evm": ["impact-first", "privileged-path", "accounting", "business-logic", "temporal-logic"],
@@ -35,7 +37,60 @@ LENSES = {
     "go": ["recovery-failure", "business-logic", "semantic-mismatch", "node-client"],
     "web-backend": ["privileged-path", "recovery-failure", "semantic-mismatch",
                     "web-api-boundary", "web-integrity"],
+    # Circuits, verifiers and zkVMs: soundness is the class that pays here, and a prover is a
+    # client - malformed input and nondeterministic hints are node-client ground.
+    "zk": ["zk-soundness", "node-client", "business-logic"],
+    # An app chain is a node: the bank/staking/vesting modules, precompiles and IBC are where
+    # the 2026 Cosmos EVM loss came from, and a fork's untaken upstream fixes are upstream-diff.
+    "cosmos-sdk": ["node-client", "privileged-path", "accounting", "upstream-diff",
+                   "composition"],
 }
+
+# Surfaces that call for a dedicated lens whatever the stack. Each entry is matched against
+# path words (camelCase split, see _path_words) and against dependency manifests. A signal is
+# a reading allocation, never a claim that the surface is present or vulnerable.
+SURFACE_PATH_TOKENS = {
+    "oracle-listing": ("oracle", "pricefeed", "priceoracle", "pyth", "chainlink", "redstone",
+                       "supra", "switchboard", "twap"),
+    "governance-capture": ("governor", "governance", "timelock", "voting", "dao",
+                           "proposal", "quorum"),
+    "account-abstraction": ("paymaster", "entrypoint", "useroperation", "userop",
+                            "smartaccount", "eip7702", "passkey", "webauthn", "p256",
+                            "sessionkey"),
+    "hooks-keepers": ("hook", "keeper", "automation", "multicall"),
+}
+SURFACE_DEPS = {
+    "oracle-listing": ("@pythnetwork", "pyth-sdk", "@chainlink/contracts", "@redstone-finance",
+                       "switchboard"),
+    "governance-capture": ("@openzeppelin/governance", "compound-governance"),
+    "account-abstraction": ("@account-abstraction", "account-abstraction", "permissionless",
+                            "@zerodev", "safe4337", "@biconomy", "@alchemy/aa",
+                            "p256-verifier"),
+    "hooks-keepers": ("v4-core", "v4-periphery", "@uniswap/v4-core", "@gelatonetwork",
+                      "@chainlink/automation"),
+}
+ZK_DEPS = ("halo2_proofs", "halo2-", "plonky2", "plonky3", "p3-", "ark-groth16",
+           "ark-relations", "sp1-zkvm", "sp1-sdk", "risc0-zkvm", "jolt-core",
+           "openvm", "bellman", "gnark", "circomlib", "snarkjs", "@noir-lang", "nova-snark")
+COSMOS_DEPS = ("github.com/cosmos/cosmos-sdk", "github.com/cometbft/cometbft",
+               "github.com/tendermint/tendermint", "github.com/cosmos/evm",
+               "github.com/evmos/", "github.com/cosmos/ibc-go")
+AGENT_LLM_DEPS = ("openai", "@anthropic-ai/sdk", "anthropic", "langchain", "@langchain",
+                  "llamaindex", "@modelcontextprotocol", "@ai-sdk", "@elizaos",
+                  "goat-sdk", "@coinbase/agentkit")
+AGENT_WALLET_DEPS = ("ethers", "viem", "web3", "@solana/web3.js", "wagmi", "@coinbase/cdp-sdk",
+                     "@coinbase/agentkit", "goat-sdk")
+SURFACE_SOURCE_SUFFIXES = {".sol", ".vy", ".rs", ".move", ".cairo", ".go", ".nr", ".circom"}
+SURFACE_MANIFESTS = ("package.json", "cargo.toml", "remappings.txt", "foundry.toml",
+                     "go.mod", "move.toml", "scarb.toml", "requirements.txt", "pyproject.toml",
+                     "nargo.toml", ".gitmodules")
+
+
+def _dep_hit(text, dep):
+    """A dependency name matched at a name boundary, never inside a longer name."""
+    pattern = (r"(?<![a-z0-9])" + re.escape(dep)
+               + (r"(?![a-z0-9])" if dep[-1].isalnum() else ""))
+    return re.search(pattern, text) is not None
 
 BACKEND_JS_DEPS = ("express", "fastify", "@nestjs", "koa", "@hapi/hapi", "hapi",
                    "apollo-server", "@apollo/server", "graphql-yoga", "socket.io",
@@ -169,6 +224,42 @@ def _signing_signals(root, files):
     return signals
 
 
+def _surface_signals(root, files):
+    """Lens -> bounded evidence list for the dedicated surface lenses. Passive, no execution."""
+    found = {}
+
+    def note(lens, evidence):
+        rows = found.setdefault(lens, [])
+        if len(rows) < 5 and evidence not in rows:
+            rows.append(evidence)
+
+    for name in files:
+        low = "/" + name.lower()
+        if any(part in low for part in ("/test", "/mock", "/node_modules/", "/lib/")):
+            continue
+        # Contract and node sources only: a frontend's `hooks/` directory is React, not v4.
+        if Path(name).suffix.lower() not in SURFACE_SOURCE_SUFFIXES:
+            continue
+        words = _path_words(name)
+        for lens, tokens in SURFACE_PATH_TOKENS.items():
+            hit = next((tok for tok in tokens if tok in words), None)
+            if hit:
+                note(lens, "path names " + repr(hit) + ": " + name)
+    for manifest in [x for x in files if Path(x).name.lower() in SURFACE_MANIFESTS]:
+        text = _read(root / manifest).lower()
+        for lens, deps in SURFACE_DEPS.items():
+            hit = sorted(dep for dep in deps if _dep_hit(text, dep))
+            if hit:
+                note(lens, manifest + " declares: " + ", ".join(hit))
+        llm = sorted(dep for dep in AGENT_LLM_DEPS if _dep_hit(text, dep))
+        wallet = sorted(dep for dep in AGENT_WALLET_DEPS if _dep_hit(text, dep))
+        # An LLM SDK alone is a chatbot; it is an agent wallet only beside a signing library.
+        if llm and wallet:
+            note("agent-wallet", manifest + " declares LLM " + ", ".join(llm)
+                 + " beside wallet " + ", ".join(wallet))
+    return found
+
+
 def route(repo):
     root = Path(repo).resolve()
     raw = subprocess.run(["git", *GIT_HARDENING, "-C", str(root), "ls-files", "-z"],
@@ -189,6 +280,21 @@ def route(repo):
         add("cairo-starknet", "Scarb.toml or Cairo source (deployment type unconfirmed)")
     if any(Path(x).name == "go.mod" for x in lower) or any(x.endswith(".go") for x in lower):
         add("go", "Go manifest or .go source")
+    for manifest in [x for x in files if Path(x).name.lower() == "go.mod"]:
+        text = _read(root / manifest).lower()
+        hit = sorted(dep for dep in COSMOS_DEPS if dep in text)
+        if hit:
+            add("cosmos-sdk", manifest + " requires " + ", ".join(hit))
+    if any(x.endswith(".circom") for x in lower):
+        add("zk", "Circom circuit source")
+    if any(Path(x).name == "nargo.toml" for x in lower) or any(x.endswith(".nr") for x in lower):
+        add("zk", "Noir project (Nargo.toml or .nr source)")
+    for manifest in [x for x in files if Path(x).name.lower() in
+                     ("cargo.toml", "go.mod", "package.json")]:
+        text = _read(root / manifest).lower()
+        hit = sorted(dep for dep in ZK_DEPS if _dep_hit(text, dep))
+        if hit:
+            add("zk", manifest + " declares proving dependency: " + ", ".join(hit))
     # Only route web-backend on real server signals. A plain Hardhat/DeFi repo (its
     # .ts/.js are config, scripts or a frontend) must not acquire a backend tag, or
     # it displaces lenses such as accounting.
@@ -248,12 +354,17 @@ def route(repo):
             "stacks": stacks, "warnings": warnings, "native_execution_verified": False,
             "messaging_signals": _messaging_signals(root, files),
             "signing_signals": signing,
+            "surface_signals": _surface_signals(root, files),
             "suggested_cross_stack_lenses":
             (["semantic-mismatch", "recovery-failure", "composition"]
              if len(stacks) > 1 else []) + (["signing-control-plane"] if signing else []),
             "notice": "Routing only. A file extension does not prove a runtime, deployment or coverage."}
     report["prioritization"] = prioritize(report)
     return report
+
+SURFACE_LENSES = ("zk-soundness", "bridge-messaging", "oracle-listing", "governance-capture",
+                  "account-abstraction", "hooks-keepers", "agent-wallet")
+
 
 def prioritize(route_report, budget=6):
     """Rank diverse lenses from *evidence of stack*, never predicted vulnerability odds."""
@@ -268,7 +379,11 @@ def prioritize(route_report, budget=6):
             # Ranks like any specialised lens once a stack asks for it, and is dropped outright
             # when none does: a node lens on a contracts-only target reads nothing.
             "node-client": 3, "signing-control-plane": 3, "web-api-boundary": 4,
-            "web-integrity": 2}
+            "web-integrity": 2,
+            # Dedicated surface lenses: dropped unless a stack or surface signal asks for them.
+            "zk-soundness": 3, "bridge-messaging": 3, "oracle-listing": 2,
+            "governance-capture": 2, "account-abstraction": 2, "hooks-keepers": 2,
+            "agent-wallet": 2}
     reasons = {name: ["general baseline"] for name in base}
     hinted = set()
     for stack in route_report["stacks"]:
@@ -284,6 +399,15 @@ def prioritize(route_report, budget=6):
     if messaging:
         base["integration-auth"] += 8
         reasons["integration-auth"].append("bridge/relayer/messaging signal: " + messaging[0])
+    if messaging:
+        base["bridge-messaging"] += 7
+        reasons["bridge-messaging"].append("bridge/relayer/messaging signal: " + messaging[0])
+        hinted.add("bridge-messaging")
+    for lens, evidence in sorted((route_report.get("surface_signals") or {}).items()):
+        if lens in base and evidence:
+            base[lens] += 4
+            reasons[lens].append("surface signal: " + evidence[0])
+            hinted.add(lens)
     signing = route_report.get("signing_signals") or []
     if signing:
         base["signing-control-plane"] += 10
@@ -301,6 +425,9 @@ def prioritize(route_report, budget=6):
         base.pop("web-api-boundary", None)
     if "web-integrity" not in hinted:
         base.pop("web-integrity", None)
+    for lens in SURFACE_LENSES:
+        if lens not in hinted:
+            base.pop(lens, None)
     ranked = sorted(base, key=lambda name: (-base[name], name))
     # Who may deliver a message is the boundary every bridge and relayer turns on: with any
     # messaging signal, integration-auth is selected whatever the budget.

@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.53.0 — frontier surfaces: what the 2025-2026 losses and payouts were made of
+
+Built from a review of 2025 to November 2026 incidents, paid disclosures and AI-auditor
+benchmarks. On-chain code was most incidents but a small share of value; the large losses were
+deployed configuration, dependency N-days, abandoned contracts and repetition-amplified rounding,
+and 2026 payouts concentrated in ZK, VM and client code. No measured improvement is claimed.
+
+- Seven lenses, bundled by name or as the `frontier` group: `bridge-messaging` (per-message
+  type, sender, amount and replay binding; verifier configuration), `zk-soundness` (transcript
+  order, unconstrained witnesses, subgroup checks, live verification keys), `oracle-listing`
+  (pull-oracle signature quorum and timestamp direction; pump-and-borrow listing economics),
+  `governance-capture` (quorum denominators, cost to buy a vote, timelock bypass),
+  `account-abstraction` (EIP-7702 EOA assumptions, ERC-4337 paymasters, the EIP-7951 empty-return
+  trap, durable nonces), `hooks-keepers` (Uniswap v4 hook binding, public keeper multicalls,
+  standing approvals) and `agent-wallet` (prompt injection into agents that can move funds).
+- `stack_route.py` detects ZK (Circom, Noir, halo2, zkVM and gnark dependencies) and Cosmos SDK /
+  CometBFT / Cosmos EVM chains, with new adapters `adapters/zk.md` and `adapters/cosmos-sdk.md`,
+  and routes each frontier lens into `recommended` only on a stack or surface signal. A React
+  `hooks/` directory does not route the v4 lens; an LLM SDK routes `agent-wallet` only beside a
+  wallet library.
+- Six mechanical reads, each `bounty.py <command>` and each handed to the lenses that use it:
+  `legacy-sweep` (deprecated addresses from repository history, with code and balances),
+  `config-snapshot` (Safe, timelock, ownable, AccessControl members, EIP-1967 slots, LayerZero
+  DVN counts, Chainlink freshness, arbitrary getters, at one block, read-only), `nday-scan`
+  (upstream security fixes newer than the pinned submodule, vendored copy, go.mod or Cargo.lock
+  version, offline), `rounding-map` (rounding direction x value fed x repeatability),
+  `init-race` (split deploy/initialize, initializable implementations) and `harness-gen`
+  (deliberately failing stateful invariant skeletons from ABIs).
+- `templates/RepetitionDrift.t.sol`: candidate and negative control for a rounding repeated N
+  times. Calibrated with forge on a toy vault that rounds burned shares down: the candidate shows
+  a profit of 49 base units over 50 repetitions and the control against a fixed copy shows none.
+  The calibration found two template defects, both fixed: an iteration that reverts now ends the
+  loop (on the control the protection holds by reverting), and `_attackerValue()` reverts until
+  filled instead of counting the asset balance alone, which booked a withdrawal of the attacker's
+  own deposit as profit.
+- `rounding-map` reads hand-rolled share books (`shares[owner] -= s; totalShares -= s`) as burns
+  and mints; it had reported the calibration vault's bug as plain state. Debt books are excluded.
+- `hack-patterns.md`, `blind-spots.md` (sections 16-23), `misses.md` (questions 35-42),
+  `targets.md`, `passes.md`, `lenses.md`, `impact-classes.md`, `wallet-agent.md` (wallet
+  cryptography, Safe display) and `node-client-agent.md` (verification caches, mempool
+  validation, precompile state bridges) carry the sourced 2025-2026 precedents.
+- `holdout-2026.md` lists post-June-2026 incidents for blind backtests, without mechanisms. This
+  version describes them, so each is blind only for 0.52.1 and earlier; the file says how to pick
+  cases that can measure 0.53.
+- Checked end to end beyond the unit tests: `config-snapshot` and `legacy-sweep` against a local
+  anvil node (values read at a pinned block, a deprecated contract holding tokens ranked first,
+  no endpoint or key in any output), and the `harness-gen` output compiled with forge.
+
 ## 0.52.1 — repairs found in review: a lost sentence, a 3.9 test, an unused fault hint
 
 - Restore the SKILL.md sentence "Credentials in bundled source are redacted." Its second line was

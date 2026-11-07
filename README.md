@@ -18,7 +18,14 @@
 
 ---
 
-## Current release: 0.52.1 — review repairs on top of 0.52.0
+## Current release: 0.53.0 — frontier surfaces from the 2025-2026 losses
+
+Seven new lenses (`frontier`: bridge messages, ZK soundness, oracles and listings, governance
+capture, smart accounts, v4 hooks and keepers, agent wallets), ZK and Cosmos SDK adapters, and six
+mechanical reads: `legacy-sweep`, `config-snapshot`, `nday-scan`, `rounding-map`, `init-race`,
+`harness-gen`, plus a calibrated `RepetitionDrift.t.sol`. See `CHANGELOG.md`.
+
+### 0.52.1 — review repairs on top of 0.52.0
 
 A lost SKILL.md sentence restored (bundled credentials are redacted), the suite green on Python 3.9
 again and run there by a new GitHub-hosted workflow, lab release notes moved to

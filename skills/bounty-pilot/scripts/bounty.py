@@ -8128,7 +8128,8 @@ LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence', 'privileg
           'temporal-logic', 'recovery-failure', 'semantic-mismatch', 'composition',
           'impact-first', 'classic', 'web-frontend', 'node-client', 'secrets-artifacts',
           'wallet', 'signing-control-plane', 'reality-boundary', 'web-api-boundary',
-          'web-integrity')
+          'web-integrity', 'bridge-messaging', 'zk-soundness', 'oracle-listing',
+          'governance-capture', 'account-abstraction', 'hooks-keepers', 'agent-wallet')
 TRIAGE = 'triage'
 # Aiming lenses produce a reading order, not findings: spec-divergence reads what the project
 # promised in its own documentation and says where to go looking for the promise being broken.
@@ -8156,6 +8157,12 @@ NODE_LENSES = ('node-client',)
 # behalf. Both produced a confirmed High in this skill's own ledger with no lens looking.
 ARTIFACT_LENSES = ('secrets-artifacts',)
 WALLET_LENSES = ('wallet',)
+# Surfaces the 2025-2026 losses and payouts concentrated on that no earlier lens owned: message
+# meaning in bridges, ZK soundness, pull oracles and listing economics, governance bought at
+# market, smart accounts and pre-signed transactions, v4 hooks and public keepers, and agents
+# that hold keys. Each is also routed by stack_route.py when the source shows the surface.
+FRONTIER_LENSES = ('bridge-messaging', 'zk-soundness', 'oracle-listing', 'governance-capture',
+                   'account-abstraction', 'hooks-keepers', 'agent-wallet')
 WEB_SOURCE_SUFFIXES = {'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.html', '.htm', '.vue',
                        '.svelte', '.astro'}
 # Build output and installed packages: a frontend's own tree holds megabytes of both.
@@ -8564,6 +8571,30 @@ ANALYSIS_FILES = (
      'first, then changed-after-audit, then audited-stale. sequence_surfaces are the deployment, '
      'migration and upgrade files. A band is a reading order, not a likelihood: read the top of '
      'band 1 and 2 before anything a recent audit covered.'),
+    ('rounding-map.json', ('accounting', 'economics', 'classic', 'seam'),
+     'Every rounding site with its direction, the value it feeds and whether the function can be '
+     'repeated cheaply (rounding_map.py, lexical). favors_user means the rounding goes the '
+     'user\'s way on what they pay or receive; repeatable means batching or nothing per-call '
+     'stops a loop. Neither is profit: compute the drift per iteration against the cost of one, '
+     'and prove it with templates/RepetitionDrift.t.sol.'),
+    ('config-snapshot.json', ('live-reality', 'privileged-path', 'bridge-messaging',
+                              'oracle-listing', 'governance-capture'),
+     'Deployed configuration read at one block (config_snapshot.py): thresholds, owners, '
+     'modules, timelock delays, role members, DVN/ISM verifier counts, feed freshness. A flag is '
+     'a lead. A misconfiguration pays only where an unprivileged actor gains or the program '
+     'covers it; trusted-role misuse is usually excluded.'),
+    ('nday-scan.json', ('upstream-diff', 'delta', 'node-client'),
+     'Upstream commits after the version this target pins, scored for security relevance '
+     '(nday_scan.py). fix_absent means the change is not in the target copy, not that the target '
+     'reaches the changed code. Confirm reachability with a native test; disclose privately.'),
+    ('legacy-sweep.json', ('live-reality', 'privileged-path', 'impact-first'),
+     'Addresses the repository history recorded and HEAD no longer does, with code and balances '
+     'when read (legacy_sweep.py). A deprecated contract holding value is a lead only where the '
+     'program covers it and an unprivileged path reaches the funds.'),
+    ('init-race.json', ('upgrade', 'privileged-path'),
+     'Proxies deployed and initialized in separate transactions, implementations that can still '
+     'be initialized, and unguarded initialize functions (init_race.py). History is not a '
+     'finding: check the live initialized slot at a pinned block.'),
     ('function-coverage.json', ('coverage-gap', 'classic', 'seam'),
      'Entry points and the ones no reading has examined (`unexamined`). Examined means a reading '
      'said it looked, not that the function is safe. Start from the unexamined entry points.'),
@@ -8740,13 +8771,15 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
             chosen.extend(ARTIFACT_LENSES)
         elif lens == 'wallet-app':
             chosen.extend(WALLET_LENSES)
+        elif lens == 'frontier':
+            chosen.extend(FRONTIER_LENSES)
         elif lens in LENSES or lens == TRIAGE:
             chosen.append(lens)
         else:
             raise ValueError(f'unknown lens {lens!r}; choose from ' + ', '.join(LENSES)
                              + f', {TRIAGE}, or the groups aim / attack / config / logic / '
                                'cross-stack / signing / high-impact / web / node / artifacts / '
-                                'wallet-app / recommended / all')
+                                'wallet-app / frontier / recommended / all')
     chosen = list(dict.fromkeys(chosen))
     for lens in chosen:
         source_file = (references / f'{TRIAGE}.md' if lens == TRIAGE
@@ -11566,6 +11599,11 @@ def build_parser():
                               'when nothing could be searched (for example: security reports go '
                               'through advisories, see <url>)')
 
+    for name, (_module, text) in HELPER_COMMANDS.items():
+        # Registered for the command list and --help; main() hands their arguments to the
+        # helper's own parser untouched, so `bounty.py <name> --help` prints the helper's options.
+        sub.add_parser(name, help=text, add_help=False)
+
     queue = sub.add_parser('queue', help='show every open lead and its required next experiment')
     queue.add_argument('--run', required=True)
     queue.add_argument('--brief', action='store_true',
@@ -11963,7 +12001,27 @@ def build_parser():
     return parser
 
 
+# Standalone helpers reachable as `bounty.py <command> ...`: each owns its argument parser.
+HELPER_COMMANDS = {
+    'nday-scan': ('nday_scan', 'list upstream security fixes newer than the pinned version '
+                               'the target never took (offline, local upstream clones)'),
+    'config-snapshot': ('config_snapshot', 'read deployed thresholds, owners, delays, roles and '
+                                           'verifier counts at one block (read-only RPC)'),
+    'rounding-map': ('rounding_map', 'map rounding direction, the value it feeds and how cheaply '
+                                     'it repeats'),
+    'harness-gen': ('harness_gen', 'write a deliberately failing stateful invariant harness '
+                                   'skeleton from ABIs'),
+    'init-race': ('init_race', 'find deploy/initialize splits and initializable '
+                               'implementations'),
+    'legacy-sweep': ('legacy_sweep', 'list deprecated addresses from repository history, with '
+                                     'code and balances when read'),
+}
+
+
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in HELPER_COMMANDS:
+        return load_impact_helper(HELPER_COMMANDS[argv[0]][0]).main(argv[1:])
     args = build_parser().parse_args(argv)
     try:
         if args.action == 'init':
