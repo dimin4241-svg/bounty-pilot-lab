@@ -259,7 +259,7 @@ def _sol_string(text):
     return clean.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def render_invariants(contract, functions, properties, framework):
+def render_invariants(contract, functions, properties, framework, preset=None, fork=None):
     handler = "%sHandler" % contract
     out = ["// SPDX-License-Identifier: UNLICENSED", PRAGMA, "",
            "// Generated skeleton (bounty-pilot harness_gen.py). DELIBERATELY FAILING: every",
@@ -284,6 +284,25 @@ def render_invariants(contract, functions, properties, framework):
            "        handler = new %s(target, system);" % handler,
            "        targetContract(address(handler));",
            "        bytes4[] memory selectors = new bytes4[](%d);" % len(functions)]
+    if fork is not None:
+        require_line = '        require(target.code.length > 0, "TODO: deploy or fork the target in setUp");'
+        at = out.index(require_line)
+        out[at:at] = [
+            '        vm.createSelectFork(vm.envString("%s"), %d);'
+            % (fork["rpc_env"], fork["block"]),
+            '        target = %s;' % fork["address"],
+        ]
+    if preset == "erc4626-direct-custody":
+        before_contract = out.index("contract %sInvariants is StdInvariant, Test {" % contract)
+        out[before_contract:before_contract] = [
+            "interface IBPDirectCustodyVault {",
+            "    function asset() external view returns (address);",
+            "    function totalAssets() external view returns (uint256);",
+            "}",
+            "interface IBPCustodyToken {",
+            "    function balanceOf(address) external view returns (uint256);",
+            "}", "",
+        ]
     for i, fn in enumerate(functions):
         out.append("        selectors[%d] = %s.%s.selector;" % (i, handler, fn["handler"]))
     out += ["        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));",
@@ -295,6 +314,18 @@ def render_invariants(contract, functions, properties, framework):
                 "    function invariant_%s() public {" % prop["name"],
                 '        assertTrue(false, "TODO: write the property: %s");' % _sol_string(prop["text"]),
                 "    }", ""]
+    if preset == "erc4626-direct-custody":
+        # NOT universal: only for a reviewer-confirmed direct-custody vault
+        # with no lending/strategies, fee-on-transfer or rebasing token.
+        out += [
+            "    /// ONLY when totalAssets must be fully backed by the vault's own asset balance.",
+            "    function invariant_directCustodyBacking() public view {",
+            "        IBPDirectCustodyVault v = IBPDirectCustodyVault(target);",
+            "        uint256 claim = v.totalAssets();",
+            "        uint256 backing = IBPCustodyToken(v.asset()).balanceOf(target);",
+            '        assertLe(claim, backing, "direct custody backing violated");',
+            "    }", "",
+        ]
     out += ["    function invariant_callSummary() public view {",
             "        handler.callSummary();",
             "    }"]
@@ -430,9 +461,25 @@ def require_private_output(out, repo=None):
 
 
 def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
-             framework="foundry", repo=None):
+             framework="foundry", repo=None, preset=None, fork=None,
+             confirm_direct_custody=False):
     if framework not in ("foundry", "medusa"):
         raise ValueError("framework must be foundry or medusa")
+    if preset not in (None, "erc4626-direct-custody"):
+        raise ValueError("unknown invariant property preset")
+    if preset and not confirm_direct_custody:
+        raise ValueError("property preset requires --confirm-direct-custody assumptions")
+    if preset and framework != "foundry":
+        raise ValueError("automated ERC4626 custody preset currently supports Foundry only")
+    if fork is not None:
+        if not isinstance(fork, dict) or not re.fullmatch(r"0x[0-9a-fA-F]{40}", str(fork.get("address", ""))):
+            raise ValueError("fork target address must be 20-byte hex")
+        if type(fork.get("block")) is not int or fork["block"] < 1:
+            raise ValueError("fork block must be a pinned positive integer")
+        if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,63}", str(fork.get("rpc_env", ""))):
+            raise ValueError("fork RPC environment variable must be a safe uppercase name")
+    if preset and fork is None:
+        raise ValueError("automated custody preset requires pinned --target-address/--fork-block/--rpc-env")
     actors = int(actors)
     if not 1 <= actors <= 32:
         raise ValueError("actors must be between 1 and 32")
@@ -447,7 +494,9 @@ def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
     wanted = set(contracts or [])
     plan = {"schema_version": 1, "framework": framework, "actors": actors, "contracts": [],
             "functions_included": [], "functions_skipped": [], "contracts_skipped": [],
-            "properties": list(properties or []), "files": [], "notice": NOTICE}
+            "properties": list(properties or []), "files": [], "notice": NOTICE,
+            "property_preset": preset, "fork_block": fork["block"] if fork else None,
+            "direct_custody_assumptions_operator_confirmed": bool(preset and confirm_direct_custody)}
     writes = {}
     for contract, entries, origin in found:
         if wanted and contract not in wanted:
@@ -456,6 +505,19 @@ def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
             plan["contracts_skipped"].append({"contract": contract[:80], "source": origin,
                                               "reason": "invalid identifier"})
             continue
+        if preset == "erc4626-direct-custody":
+            getters = {e.get("name"): e for e in entries if isinstance(e, dict)
+                       and e.get("type") == "function"
+                       and e.get("name") in ("asset", "totalAssets")
+                       and e.get("inputs") == []}
+            if set(getters) != {"asset", "totalAssets"} or any(
+                    getters[n].get("stateMutability") not in ("view", "pure")
+                    for n in ("asset", "totalAssets")):
+                raise ValueError("custody preset requires view asset() and totalAssets() ABI getters")
+            if [x.get("type") for x in getters["asset"].get("outputs", [])] != ["address"]:
+                raise ValueError("asset() must return address for custody preset")
+            if [x.get("type") for x in getters["totalAssets"].get("outputs", [])] != ["uint256"]:
+                raise ValueError("totalAssets() must return uint256 for custody preset")
         included, skipped = _plan_contract(contract, entries, origin)
         plan["functions_skipped"] += skipped
         if not included:
@@ -464,7 +526,8 @@ def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
             continue
         handler_file, inv_file = contract + "Handler.sol", contract + "Invariants.t.sol"
         writes[handler_file] = render_handler(contract, included, actors)
-        writes[inv_file] = render_invariants(contract, included, plan["properties"], framework)
+        writes[inv_file] = render_invariants(contract, included, plan["properties"], framework,
+                                              preset=preset, fork=fork)
         plan["contracts"].append({"name": contract, "source": origin, "handler": handler_file,
                                   "invariants": inv_file, "functions": len(included)})
         plan["functions_included"] += [{k: fn[k] for k in ("contract", "signature", "selector",
@@ -501,13 +564,26 @@ def main(argv=None):
     p.add_argument("--out-dir", required=True, help="private directory outside the checkout")
     p.add_argument("--repo", help="target checkout, so --out-dir can be refused inside it")
     p.add_argument("--framework", choices=("foundry", "medusa"), default="foundry")
+    p.add_argument("--property-preset", choices=("erc4626-direct-custody",))
+    p.add_argument("--confirm-direct-custody", action="store_true",
+                   help="operator confirms no strategies, rebasing, fee-on-transfer or external reserves")
+    p.add_argument("--target-address", help="explicit pinned target address, written into local harness")
+    p.add_argument("--fork-block", type=int)
+    p.add_argument("--rpc-env", help="uppercase environment variable containing read-only fork RPC URL")
     a = p.parse_args(argv)
     sources = list(a.artifact) + ([a.semantic_graph] if a.semantic_graph else [])
     if not sources:
         p.error("give at least one --artifact or --semantic-graph")
     try:
         props = parse_properties(Path(a.model).read_text(encoding="utf-8")) if a.model else []
-        plan = generate(sources, a.out_dir, a.contract, a.actors, props, a.framework, a.repo)
+        fork = None
+        if a.target_address or a.fork_block or a.rpc_env:
+            if not (a.target_address and a.fork_block and a.rpc_env):
+                raise ValueError("target-address, fork-block and rpc-env must be supplied together")
+            fork = {"address": a.target_address, "block": a.fork_block, "rpc_env": a.rpc_env}
+        plan = generate(sources, a.out_dir, a.contract, a.actors, props, a.framework, a.repo,
+                        preset=a.property_preset, fork=fork,
+                        confirm_direct_custody=a.confirm_direct_custody)
     except (OSError, ValueError) as exc:
         p.error(str(exc))
     print(json.dumps({"out_dir": str(Path(a.out_dir).resolve()),
