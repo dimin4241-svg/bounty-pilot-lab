@@ -79,6 +79,8 @@ def validate(data, host, require_permission=False):
             raise ValueError("private_resource_confirmed=true required for each case")
         for key in ("owner_resource", "outsider_control_resource"):
             _path(c.get(key))
+        if c["owner_resource"] == c["outsider_control_resource"]:
+            raise ValueError("owner and outsider control resources must differ")
         for key in ("owner_marker", "outsider_control_marker"):
             val = c.get(key)
             if not isinstance(val, str) or len(val) < 8 or len(val) > 200:
