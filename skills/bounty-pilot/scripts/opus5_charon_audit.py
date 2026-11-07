@@ -10,10 +10,8 @@ import hashlib
 import json
 import os
 import re
-import stat
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path, PurePosixPath

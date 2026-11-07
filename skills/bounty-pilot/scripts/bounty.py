@@ -1217,6 +1217,20 @@ def history_summary(ledger=None):
     }
 
 
+def brief_queue(result):
+    """`queue` without its glossary and without sections that are empty.
+
+    The full `notice` explains every field and runs to several kilobytes; an agent calling `queue`
+    after each pass pays for it every time. Only None, empty lists and empty objects are dropped: a
+    zero count, a false flag and every non-empty section stay, so nothing open is hidden.
+    """
+    kept = {key: value for key, value in result.items()
+            if key != 'notice' and value is not None and value != [] and value != {}}
+    kept['notice'] = ('--brief: field glossary and empty sections omitted; '
+                      'run queue without --brief for what each field means.')
+    return kept
+
+
 def lead_queue(run):
     run = Path(run).resolve()
     # The lead ledger is reported below rather than gated here: an untracked lead is exactly
@@ -11554,6 +11568,8 @@ def build_parser():
 
     queue = sub.add_parser('queue', help='show every open lead and its required next experiment')
     queue.add_argument('--run', required=True)
+    queue.add_argument('--brief', action='store_true',
+                       help='drop the field glossary and empty sections; the exit code is unchanged')
 
     probe = sub.add_parser('capability-probe',
                            help='establish what evidence this run can produce, before aiming it')
@@ -11978,7 +11994,7 @@ def main(argv=None):
             return 1 if result['untriaged'] or result['vacuous'] else 0
         if args.action == 'queue':
             result = lead_queue(args.run)
-            print(json.dumps(result, indent=2))
+            print(json.dumps(brief_queue(result) if args.brief else result, indent=2))
             return 1 if result['state'] == 'invalid' else 0
         if args.action == 'capability-probe':
             print(json.dumps(capability_probe(args.repo, args.run, args.rpc, args.deep,

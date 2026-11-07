@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.52.1 — repairs found in review: a lost sentence, a 3.9 test, an unused fault hint
+
+- Restore the SKILL.md sentence "Credentials in bundled source are redacted." Its second line was
+  dropped when `taint-paths.json` was added to the bundle list, so the redaction rule read as a
+  fragment. A test now asserts the whole sentence, and every documented path and `$S` subcommand.
+- Fix `test_request_error_does_not_echo_provider_secret` on Python 3.9-3.10, the declared minimum:
+  an `HTTPError` built with `fp=None` raises `KeyError` on `close()` there. The test now gives it a
+  body. Add a GitHub-hosted workflow running the suite on 3.9 and 3.12 plus pyflakes, so a
+  version-only failure no longer depends on what the self-hosted Mac has installed.
+- AVRE failure-recovery hypotheses now carry their family-specific fault plan (duplicate delivery,
+  retry after partial write, restart at checkpoint, out-of-order event; or failure before and
+  after state writes) in the first experiment step. It was computed and discarded. Candidate IDs
+  are unchanged: the step is not part of the identity.
+- Move the Lab 0.42-0.52 release sections out of SKILL.md into `references/lab-releases.md`
+  verbatim, with a one-line-per-tool index in their place: SKILL.md drops from 696 to under 600
+  lines and opens with what the skill is, not with release notes.
+- `queue --brief` drops the multi-kilobyte field glossary and empty sections for repeat calls;
+  zero counts, false flags and every non-empty section stay. The exit code is unchanged.
+- `agents/openai.yaml` names the lab skill (`$bounty-pilot-lab`, "Bounty Pilot Lab") instead of
+  the stable one, and the description is shortened from 1011 to 948 of its 1024 characters.
+- Remove unused imports and variables reported by pyflakes.
+
 ## 0.52.0 — a reading queue that aims at the declared scope and reads the same twice
 
 - Fix the taint queue spending its whole budget on whichever sink was enumerated

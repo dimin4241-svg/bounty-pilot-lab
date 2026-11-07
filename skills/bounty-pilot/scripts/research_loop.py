@@ -7,13 +7,11 @@ only with opt-in execution in externally enforced isolation. Observations from
 target tests are untrusted until independently checked against source/asserts.
 """
 import argparse
-import hashlib
 import importlib.util
 import json
 import os
 import re
 import sys
-from collections import Counter
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 

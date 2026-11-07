@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from web3_advanced import json_file, pairs_unique
+from web3_advanced import json_file
 
 SEED = Path(__file__).resolve().parent.parent / "references/web-historical-seeds.json"
 REV = re.compile(r"[0-9a-f]{40}\Z")

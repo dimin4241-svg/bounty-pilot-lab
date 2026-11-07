@@ -348,7 +348,8 @@ class SecureOpusRunnerTests(unittest.TestCase):
         self.assertNotIn("secret", sink.getvalue())
 
     def test_request_error_does_not_echo_provider_secret(self):
-        err = opus.urllib.error.HTTPError(opus.API_URL, 401, "dummy", {}, None)
+        # A real body: on Python 3.9-3.10 close() on an HTTPError built with fp=None raises KeyError.
+        err = opus.urllib.error.HTTPError(opus.API_URL, 401, "dummy", {}, io.BytesIO(b""))
         self.addCleanup(err.close)
         with mock.patch.object(opus.urllib.request, "urlopen",
                                side_effect=err):

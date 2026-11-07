@@ -18,7 +18,13 @@
 
 ---
 
-## Current release: 0.52.0 — a queue that aims at the scope and reads the same twice
+## Current release: 0.52.1 — review repairs on top of 0.52.0
+
+A lost SKILL.md sentence restored (bundled credentials are redacted), the suite green on Python 3.9
+again and run there by a new GitHub-hosted workflow, lab release notes moved to
+`references/lab-releases.md`, and `queue --brief` for repeat calls. See `CHANGELOG.md`.
+
+### 0.52.0 — a queue that aims at the scope and reads the same twice
 
 - The taint queue spends its budget across sinks instead of on whichever one was
   enumerated first: on a 357-sink target the written 500 rows covered 1 sink

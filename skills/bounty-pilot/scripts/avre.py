@@ -324,7 +324,7 @@ def _failure_plans(symbols, scope):
                                      "line": symbol["line"], "symbol": symbol["symbol"],
                                      "signals": symbol.get("signals", [])}], invariant,
                 "Possible duplicate/lost state or liveness impact; requires a local recovery test.",
-                ["Run candidate and negative-control fault injections in an isolated native test.",
+                ["Run candidate and negative-control fault injections (%s) in an isolated native test." % fault,
                  "Record state before failure, after restart, and after reconciliation."],
                 "Caller capability is unknown; do not assume compromised admin or third-party services.",
                 ["The function name may be unrelated to asynchronous or recovery behavior.",

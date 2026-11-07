@@ -109,7 +109,6 @@ def catalogue_texts(diff, hints, key_pattern=KEY_IN_CATALOGUE):
     Two forms are read, because Trezor's catalogue uses both: a flat `"key": "text"` and a nested
     `"key": {"Bolt": "text", ...}` with one variant per device. Empty variants are ignored.
     """
-    key = re.compile(key_pattern)
     nested_open = re.compile(key_pattern + r"\s*:\s*\{")
     flat = re.compile(key_pattern + r"\s*:\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
     variant = re.compile(r"\"[A-Za-z][A-Za-z0-9_]*\"\s*:\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
