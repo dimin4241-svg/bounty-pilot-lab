@@ -85,7 +85,8 @@ def score(manifest, base_dir=None):
         "comparisons": comparisons,
         "matched_controls": valid,
         "holdout_attested_by_operator": manifest.get("holdout_attested") is True,
-        "reportable_advantage": bool(valid and manifest.get("holdout_attested") is True),
+        "reportable_advantage": bool(valid and manifest.get("holdout_attested") is True and
+                                     all(c["delta"] > 0 for c in comparisons.values())),
         "precision_measured": False, "payout_prediction": False,
         "notice": ("No benchmark case is generated or executed here. Every scored arm must come "
                    "from a separate sealed run. Identical source revisions, ground truth, "
