@@ -658,3 +658,35 @@ The campaign scorecard requires existing **sealed and scored** blind backtests
 for every arm, with matched cohort and cost data; do not claim that a benchmark
 has been run until real scored outputs exist. The target radar only compares
 two supplied snapshots; daily capture must be separately configured.
+
+
+## Experimental Target Intelligence + Web/API workflow (optional)
+
+Read [references/target-intel-webapi.md](references/target-intel-webapi.md)
+before using these new offline-by-default modules:
+
+- scripts/program_scope_radar.py: compare saved program/scope/eligibility records,
+  or import recorded changes from gkdataio/security-research-library. A public
+  listing does NOT constitute current permission, and a scope recording time is
+  not a policy effective date.
+- scripts/js_change_intel.py: compare investigator-supplied local JS snapshots.
+  Optional vetted local jsluice AST extraction uses fixed arguments only. Never
+  fetches targets or emits query values/secret-containing source snippets.
+- scripts/api_surface_import.py: list GET paths from saved OpenAPI 3 JSON/YAML,
+  including mitmproxy2swagger output. No schema references are fetched; object
+  identifiers require authorized, investigator-owned test values.
+- scripts/target_intel_queue.py: combine the three offline lead sources into
+  one bounded, scoped-review queue. Priority is not severity or authorization.
+- scripts/web_auth_lab.py: dry-run validates a two-account plan; explicit
+  controlled GET execution requires current written policy checks, matching
+  HTTPS host, own accounts, synthetic markers, opt-in, and a vetted Mac sandbox.
+  Do NOT send requests to arbitrary live sites. A matching marker is merely
+  a candidate until an independent reviewer confirms broken authorization.
+
+These modules complement, not replace, Target Radar, nday_scan.py, the
+research_loop/native-evidence gates, deployed-reality verification, duplicate
+screening or bounty eligibility. They create evidence/review queues, not
+auto-submittable findings. Production API authorization testing is optional
+and is never triggered by a scheduled CI job. The regression workflow on
+the experimental branch runs only synthetic offline tests on a self-hosted
+macOS runner.

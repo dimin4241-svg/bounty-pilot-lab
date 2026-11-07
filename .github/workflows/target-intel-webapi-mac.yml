@@ -1,0 +1,43 @@
+name: target intelligence and Web API lab (Mac self-hosted)
+
+on:
+  # Never run PR-provided code on a personal runner.
+  push:
+    branches:
+      - feature/target-intel-webapi-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: target-intel-webapi-mac
+  cancel-in-progress: true
+
+jobs:
+  offline-python:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python runtime
+        run: python3 --version
+      - name: Compile the new helpers
+        run: |
+          python3 -m py_compile \
+            skills/bounty-pilot/scripts/program_scope_radar.py \
+            skills/bounty-pilot/scripts/js_change_intel.py \
+            skills/bounty-pilot/scripts/web_auth_lab.py \
+            skills/bounty-pilot/scripts/api_surface_import.py \
+            skills/bounty-pilot/scripts/target_intel_queue.py \
+            tests/test_target_intel_webapi.py
+      - name: Offline scope JS and Web/API synthetic suite
+        run: python3 -m unittest discover -s tests -p 'test_target_intel_webapi.py' -v
+      - name: Existing evidence-first unit suite
+        run: python3 -m unittest discover -s tests -p 'test_evidence_first_lab.py' -v
+      - name: Existing harness and scenario regressions
+        run: |
+          python3 -m unittest discover -s tests -p 'test_harness_gen.py' -v
+          python3 -m unittest discover -s tests -p 'test_research_loop.py' -v
