@@ -675,6 +675,8 @@ before using these new offline-by-default modules:
 - scripts/api_surface_import.py: list GET paths from saved OpenAPI 3 JSON/YAML,
   including mitmproxy2swagger output. No schema references are fetched; object
   identifiers require authorized, investigator-owned test values.
+- scripts/target_intel_queue.py: combine the three offline lead sources into
+  one bounded, scoped-review queue. Priority is not severity or authorization.
 - scripts/web_auth_lab.py: dry-run validates a two-account plan; explicit
   controlled GET execution requires current written policy checks, matching
   HTTPS host, own accounts, synthetic markers, opt-in, and a vetted Mac sandbox.
