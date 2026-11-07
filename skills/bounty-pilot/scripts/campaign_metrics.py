@@ -46,7 +46,7 @@ def score(manifest, base_dir=None):
         if not isinstance(item, dict) or not isinstance(item.get("scored"), str):
             raise ValueError(label + " must name a scored JSON array")
         scored_path = (root / item["scored"]).resolve()
-        if not scored_path.is_relative_to(root) if hasattr(scored_path, "is_relative_to") else root not in (scored_path, *scored_path.parents):
+        if root != scored_path and root not in scored_path.parents:
             raise ValueError("arm paths must remain inside manifest directory")
         cases = _read(scored_path)
         metadata = None
