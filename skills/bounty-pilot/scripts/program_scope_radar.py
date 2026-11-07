@@ -87,10 +87,14 @@ def normalize(snapshot, format_hint="auto"):
     if library:
         records = snapshot.get("programs")
         # Do not substitute a download time for when policies were verified.
-        stamps = [p.get("last_verified_at") for p in records or []]
+        stamps = [p.get("last_verified_at") for p in records or []
+                  if isinstance(p, dict) and p.get("last_verified_at")]
         if not at:
-            # Per-program last verified timestamps are recorded on each entry.
-            at = "1970-01-01T00:00:00Z"
+            # Fallback for the library format, which lacks snapshot_at. This
+            # is most-recent policy verification, NOT capture/effective time.
+            if not stamps:
+                raise ValueError("library snapshot requires snapshot_at or verification timestamps")
+            at = max(stamps, key=timestamp)
     else:
         records = snapshot.get("programs")
     if not isinstance(records, list) or len(records) > 5000:
