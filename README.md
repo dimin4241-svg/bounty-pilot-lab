@@ -25,6 +25,16 @@ capture, smart accounts, v4 hooks and keepers, agent wallets), ZK and Cosmos SDK
 mechanical reads: `legacy-sweep`, `config-snapshot`, `nday-scan`, `rounding-map`, `init-race`,
 `harness-gen`, plus a calibrated `RepetitionDrift.t.sol`. See `CHANGELOG.md`.
 
+> **Experimental evidence-first branch (not a release):** adds paired native
+> exploit-loop/oracle, fully scored blind ablation scorecards, an offline
+> deployment/configuration change radar, a focused deep-audit planner, and one
+> gated ERC4626 direct-custody invariant preset. See
+> [Evidence-first workflow](skills/bounty-pilot/references/evidence-first.md).
+> These are tools for validation and prioritisation, **not** a measured increase
+> in vulnerability discovery. Unit tests and real blind benchmark results are
+> distinct; no new finding or payout is claimed.
+
+
 ### 0.52.1 — review repairs on top of 0.52.0
 
 A lost SKILL.md sentence restored (bundled credentials are redacted), the suite green on Python 3.9
