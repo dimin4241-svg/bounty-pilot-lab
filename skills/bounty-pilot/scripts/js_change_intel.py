@@ -60,8 +60,13 @@ def route(raw):
             prefix = ""
         if len(u.path) > 240 or any(ord(c) < 32 for c in u.path):
             return None
-        names = sorted({k for k, _ in parse_qsl(u.query, keep_blank_values=True) if len(k) < 81})
-        return (prefix + (u.path or "/"), tuple(names))
+        # URL path segments may be signed bearer values or opaque account
+        # references. Never store long, potentially secret identifiers.
+        safe_path = "/".join("{opaque}" if len(segment) >= 30 else segment
+                             for segment in (u.path or "/").split("/"))
+        names = sorted({k for k, _ in parse_qsl(u.query, keep_blank_values=True)
+                        if 0 < len(k) < 81})
+        return (prefix + safe_path, tuple(names))
     except ValueError:
         return None
 
@@ -102,6 +107,9 @@ def snapshot(data, home, with_jsluice=False):
         u = urlsplit(url)
         if u.scheme != "https" or not u.hostname or u.username:
             raise ValueError("script URL must be HTTPS without userinfo")
+        # Keep only origin + path; signed CDN query parameters and fragments
+        # must not leak into output JSON.
+        url = "https://" + u.hostname.lower() + ((":" + str(u.port)) if u.port else "") + (u.path or "/")
         name = entry.get("file")
         if not isinstance(name, str) or not name or len(name) > 400:
             raise ValueError("file is required")
