@@ -214,3 +214,33 @@ Technique and format references:
 - Quitten/Autorize: controlled cross-account authorization comparison concept
 
 No upstream source code is copied by these new Python modules.
+
+
+## 4. Unified, review-first queue (new)
+
+Feed any combination of the output JSON files above to the single offline
+prioritizer:
+
+    python3 scripts/target_intel_queue.py \
+      --program-leads /private/scope-leads.json \
+      --js-leads /private/js-leads.json \
+      --openapi-leads /private/get-review-queue.json \
+      --api-host api.example.test \
+      --out /private/review-queue.json
+
+The API hostname is an *operator-supplied correlation key*, never inferred
+from arbitrary YAML server URLs. The queue groups changed program assets,
+new JavaScript endpoints and OpenAPI GET paths; it assigns a bounded review
+order based on signals such as new in-scope listings and auth/payment keywords.
+
+When a candidate endpoint is on a hostname appearing in a recently added
+public scope asset, its review priority increases modestly. **This is not an
+authorization decision** and it is not a severity/payout estimate. A missing
+record, a wildcard match or changed published policy does not give permission
+for any probe. Output includes source SHA256, explicit truncation counts, and
+next steps for manual, authorized validation. Review actual source policies
+and user-owned identities before preparing a web_auth_lab execution plan.
+
+This glue layer does not silently invoke an exploit runner, contact a target
+or disclose cookies, tokens, raw source bodies, or observed private response
+data. All candidate status requires independent triage and negative controls.
