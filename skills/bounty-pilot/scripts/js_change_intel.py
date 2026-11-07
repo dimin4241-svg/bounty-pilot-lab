@@ -21,7 +21,7 @@ ROUTES = re.compile(
     r'|/(?:api|graphql|v[0-9]+|auth|oauth|rpc|rest|users|accounts|payments|orders)'
     r'(?:/[A-Za-z0-9_{}.$:%-]+){0,12}(?:\?[A-Za-z0-9_=&%{}.$:-]{0,160})?', re.I)
 TOPICS = {
-    "authorization": ("authorize", "permission", "role", "ownership",
+    "authorization": ("authorization", "authorize", "permission", "role", "ownership",
                       "accesscontrol", "x-user-id", "bearer", "admin", "isowner"),
     "payment-flow": ("withdraw", "payment", "checkout", "refund", "amount",
                      "minout", "destination", "creditnote", "receiver", "transfer"),
