@@ -1,5 +1,20 @@
 # Bench 0.43: truthful historical comparison and blind AI audit protocol
 
+## Lab 0.55 private campaign preparation
+
+`blind_campaign.py prepare` accepts pinned source revision, old/new
+skill commit SHAs, identical model and budget per case, and a bounded
+list of source scopes. It writes separate opaque tasks for each arm
+without any published vulnerability truth. Keep
+`private-judge-ledger.json` outside both agent sandboxes. `compare`
+requires already scored, separately sealed backtest results, and
+reuses `bench_compare.py` without upgrading a self-reported
+comparison into a public accuracy claim. See
+`references/lab-055-productivity.md` for complete limitations and
+examples. A fully automated blind EVMbench run is NOT implemented
+by this new planner; it must be launched separately with explicit
+provider authorization, independent isolation and cost limits.
+
 ## What CI actually measures
 
 The `historical-probe` workflow obtains the public Monad BFT **pre-fix**

@@ -63,6 +63,15 @@ rules (isolation, inputs, what the output does **not** establish) are in
 `references/lab-releases.md` and the reference named on the line. None of them promotes a lead to a
 finding, sends live target traffic, or replaces the stages below.
 
+- **PoC and evaluation productivity (0.55)** — pinned-source
+  `poc_builder.py` creates a deliberately failing candidate/control
+  authoring task for a manually operated local agent, never an executed
+  exploit. `blind_campaign.py` isolates paired A/B tasks for sealed
+  backtests; `native_ir_flow.py` provides partial Rust MIR and normalized
+  Rust/Move data-flow leads; `failure_taxonomy.py` categorizes pipeline
+  bottlenecks; `setup_wizard.py` checks local tools without secret reads.
+  Read `references/lab-055-productivity.md` and preserve the unverified
+  status of any generated lead, receipt or performance claim.
 - **Financial state transitions (0.54)** — operator-selected CEX custody, L2
   finality, restaking queue/slashing, perps funding, and five additional
   high-value domains. Use `surface_route.py` for the 22-shape coverage map,

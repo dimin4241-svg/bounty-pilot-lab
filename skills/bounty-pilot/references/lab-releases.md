@@ -4,6 +4,21 @@ The release-by-release guidance for the optional lab tools, moved out of `SKILL.
 workflow reads first. `SKILL.md` keeps an index; read the section for a tool before running it.
 Every rule here still applies: nothing below is weaker for living in a reference file.
 
+### Experimental Lab 0.55 — reproducible research productivity
+
+Read `references/lab-055-productivity.md` before any local PoC
+authoring or blind comparison. `poc_builder.py` checks bounded source
+hashes and writes a deliberately failing scaffold and a human-reviewed
+local coding-agent task; it does not invoke an LLM or execute PoCs.
+`blind_campaign.py` prepares separate workspaces for two skill
+revisions and compares independently sealed scores without claiming
+the benchmark truly stayed blinded. `native_ir_flow.py` is partial
+textual Rust MIR / researcher-supplied Rust/Move normalized IR analysis.
+`failure_taxonomy.py` distinguishes model/PoC/impact/scope issues;
+`setup_wizard.py` preflights only local files and tool presence.
+No utility output independently proves loss, exploitability, bug
+novelty, payout, or enhanced rediscovery.
+
 ### Experimental Lab 0.54 — offline financial state transitions
 
 Read `references/financial-transitions.md` for exact input schemas,
