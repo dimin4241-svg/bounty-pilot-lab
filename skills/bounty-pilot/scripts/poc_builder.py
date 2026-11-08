@@ -7,7 +7,6 @@ unverified researcher-supplied evidence, never a validated vulnerability.
 import argparse
 import hashlib
 import json
-import os
 import re
 import sys
 from pathlib import Path
