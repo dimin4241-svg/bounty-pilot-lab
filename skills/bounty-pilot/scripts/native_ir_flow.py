@@ -58,6 +58,7 @@ def scan_rust_mir(s, revision):
             name = f.group(1)
             params = set(PARAM.findall(f.group(2)))
             taint = {v: [v] for v in params}
+            continue  # signature is a declaration, not a sensitive call site
         if name is None:
             continue
         if line.strip() == "}":
