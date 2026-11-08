@@ -11558,6 +11558,12 @@ def build_parser():
     parser.add_argument('--version', action='version', version=skill_version())
     sub = parser.add_subparsers(dest='action', required=True)
 
+    wiz = sub.add_parser('wizard', help='offline target and toolchain preflight; no keys or network')
+    wg = wiz.add_mutually_exclusive_group(required=True)
+    wg.add_argument('--answers', help='private JSON answers for scripted setup')
+    wg.add_argument('--interactive', action='store_true')
+    wiz.add_argument('--out', required=True, help='new private setup report path')
+
     init = sub.add_parser('init', help='create private run metadata; audits nothing')
     init.add_argument('--repo', required=True)
     init.add_argument('--out', required=True)
@@ -12024,6 +12030,11 @@ def main(argv=None):
         return load_impact_helper(HELPER_COMMANDS[argv[0]][0]).main(argv[1:])
     args = build_parser().parse_args(argv)
     try:
+        if args.action == 'wizard':
+            helper = load_impact_helper('setup_wizard')
+            forwarded = (['--answers', args.answers] if args.answers
+                         else ['--interactive'])
+            return helper.main(forwarded + ['--out', args.out])
         if args.action == 'init':
             print(json.dumps(initialize(args.repo, args.out, args.strict_evidence_review), indent=2))
             return 0
