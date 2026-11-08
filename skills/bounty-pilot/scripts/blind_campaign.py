@@ -8,7 +8,6 @@ review using existing backtest + bench_compare tools. No public uplift claim.
 import argparse
 import importlib.util
 import json
-import os
 import re
 import secrets
 import sys
