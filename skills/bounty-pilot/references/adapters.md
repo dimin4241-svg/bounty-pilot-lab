@@ -6,6 +6,16 @@ Select an adapter from manifests, build files, deployment artifacts and source; 
 from one file extension. If a project mixes stacks, route each component separately and add a seam
 pass across their trust boundary.
 
+## 0.54 domain and ecosystem selection
+
+For explicit protocol shapes (CEX/Custody, L2, restaking, perps, launchpads,
+prediction, Merkle, DA, TON, Hyperliquid, Fuel, NEAR, BitVM and others),
+run `surface_route.py --list`, then select only applicable shapes. Read
+`references/financial-transitions.md` and
+`references/extended-surfaces.md`. Their local state simulators are
+not a substitute for protocol-native adapters, and "methodology-only"
+must be reported honestly under coverage gaps.
+
 ## Native adapter procedures
 
 Start with `python3 <skill-dir>/scripts/stack_route.py --repo <checkout>` to generate a

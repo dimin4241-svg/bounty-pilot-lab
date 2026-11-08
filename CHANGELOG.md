@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.54.0 — local financial state transitions and expanded target-shape routing
+
+- Offline financial-transitions.py: conservative paired candidate/control
+  checks for custody, rollups, restaking, perps, launchpads, prediction
+  markets, airdrops, DA and VRF; untrusted observations never promote findings.
+- local_transition_sim.py: executable **disconnected** toy state machines for
+  deposit finality, repeated withdrawals, message replay/finality, queued
+  slashing and synthetic perp funding/health. This is not a live target harness.
+- vyper_bugs.py: known-advisory matcher for actual documented compiler
+  versions; bundled catalog currently includes one independently verified
+  public 2023 GHSA. Optional operator-supplied ranges are not verified.
+- surface_route.py: 22 target shapes, review boundaries, native evidence
+  requirements; TON, HyperCore/HyperEVM, Fuel, NEAR, Stacks, Algorand, Aleo,
+  BitVM, TEE/FHE and others are **methodology-only** until native adapters
+  exist. Perps, LST, L2, CEX, launchpads, Merkle, CDP and indexing have
+  explicit routes rather than relying on loose keyword matches.
+- Documentation and synthetic tests cover domain-specific invariants,
+  negative controls, fail-closed input, offline CLI and output permissions.
+- Evidence-first and Target Intelligence/Web/API work from previous PRs is
+  officially included in this release. GitHub-hosted synthetic tests remain
+  separate from manually launched Mac AI/fork workloads.
+- **Limits:** No live financial mutation or race attack is executed,
+  no production RPC is contacted, Vyper advisory catalog is incomplete,
+  and no historical blind rediscovery uplift has been measured.
+
 ## 0.53.0 — frontier surfaces: what the 2025-2026 losses and payouts were made of
 
 Built from a review of 2025 to November 2026 incidents, paid disclosures and AI-auditor

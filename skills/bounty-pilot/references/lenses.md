@@ -27,6 +27,23 @@ For every lens, produce: entry point, attacker capability, preconditions, state 
 property, consequence, experiment. Derive the property from the protocol's actual intent, read from
 its docs, specs and tests — not from a template.
 
+## Money-flow and target-shape reviews (Lab 0.54)
+
+For CEX/custody, rollups, restaking, perps, bonding curves, prediction
+markets, airdrops and DA/VRF, select explicit high-risk surfaces via
+`surface_route.py` and read `references/financial-transitions.md`.
+The disconnected `local_transition_sim.py` supplies expected reference
+behaviour; `financial_transitions.py` compares researcher-supplied paired
+observations, which are **never** independently verified. A native target
+PoC and honest control are mandatory to call a violation a finding.
+
+See `references/extended-surfaces.md` for TON, Fuel, Hyperliquid, NEAR,
+BitVM, TEE/FHE, indexers and EVM gas cases. Unsupported VM ecosystems
+are explicitly methodology-only, not a new adapter just because there
+is a paragraph here. Vyper known-compiler-version leads use
+`vyper_bugs.py` with official public advisory provenance and matching
+source-usage conditions; never submit a known advisory as a novel bug.
+
 ## Solidity / EVM
 
 - **Access lifecycle:** creation, initialization, ownership and role transfer, revocation, delegated

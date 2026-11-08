@@ -4,6 +4,17 @@ The release-by-release guidance for the optional lab tools, moved out of `SKILL.
 workflow reads first. `SKILL.md` keeps an index; read the section for a tool before running it.
 Every rule here still applies: nothing below is weaker for living in a reference file.
 
+### Experimental Lab 0.54 — offline financial state transitions
+
+Read `references/financial-transitions.md` for exact input schemas,
+coverage, provenance, limitations and safe CLI use. Disconnected simulators
+model how operation order should work, not how a real target works. The
+paired observation checker does not authenticate inputs, receipts, source
+revision or loss. The Vyper advisory checker is limited to one bundled
+verified public historical advisory plus optional unverified exports.
+The 22-shape router explicitly labels missing native adapters.
+Do not infer new payable findings or run production state-changing tests.
+
 ### Experimental Lab 0.52 — the taint queue aims at the scope
 
 `taint-paths.json` is still a reading queue and still proves nothing, but it is now worth reading
