@@ -223,7 +223,8 @@ def perps(st, event):
     if op == "funding":
         payer, payee = name(event, "payer"), name(event, "receiver")
         amt = amount(event, "amount")
-        a, b = owner(st, payer, "margins"), owner(st, payee, "margins")
+        a = owner(st, payer, "margins")
+        owner(st, payee, "margins")
         if a < amt:
             raise Rejected("insufficient funding margin")
         st["margins"][payer] -= amt
