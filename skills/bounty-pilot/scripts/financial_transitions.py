@@ -6,7 +6,6 @@ execution. Input observations are entirely researcher-supplied; a differential
 lead is not a vulnerability, valid transaction, proven economic loss or payout.
 """
 import argparse
-import hashlib
 import json
 import os
 import re
