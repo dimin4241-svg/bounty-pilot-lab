@@ -6,7 +6,6 @@ No model is launched, target code copied, reports read or benchmarks scored by
 review using existing backtest + bench_compare tools. No public uplift claim.
 """
 import argparse
-import hashlib
 import importlib.util
 import json
 import os
