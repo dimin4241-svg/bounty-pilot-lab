@@ -7,7 +7,6 @@ researcher-translated normalized graph JSON. Control flow, ownership, auth
 guards, macro expansions and storage reachability are NOT proven.
 """
 import argparse
-import hashlib
 import json
 import re
 import sys
