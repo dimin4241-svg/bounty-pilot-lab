@@ -44,6 +44,8 @@ class ReleaseTests(unittest.TestCase):
         description = re.search(r'^description: (.+)$', head, re.M).group(1)
         self.assertIn('AVRE', description)
         self.assertIn('bounty-pilot-lab', description)
+        # Long enough to route, short enough to tell apart from bounty-pilot at a glance.
+        self.assertLessEqual(len(description), 700)
 
     def test_changelog_leads_with_the_current_version(self):
         version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()

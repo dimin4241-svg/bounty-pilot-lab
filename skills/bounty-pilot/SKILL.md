@@ -1,6 +1,6 @@
 ---
 name: bounty-pilot-lab
-description: The experimental "lab" line of Bounty Pilot. Prefer it when the user asks for bounty-pilot-lab, the lab, AVRE, sequence or cross-component candidate search, the passive ecosystem inventory, ecosystem attack chains, multi-CLI agent dispatch, blind-spot experiments, or evidence review bound to a separate reviewer. Otherwise it runs the same evidence-driven Web3 bug bounty hunt as the stable skill (Immunefi, Cantina, HackenProof, Sherlock or a project's own program, from a repository URL or local checkout): target choice, scope and duplicate mapping, deployed-bytecode checks, Solidity/EVM, Rust/Solana, Substrate/FRAME, Move, Cairo or CosmWasm, in-scope dApp frontends and backends, post-audit delta review, severity placement and a private report. For a plain hunt that names no lab tooling, bounty-pilot is equivalent. Not for reviewing your own contracts during development (use solidity-auditor) or a pre-audit readiness report (use x-ray).
+description: The experimental "lab" line of Bounty Pilot for Web3 bug bounty hunting. Use when the user names bounty-pilot-lab or the lab, or asks for lab-only tooling: AVRE sequence and cross-component candidate search, the passive ecosystem inventory and attack chains, multi-CLI agent dispatch, blind-spot experiments, evidence-first and Target Intelligence experiments, or evidence review bound to a separate reviewer. For an ordinary bounty hunt that names none of these, prefer the stable bounty-pilot skill. Not for reviewing your own contracts during development (use solidity-auditor) or a pre-audit readiness report (use x-ray).
 ---
 # Bounty Pilot Lab
 
@@ -196,7 +196,7 @@ deprecated contract only where its scope does.
 Duplicate work comes first because `dup-map.json` travels in every bundle: a lens that meets a
 burned surface says so in its reading instead of re-deriving it. It does **not** skip the ground —
 a known issue and a new mechanism live in the same function more often than not, and a lens told to
-look away from a burned surface stops looking for the variant beside it (`hunt-agents/_shared.md`). With no public tracker, `dup-harvest --empty-reason "<why>"`
+look away from a burned surface stops looking for the variant beside it (`references/hunt-agents/_shared.md`). With no public tracker, `dup-harvest --empty-reason "<why>"`
 records that without a network call. Fill `in_scope_addresses` and `chain_ids` in `program.json`
 (`targets.md`): deployment evidence for anything else is refused at submission.
 
@@ -356,7 +356,8 @@ inputs that have since changed are reported as `stale`. Rust, Move, Cairo and Vy
 
 ## Stage 3 — Hunt
 
-Read `references/passes.md`; it settles lens selection, dispatch and stop rules. In outline:
+Read `references/passes.md`; it settles lens selection, dispatch and stop rules. Every hunt agent
+reads code by the habits in `references/sop.md`. In outline:
 
 1. **Aim.** `bundle --lens aim --include <run>/delta.json`, one agent each for `delta`,
    `upstream-diff`, `coverage-gap` and `spec-divergence`. Their product is a ranked reading order in
@@ -447,7 +448,7 @@ orchestrators.
 
 After every pass: append investigated mechanisms to `known-hypotheses.md` — including the ones you
 looked for and did not find — and record in `coverage.md` which lenses ran. Every reading ends with
-`EXAMINED | path:Contract.function` lines (`hunt-agents/_shared.md`); `converge` collects them into
+`EXAMINED | path:Contract.function` lines (`references/hunt-agents/_shared.md`); `converge` collects them into
 `examined.json`, which is what credits a function. Then:
 
 ```sh
@@ -630,6 +631,9 @@ follow the blind protocol in `references/backtest.md` (`backtest init`, `seal`, 
 `bench_compare.py`); never read the published findings before sealing — not even the titles. For live
 runs, keep a private ledger of effort, PoCs, duplicate outcomes, triage outcomes and reward status,
 and never publish target-level metrics in this toolkit.
+Maintainer-only protocols, not part of a hunt: `references/benchmark-protocol.md` (historical
+comparison), `references/opus5-charon-trial.md` (a pinned, paid model trial) and
+`references/runner-split.md` (which checks run in hosted CI and which only on a private runner).
 
 
 ## Experimental evidence-first / native-validation extensions
