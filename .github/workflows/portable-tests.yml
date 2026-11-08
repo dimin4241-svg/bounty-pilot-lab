@@ -6,7 +6,7 @@ name: portable tests (GitHub-hosted)
 # self-hosted Mac (tests.yml): nothing here runs forge, cargo or target code.
 on:
   push:
-    branches: [main]
+    branches: [main, feature/evidence-first-lab, feature/target-intel-webapi-v1]
   pull_request:
   workflow_dispatch:
 

@@ -1,8 +1,6 @@
-name: tests (Mac self-hosted)
+name: tests (GitHub-hosted)
 
 on:
-  # NEVER execute untrusted public pull_request code on a personal self-hosted Mac.
-  # Owners may manually start a vetted revision using workflow_dispatch.
   push:
     branches: [main]
   workflow_dispatch:
@@ -11,44 +9,48 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: tests-main
   cancel-in-progress: true
 
 jobs:
   unittest:
-    runs-on: [self-hosted, macOS]
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Verify Python toolchain
-        run: python3 --version
-      - name: Compile all helper modules
-        run: python3 -m compileall -q skills/bounty-pilot/scripts
-      - name: Run complete synthetic unit suite
-        run: python3 -m unittest discover -s tests -v
-
-  native-smoke:
-    runs-on: [self-hosted, macOS]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Verify local native test toolchains
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Python toolchain
+        run: python3 --version
+      - name: Compile all helper modules
+        run: python3 -m compileall -q skills/bounty-pilot/scripts
+      - name: Full synthetic unit suite
+        run: python3 -m unittest discover -s tests -v
+
+  native-smoke:
+    # Strictly synthetic fixture, no RPC/secret/production contract.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Toolchain
         run: |
-          export PATH="$HOME/.foundry/bin:$HOME/.cargo/bin:$PATH"
           forge --version
           cargo --version
-      - name: Run synthetic Solidity and Rust tests (no target networks)
+      - name: Synthetic Solidity and Rust fixtures
         run: |
-          export PATH="$HOME/.foundry/bin:$HOME/.cargo/bin:$PATH"
           forge test --root tests/fixtures/native/evm -vv
           cargo test --manifest-path tests/fixtures/native/rust/Cargo.toml --offline
-      - name: Check evidence gate on synthetic native fixtures
+      - name: Verify the synthetic native evidence gate
         run: |
-          export PATH="$HOME/.foundry/bin:$HOME/.cargo/bin:$PATH"
           python3 skills/bounty-pilot/scripts/bounty.py init --repo . --out "$RUNNER_TEMP/bp-fixture-run"
           python3 skills/bounty-pilot/scripts/scenario_runner.py \
             --plan tests/fixtures/native/paired-plan.json --repo . \
