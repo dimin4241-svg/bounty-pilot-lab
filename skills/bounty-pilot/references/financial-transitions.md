@@ -46,7 +46,9 @@ For **CEX custody**, create a file in a private temporary directory:
 }
 ~~~
 
-    python3 skills/bounty-pilot/scripts/local_transition_sim.py --input /private/trace.json --out /private/trace-expected.json
+```sh
+python3 skills/bounty-pilot/scripts/local_transition_sim.py --input /private/trace.json --out /private/trace-expected.json
+```
 
 Expected: legitimate first settlement succeeds; duplicate is rejected, and
 held funds are released only once. A rejected action makes no state change.
@@ -102,7 +104,9 @@ with the same declared pinned revision and initial-state digest:
 }
 ~~~
 
-    python3 skills/bounty-pilot/scripts/financial_transitions.py --input /private/paired.json --out /private/review.json
+```sh
+python3 skills/bounty-pilot/scripts/financial_transitions.py --input /private/paired.json --out /private/review.json
+```
 
 A differential-lead-needs-native-verification **only means that supplied
 data** show a candidate violation and a nonviolating control. The tool does
@@ -134,7 +138,9 @@ and manually dispatched coding agents. This release adds no public requests.
 
 ## Vyper known-compiler-issue review
 
-    python3 skills/bounty-pilot/scripts/vyper_bugs.py --inventory /private/compilers.json --out /private/vyper-review.json
+```sh
+python3 skills/bounty-pilot/scripts/vyper_bugs.py --inventory /private/compilers.json --out /private/vyper-review.json
+```
 
 ~~~json
 {"schema_version":1,"builds":[
