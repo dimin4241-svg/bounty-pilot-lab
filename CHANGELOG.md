@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.55.0 — PoC authoring, reproducible blind evaluation and native IR leads
+
+- `poc_builder.py`: source-anchored SHA-256 PoC authoring bundle with
+  deliberately failing native skeleton from the existing scaffold, local
+  agent prompt, and conservative dual-test receipt checks. No model or
+  native target execution is included; passing receipts remain unverified.
+- `blind_campaign.py`: separate baseline/candidate task workspaces with
+  opaque per-case identifiers and private judging ledger. Adjudication
+  reuses existing sealed backtest and `bench_compare.py`. No uplift
+  percentage is claimed before independent held-out measurement.
+- `native_ir_flow.py`: bounded def-use reading leads from existing
+  rustc textual MIR or operator-extracted normalized Rust/Move graph.
+  Explicitly not full Rust MIR CFG, native Move compiler integration or
+  independent verification of source reachability.
+- `failure_taxonomy.py`: structured bottleneck accounting across agent
+  output, PoC execution, controls, measured loss, scope and duplicate.
+  A quiet scan never becomes a claimed model miss.
+- `setup_wizard.py`: interactive or JSON offline preflight of local
+  checkout, reviewed source scopes, runtime tools and optional RPC variable
+  *name* (never a secret). Python-only devcontainer is optional and NOT a
+  digest-pinned complete audit toolchain.
+- New synthetics on Python 3.9/3.12; automatic native tests remain only
+  the checked-in fixtures on GitHub-hosted. Private model sessions and
+  actual target forks require an approved Mac run.
+- **No automatic real PoC generator, native Move IR extractor or measured
+  real-world bug discovery gain has yet been demonstrated.**
+
 ## 0.54.0 — local financial state transitions and expanded target-shape routing
 
 - Offline financial-transitions.py: conservative paired candidate/control

@@ -16,6 +16,18 @@ run `surface_route.py --list`, then select only applicable shapes. Read
 not a substitute for protocol-native adapters, and "methodology-only"
 must be reported honestly under coverage gaps.
 
+## 0.55 — partial native flow leads
+
+`native_ir_flow.py` accepts an existing `rustc --emit=mir` textual
+artifact for limited intra-function Rust register def/use and an explicit
+normalized Rust/Move graph exported from an external native tool or
+reviewed fixture. Neither path checks full CFG, signer/account ownership,
+macro semantics, persistent-state reachability or Move VM behavior.
+A normalized graph provided by an analyst is not compiler-verified.
+Use `references/lab-055-productivity.md`; keep such paths at
+unverified source-reading leads until native tests confirm the same
+pinned revision and a negative control.
+
 ## Native adapter procedures
 
 Start with `python3 <skill-dir>/scripts/stack_route.py --repo <checkout>` to generate a

@@ -18,7 +18,30 @@
 
 ---
 
-## Current release: 0.54.0 — paired financial transitions and broader attack surfaces
+## Current release: 0.55.0 — PoC evidence productivity and honest model evaluation
+
+Five **offline-first** additions build on 0.54.0:
+
+- **Source-anchored PoC Builder:** check pinned file SHA-256 and generate a
+  deliberately failing native test plus a bounded task for the coding agent
+  on the authorized Mac. A supplied passing result is still **unverified**.
+- **Private blind A/B campaigns:** prepare isolated per-arm tasks for old/new
+  skill revisions and compare independently sealed scores. No automatic
+  model invocation, leaked ground truth or invented success percentage.
+- **Partial Rust MIR + normalized Move/Rust def-use:** reading leads only.
+  No full rustc control-flow analysis or automatic Move bytecode extraction.
+- **Failure taxonomy:** separate parser/agent failure, missing candidate,
+  unrun/failed PoC, invalid control, missing impact, duplicate and scope.
+- **Offline wizard + Python devcontainer:** inspect local tool availability
+  and explicitly scoped paths. Native toolchains still need separate setup.
+
+**Not verified:** autonomous PoC completion, real bug rediscovery, statistical
+improvement, paid bounty results or full non-EVM native adapters. No live
+trades, RPC traffic, production mutation, secret reads or model charges.
+Read [the 0.55 practical workflow](skills/bounty-pilot/references/lab-055-productivity.md)
+and `CHANGELOG.md`.
+
+### 0.54.0 — paired financial transitions and broader attack surfaces
 
 - **Four disconnected reference state machines:** custody deposits/withdrawals and
   idempotency; rollup finality/proofs/replay; restaking pending shares/slashing;
