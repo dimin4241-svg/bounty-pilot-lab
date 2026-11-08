@@ -343,6 +343,14 @@ class SetupWizardTests(unittest.TestCase):
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
             self.assertEqual(p.returncode, 0, p.stderr)
             self.assertIn("offline-configuration-only", out.read_text())
+            # Main bounty.py entrypoint must expose the same safe wizard.
+            from_main = root / "plan-from-bounty.json"
+            main_cmd = [sys.executable, str(SCRIPTS / "bounty.py"),
+                        "wizard", "--answers", str(inp), "--out", str(from_main)]
+            q = subprocess.run(main_cmd, capture_output=True, text=True, timeout=15)
+            self.assertEqual(q.returncode, 0, q.stderr)
+            self.assertEqual(json.loads(from_main.read_text())["execution"],
+                             "offline-configuration-only")
             repeat = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
             self.assertNotEqual(repeat.returncode, 0)
 
