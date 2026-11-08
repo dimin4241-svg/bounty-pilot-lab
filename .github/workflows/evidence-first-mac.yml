@@ -1,0 +1,28 @@
+name: evidence-first offline validation (GitHub-hosted)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile helpers
+        run: python3 -m compileall -q skills/bounty-pilot/scripts
+      - name: Existing evidence-first synthetic tests
+        run: python3 -m unittest discover -s tests -p 'test_evidence_first_lab.py' -v
+      - name: Legacy regression tests
+        run: |
+          python3 -m unittest discover -s tests -p 'test_harness_gen.py' -v
+          python3 -m unittest discover -s tests -p 'test_research_loop.py' -v
+          python3 -m unittest discover -s tests -p 'test_economic_frontier.py' -v
