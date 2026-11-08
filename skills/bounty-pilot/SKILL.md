@@ -630,3 +630,63 @@ follow the blind protocol in `references/backtest.md` (`backtest init`, `seal`, 
 `bench_compare.py`); never read the published findings before sealing — not even the titles. For live
 runs, keep a private ledger of effort, PoCs, duplicate outcomes, triage outcomes and reward status,
 and never publish target-level metrics in this toolkit.
+
+
+## Experimental evidence-first / native-validation extensions
+
+Read [references/evidence-first.md](references/evidence-first.md) before using
+exploit_loop.py, exploit_oracle.py, campaign_metrics.py, target_radar.py,
+deep_audit.py or the opt-in harness-gen ERC4626 direct-custody property.
+These tools are additive: they DO NOT replace the normal eligibility, deployed
+identity, duplicate, experiment or independent evidence gates.
+
+Default priority for a bounded audit: choose 1-3 in-scope value flows, apply
+3-4 relevant lenses, attempt reviewed pinned-fork experiments in parallel with
+remaining reading passes, require a negative control, and submit only verified,
+nonduplicate, eligible mechanisms. Do not enable a universal "free money" or
+"share price never decreases" invariant: those assumptions are false for many
+legitimate protocols. Reviewer-confirmed deployment/asset assumptions are
+required for the executable custody property.
+
+The exploit loop is opt-in and consumes explicit research_loop manifests;
+it does not generate exploit payloads or claim a positive economics JSON is
+proof. A three-signal oracle checks supplied portfolio delta, victim harm and
+invariant result but cannot independently authenticate any observation.
+Never execute live transactions or fork scripts on untrusted infrastructure.
+Only use a vetted isolated Mac runner with network denial and no credentials.
+The campaign scorecard requires existing **sealed and scored** blind backtests
+for every arm, with matched cohort and cost data; do not claim that a benchmark
+has been run until real scored outputs exist. The target radar only compares
+two supplied snapshots; daily capture must be separately configured.
+
+
+## Experimental Target Intelligence + Web/API workflow (optional)
+
+Read [references/target-intel-webapi.md](references/target-intel-webapi.md)
+before using these new offline-by-default modules:
+
+- scripts/program_scope_radar.py: compare saved program/scope/eligibility records,
+  or import recorded changes from gkdataio/security-research-library. A public
+  listing does NOT constitute current permission, and a scope recording time is
+  not a policy effective date.
+- scripts/js_change_intel.py: compare investigator-supplied local JS snapshots.
+  Optional vetted local jsluice AST extraction uses fixed arguments only. Never
+  fetches targets or emits query values/secret-containing source snippets.
+- scripts/api_surface_import.py: list GET paths from saved OpenAPI 3 JSON/YAML,
+  including mitmproxy2swagger output. No schema references are fetched; object
+  identifiers require authorized, investigator-owned test values.
+- scripts/target_intel_queue.py: combine the three offline lead sources into
+  one bounded, scoped-review queue. Priority is not severity or authorization.
+- scripts/web_auth_lab.py: dry-run validates a two-account plan; explicit
+  controlled GET execution requires current written policy checks, matching
+  HTTPS host, own accounts, synthetic markers, opt-in, and a vetted Mac sandbox.
+  Do NOT send requests to arbitrary live sites. A matching marker is merely
+  a candidate until an independent reviewer confirms broken authorization.
+
+These modules complement, not replace, Target Radar, nday_scan.py, the
+research_loop/native-evidence gates, deployed-reality verification, duplicate
+screening or bounty eligibility. They create evidence/review queues, not
+auto-submittable findings. Production API authorization testing is optional
+and is never triggered by a scheduled CI job. The regression workflow on
+the experimental branch runs only synthetic offline tests on a self-hosted
+macOS runner.
