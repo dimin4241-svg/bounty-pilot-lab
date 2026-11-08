@@ -19,7 +19,7 @@ DIG = "b" * 64
 
 
 def observed(**values):
-    return dict(source_revision=REV, initial_state_digest=DIG, **values)
+    return dict({"source_revision": REV, "initial_state_digest": DIG}, **values)
 
 
 def case(domain, bad, good, label=None):
