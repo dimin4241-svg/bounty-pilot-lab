@@ -74,9 +74,17 @@ def merge(program=None, javascript=None, openapi=None, api_host=None,
             if not isinstance(r, dict):
                 continue
             typ = r.get("kind", "")
-            if not isinstance(typ, str) or "scope" not in typ or "added" not in typ:
+            # Only positively listed IN-scope additions are eligible for
+            # correlation. 'out_of_scope-added' must NEVER raise priority.
+            # This also recognizes upstream history field prefixes such as
+            # 'history-policy.asset_scope.in_scope-added'.
+            if not isinstance(typ, str) or not (
+                typ == "in_scope-added" or typ.endswith(".in_scope-added")
+            ):
                 continue
             a = r.get("asset", {})
+            if isinstance(a, dict) and a.get("bounty_eligible") is False:
+                continue
             host = _host(a.get("value") if isinstance(a, dict) else a)
             if host:
                 new_scope_hosts.setdefault(host, []).append(r.get("program_url"))
@@ -122,10 +130,13 @@ def merge(program=None, javascript=None, openapi=None, api_host=None,
             typ = str(r.get("kind") or "")
             a = r.get("asset")
             host = _host(a.get("value") if isinstance(a, dict) else a)
-            score = 85 if "eligibility-changed" in typ else (
-                80 if "in_scope-added" in typ else (
-                    65 if "history-" in typ and "in_scope-added" in typ
-                    else 30))
+            positively_scoped = typ == "in_scope-added" or typ.endswith(".in_scope-added")
+            reward_excluded = isinstance(a, dict) and a.get("bounty_eligible") is False
+            reward_revoked = typ.endswith("eligibility-changed") and (
+                r.get("after") is False or reward_excluded)
+            score = (35 if reward_revoked or reward_excluded else
+                     85 if "eligibility-changed" in typ else
+                     80 if positively_scoped else 30)
             add("scope", r, score, "read live official program policy and date; check bounty eligibility",
                 host=host, reason="changed public program snapshot")
 
