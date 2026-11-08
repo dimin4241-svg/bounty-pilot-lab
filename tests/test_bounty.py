@@ -1017,6 +1017,25 @@ class RunTests(unittest.TestCase):
         self.assertEqual(floor['examined_fraction'], 0.2)
         self.assertEqual(floor['unexamined_count'], 32)
 
+    def test_a_closed_queue_below_the_floor_carries_a_caveat_but_keeps_its_state(self):
+        # Reported case: 0 of 1 files examined read as "all-leads-closed" with exit 0.
+        result = bounty.lead_queue(self.run)
+        self.assertEqual(result['state'], 'all-leads-closed')
+        self.assertIn('never measured', result['closure_caveat'])
+        bounty.dump(self.run / 'coverage-floor.json',
+                    {'state': 'below-floor', 'files_in_scope': 40, 'files_examined': 8,
+                     'examined_fraction': 0.2, 'min_fraction': 0.8, 'unexamined_count': 32})
+        result = bounty.lead_queue(self.run)
+        self.assertEqual(result['state'], 'all-leads-closed')     # still a report, never a gate
+        self.assertIn('8 of 40', result['closure_caveat'])
+        self.assertIn('closure_caveat', bounty.brief_queue(result))
+        bounty.dump(self.run / 'coverage-floor.json',
+                    {'state': 'at-or-above-floor', 'files_in_scope': 40, 'files_examined': 36,
+                     'examined_fraction': 0.9, 'min_fraction': 0.8, 'unexamined_count': 4})
+        self.assertNotIn('closure_caveat', bounty.lead_queue(self.run))
+        self.blocked('the project cannot be built')
+        self.assertNotIn('closure_caveat', bounty.lead_queue(self.run))   # open leads
+
     def capabilities(self, evidence):
         bounty.dump(self.run / 'capabilities.json', {'evidence': evidence})
 

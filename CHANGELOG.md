@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.53.1 — post-release fixes and the 0.53.0 follow-ups
+
+- Shipped after 0.53.0 without a version bump, now numbered: the opt-in evidence-first and Target
+  Intelligence / Web API helpers (`references/evidence-first.md`,
+  `references/target-intel-webapi.md`), and the scope-review fix in `target_intel_queue.py`:
+  out-of-scope or bounty-ineligible asset additions no longer raise an API lead's priority.
+- `queue` adds `closure_caveat` beside `all-leads-closed` when the coverage floor was never
+  measured, is stale or is below its minimum. A run with 0 of N files examined no longer reads as
+  a clean finish. `state` and the exit code are unchanged: queue stays a report, not a gate.
+- The skill description is shorter and routes plain hunts to the stable `bounty-pilot`, so the two
+  are no longer chosen arbitrarily.
+- SKILL.md names `references/hunt-agents/_shared.md` by its full path, points every hunt agent at
+  `references/sop.md`, and lists the maintainer-only references it never linked.
+
 ## 0.53.0 — frontier surfaces: what the 2025-2026 losses and payouts were made of
 
 Built from a review of 2025 to November 2026 incidents, paid disclosures and AI-auditor

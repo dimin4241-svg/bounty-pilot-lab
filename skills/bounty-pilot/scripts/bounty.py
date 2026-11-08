@@ -1231,7 +1231,40 @@ def brief_queue(result):
     return kept
 
 
+def closure_caveat(result):
+    """Why an `all-leads-closed` queue is not a finished hunt, or None when nothing undercuts it.
+
+    `all-leads-closed` only says no record is open. Read beside a coverage floor that was never
+    measured, is stale, or sits below its minimum, it is easily taken for "examined and clean", so
+    the queue says so in a field --brief keeps. A report, like the rest of queue: state and the
+    exit code are unchanged.
+    """
+    if result.get('state') != 'all-leads-closed':
+        return None
+    floor = result.get('coverage_floor')
+    if floor is None:
+        return ('No lead is open, but coverage-floor was never measured: closed leads say nothing '
+                'about the files nobody read. Run coverage-floor before treating this run as done.')
+    if floor.get('state') == 'below-floor':
+        return ('No lead is open, but only {} of {} in-scope files were examined (fraction {}, '
+                'floor {}): this is an unfinished hunt, not a clean one.'.format(
+                    floor.get('files_examined'), floor.get('files_in_scope'),
+                    floor.get('examined_fraction'), floor.get('min_fraction')))
+    if floor.get('stale'):
+        return ('No lead is open, but the coverage-floor measurement is stale against its '
+                'inputs. Rerun coverage-floor before treating this run as done.')
+    return None
+
+
 def lead_queue(run):
+    result = _lead_queue_report(run)
+    caveat = closure_caveat(result)
+    if caveat:
+        result['closure_caveat'] = caveat
+    return result
+
+
+def _lead_queue_report(run):
     run = Path(run).resolve()
     # The lead ledger is reported below rather than gated here: an untracked lead is exactly
     # what this command exists to show, so it must not turn the queue into an error.
@@ -1331,6 +1364,9 @@ def lead_queue(run):
                       'an agent doing this job, and the same model scores 50.7% given only the '
                       'file against 92.6% given the mechanism, so re-read those surfaces with a '
                       'falsifiable sentence per block. '
+                      'closure_caveat appears only beside all-leads-closed, when the coverage '
+                      'floor was never measured, is stale or is below its minimum: no open lead '
+                      'there means an unfinished hunt, not a clean one. '
                       'audit_gap is the reading order audit-gap computed: how many in-scope '
                       'files no audit ever saw, how many changed after one, and how many '
                       'deployment or migration files are in scope. It is null until that '
