@@ -63,6 +63,15 @@ rules (isolation, inputs, what the output does **not** establish) are in
 `references/lab-releases.md` and the reference named on the line. None of them promotes a lead to a
 finding, sends live target traffic, or replaces the stages below.
 
+- **Financial state transitions (0.54)** — operator-selected CEX custody, L2
+  finality, restaking queue/slashing, perps funding, and five additional
+  high-value domains. Use `surface_route.py` for the 22-shape coverage map,
+  `local_transition_sim.py` for disconnected synthetic operations,
+  `financial_transitions.py` for paired review-only observations, and
+  `vyper_bugs.py` for a deliberately incomplete known-advisory check.
+  Read `references/financial-transitions.md` and
+  `references/extended-surfaces.md`. No network, credential, mutation
+  of production state, automatic evidence promotion or payout claim.
 - **Frontier surfaces (0.53)** — seven lenses (`frontier`), the `zk` and `cosmos-sdk`
   adapters, and six mechanical reads: `legacy-sweep`, `config-snapshot`, `rounding-map`,
   `init-race`, `nday-scan`, `harness-gen`. Built from the 2025-2026 losses and payouts in

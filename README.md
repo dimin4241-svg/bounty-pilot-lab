@@ -18,33 +18,28 @@
 
 ---
 
-## Current release: 0.53.0 — frontier surfaces from the 2025-2026 losses
+## Current release: 0.54.0 — paired financial transitions and broader attack surfaces
 
-Seven new lenses (`frontier`: bridge messages, ZK soundness, oracles and listings, governance
-capture, smart accounts, v4 hooks and keepers, agent wallets), ZK and Cosmos SDK adapters, and six
-mechanical reads: `legacy-sweep`, `config-snapshot`, `nday-scan`, `rounding-map`, `init-race`,
-`harness-gen`, plus a calibrated `RepetitionDrift.t.sol`. See `CHANGELOG.md`.
+- **Four disconnected reference state machines:** custody deposits/withdrawals and
+  idempotency; rollup finality/proofs/replay; restaking pending shares/slashing;
+  perps funding and liquidation eligibility. They DO NOT execute a target.
+- **Nine offline differential observation checks**, including bonding curves,
+  prediction markets, airdrops, data availability and VRF. Candidate/control
+  observations remain unverified until a native PoC is replayed.
+- **Vyper known-advisory matcher**, seeded with a single verified official
+  2023 GHSA; optional imported advisory ranges are researcher-supplied and
+  the bundled catalog is explicitly incomplete.
+- **22-shape routing matrix**, including CDPs, TON, NEAR, Fuel, Hyperliquid,
+  Stacks, Algorand, Aleo, BitVM, TEE/FHE, indexers and gas. New ecosystems
+  without a native harness are clearly labelled methodology-only.
+- Earlier evidence-first exploit-loop/oracle and Target Intelligence/Web API
+  are now part of main. Web authorization remains GET-only, safe by default.
+  CI runs synthetic tests on GitHub-hosted; private Mac AI jobs are manual.
 
-> **Experimental evidence-first branch (not a release):** adds paired native
-> exploit-loop/oracle, fully scored blind ablation scorecards, an offline
-> deployment/configuration change radar, a focused deep-audit planner, and one
-> gated ERC4626 direct-custody invariant preset. See
-> [Evidence-first workflow](skills/bounty-pilot/references/evidence-first.md).
-> These are tools for validation and prioritisation, **not** a measured increase
-> in vulnerability discovery. Unit tests and real blind benchmark results are
-> distinct; no new finding or payout is claimed.
-
-> **Target intelligence + Web/API (experimental branch):** three new offline-first
-> workflows for program/scope change intelligence, local JavaScript bundle
-> change analysis (optional jsluice), and two-owned-account API authorization
-> checks (dry-run default). OpenAPI/HAR-derived GET path inventory and a
-> unified review-first correlation queue are supported.
-> See [Target Intelligence + Web/API Lab](skills/bounty-pilot/references/target-intel-webapi.md).
-> Active API requests are never run by CI and require explicit scope,
-> authorization and a vetted Mac execution environment. No real finding,
-> increased detection rate or bounty payment is claimed.
-
-
+No claim of improved bug discovery, actual exploitability or payout is made.
+Read [Financial transitions](skills/bounty-pilot/references/financial-transitions.md),
+[Expanded attack surfaces](skills/bounty-pilot/references/extended-surfaces.md)
+and `CHANGELOG.md` for limitations and examples.
 
 ### 0.52.1 — review repairs on top of 0.52.0
 

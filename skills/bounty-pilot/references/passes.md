@@ -50,13 +50,21 @@ or justified in `scope.md`. Pick by shape, and say in `coverage.md` which you ch
 
 | Target shape | Run first | Then |
 | --- | --- | --- |
+| Centralized exchange / custodial service | `web-api-boundary`, `signing-control-plane`, `recovery-failure` | `references/financial-transitions.md`: reserve/settle, deposits, reorgs, address binding, worker idempotency; only local/owned tests |
+| L2 rollup settlement / inbox / outbox | `bridge-messaging`, `integration-auth`, `node-client` | `references/extended-surfaces.md`: derivation, challenge/fault proof, address alias, forced inclusion; pinned native L1/L2 devnet |
+| Data availability / light-client bridge | `bridge-messaging`, `zk-soundness` where applicable | verify actual commitment, availability and finality using native proof fixture |
+| Launchpad / bonding curve | `economics`, `accounting`, `external-call` | quote vs execute, minOut, migration, fixed-point rounding; paired local PoC |
+| Prediction market / oracle settlement | `oracle-listing`, `economics`, `accounting` | resolution/challenge state, split-merge and escrow exhaustion |
+| Merkle claim / airdrop / vesting | `integration-auth`, `accounting`, `temporal-logic` | leaf encoding and campaign/chain binding, cumulative claims, double claim |
+| Lottery / VRF game | `integration-auth`, `temporal-logic` | request-to-round binding, callback authenticity and one-time payout |
+| TON, Hyperliquid, NEAR, Fuel, Aleo, BitVM, TEE/FHE | nearest existing `business-logic` / `semantic-mismatch` | `surface_route.py` methodology-only; do NOT claim native adapter without chain-specific tests |
 | Lending / CDP / money market | `economics`, `accounting`, `privileged-path` | `oracle-listing`, `live-reality`, `liveness`, `delta` |
 | DEX / AMM / concentrated liquidity | `economics`, `accounting`, `external-call` | `upstream-diff`, `coverage-gap` |
 | Vault / ERC-4626 / yield aggregator | `accounting`, `economics`, `external-call` | `privileged-path`, `liveness` |
 | Bridge / cross-chain messaging | `integration-auth`, `bridge-messaging`, `privileged-path`, `external-call` | `live-reality`, `upgrade` |
 | Router / aggregator / zapper | `external-call`, `integration-auth` | `privileged-path`, `accounting`; measure approval exposure, not balance |
-| Staking / LST / restaking | `accounting`, `privileged-path`, `economics` | `liveness`, `upgrade` |
-| Perps / options / structured | `economics`, `accounting`, `live-reality` | `oracle-listing`, `liveness`, `coverage-gap` |
+| Staking / LST / restaking | `accounting`, `privileged-path`, `economics` | `liveness`, `upgrade`; queued exits after slashing and credentials in `references/financial-transitions.md` |
+| Perps / options / structured | `economics`, `accounting`, `live-reality` | `oracle-listing`, `liveness`, `coverage-gap`; funding, partial liquidation, ADL and index/mark in `references/extended-surfaces.md` |
 | Governance / DAO / timelock / treasury | `privileged-path`, `upgrade`, `governance-capture` | `liveness`, `delta` |
 | ZK circuits / verifiers / zkVM / rollup prover | `zk-soundness` (`adapters/zk.md`) | `node-client` for the prover, `integration-auth` for the on-chain verifier |
 | Smart accounts / EIP-7702 / ERC-4337 / passkey wallets | `account-abstraction`, `privileged-path` | `classic`, `signing-control-plane` when a bundler or paymaster service is in scope |
