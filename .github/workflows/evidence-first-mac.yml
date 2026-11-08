@@ -1,36 +1,28 @@
-name: evidence-first validation (Mac self-hosted)
+name: evidence-first offline validation (GitHub-hosted)
 
 on:
-  # No pull_request trigger: never execute untrusted PR code on a personal Mac.
-  push:
-    branches:
-      - feature/evidence-first-lab
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: evidence-first-feature
-  cancel-in-progress: true
-
 jobs:
-  python-offline:
-    runs-on: [self-hosted, macOS]
-    timeout-minutes: 45
+  offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Python version
-        run: python3 --version
-      - name: Compile Python helper scripts
-        run: python3 -m compileall -q skills/bounty-pilot/scripts tests/test_evidence_first_lab.py
-      - name: Evidence-first synthetic suite (no RPC)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile helpers
+        run: python3 -m compileall -q skills/bounty-pilot/scripts
+      - name: Existing evidence-first synthetic tests
         run: python3 -m unittest discover -s tests -p 'test_evidence_first_lab.py' -v
-      - name: Existing stateful harness regression tests
-        run: python3 -m unittest discover -s tests -p 'test_harness_gen.py' -v
-      - name: Existing native loop and economic regressions
+      - name: Legacy regression tests
         run: |
+          python3 -m unittest discover -s tests -p 'test_harness_gen.py' -v
           python3 -m unittest discover -s tests -p 'test_research_loop.py' -v
           python3 -m unittest discover -s tests -p 'test_economic_frontier.py' -v
