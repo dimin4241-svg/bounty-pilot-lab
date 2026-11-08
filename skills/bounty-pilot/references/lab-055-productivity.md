@@ -10,7 +10,7 @@ send source credentials, live tokens or user data to a model.
 Hypothesis JSON (here \`source_anchors\` has the SHA-256 of a real local
 file; do not copy the sample hash verbatim):
 
-~~~json
+```json
 {
   "id": "review-001",
   "stack": "solidity",
@@ -25,14 +25,14 @@ file; do not copy the sample hash verbatim):
      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
   ]
 }
-~~~
+```
 
-~~~
+```
 python3 skills/bounty-pilot/scripts/poc_builder.py plan \
   --finding /private/hypothesis.json \
   --repo /private/pinned-target-checkout \
   --out-dir /private/poc-task-001
-~~~
+```
 
 The planner rejects source-file hash drift, absent files, symlink traversal
 and unsupported stacks. It creates a **deliberately failing** native test
@@ -50,11 +50,11 @@ After running your real local tests, provide a receipt JSON with
 \`status:"passed"\`, \`exit_code:0\`, the **modified test file** SHA-256 as
 \`test_file_sha256\`, and a \`log_sha256\` of the native test log.
 
-~~~
+```
 python3 skills/bounty-pilot/scripts/poc_builder.py check \
   --bundle /private/poc-task-001 \
   --receipt /private/test-receipt.json
-~~~
+```
 
 \`check\` does NOT execute or authenticate the tests. Its highest status is
 \`reported-local-pair-passed-independent-review-needed\`. An unchanged
@@ -77,7 +77,7 @@ two agent task directories and a private judging ledger.
 Prepare a campaign manifest with exact, independently pinned vulnerable
 commits, equal model/budgets and scope. It must contain **NO truth labels**:
 
-~~~json
+```json
 {
   "schema_version": 1,
   "baseline_skill_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -92,13 +92,13 @@ commits, equal model/budgets and scope. It must contain **NO truth labels**:
      "scope_paths": ["src"]}
   ]
 }
-~~~
+```
 
-~~~
+```
 python3 skills/bounty-pilot/scripts/blind_campaign.py prepare \
   --campaign /private/bench-input.json \
   --out-dir /private/blind-campaign
-~~~
+```
 
 **Do not mount the campaign directory wholesale into a hunter!** Give
 each independent isolated agent ONLY its individual
@@ -111,13 +111,13 @@ the answer. PREPARE does not launch a model.
 Score only sealed, separately adjudicated backtest reports for the
 exact same pinned cases:
 
-~~~
+```
 python3 skills/bounty-pilot/scripts/blind_campaign.py compare \
   --campaign /private/bench-input.json \
   --baseline-scored /private/baseline-scores.json \
   --candidate-scored /private/candidate-scores.json \
   --out /private/benchmark-private-result.json
-~~~
+```
 
 Output remains **unverified private comparison** regardless of observed
 rates. At least five *independent* held-out cases, model/session/budget
@@ -132,12 +132,12 @@ artifact. **Run that compiler only in a separately approved sandbox** on
 the actual pinned target. Do not compile untrusted dependency code in
 GitHub-hosted CI. Given an already exported MIR file:
 
-~~~
+```
 python3 skills/bounty-pilot/scripts/native_ir_flow.py \
   --rust-mir /private/target.mir \
   --source-revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   --out /private/rust-mir-leads.json
-~~~
+```
 
 The extractor conservatively traces simple MIR register assignments from
 function arguments into selected sensitive call hints. The output is
@@ -150,7 +150,7 @@ Solana/Anchor.
 Move and other Rust IR can be fed as researcher/compiler-extracted
 normalized directed graphs:
 
-~~~json
+```json
 {
   "schema_version": 1, "language": "move",
   "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -162,13 +162,13 @@ normalized directed graphs:
      "file": "sources/asset.move", "line": 30}
   ]
 }
-~~~
+```
 
-~~~
+```
 python3 skills/bounty-pilot/scripts/native_ir_flow.py \
   --normalized-ir /private/normalized-move.json \
   --out /private/move-leads.json
-~~~
+```
 
 The normalized graph is **operator-supplied** and not independently checked
 against a native Move compiler. Source-to-sink paths are candidates for a
@@ -181,20 +181,20 @@ Existing \`discovery_doctor.py\` diagnoses missing model output and parser
 failures. The new \`failure_taxonomy.py\` consumes structured per-case
 milestones, for example:
 
-~~~json
+```json
 {"schema_version":1,"cases":[{
   "id":"local-case-1","reading":"completed","candidate":"hypothesis",
   "poc":"candidate-failed","impact":"not-assessed",
   "eligibility":"not-checked","disposition":"not-submitted"
 }]}
-~~~
+```
 
-~~~
+```
 python3 skills/bounty-pilot/scripts/failure_taxonomy.py \
   --ledger /private/case-ledger.json \
   --doctor-report /private/discovery-doctor.json \
   --out /private/bottlenecks.json
-~~~
+```
 
 The taxonomy separates missing reading, no candidate, failed candidate,
 invalid control, unmeasured loss, unrealistic capital, out-of-scope and
@@ -204,10 +204,10 @@ operator-ledger assertions, never verified transactions.
 
 ## 5. Offline setup wizard and environment
 
-~~~
+```
 python3 skills/bounty-pilot/scripts/setup_wizard.py \
   --interactive --out /private/project-preflight.json
-~~~
+```
 
 It asks for a **local** checkout, runtime and scope paths, an optional
 official bounty-program URL and an optional *environment variable name*
@@ -215,11 +215,11 @@ official bounty-program URL and an optional *environment variable name*
 
 For scripted setup on owned fixtures use:
 
-~~~
+```
 python3 skills/bounty-pilot/scripts/setup_wizard.py \
   --answers /private/wizard-answers.json \
   --out /private/project-preflight.json
-~~~
+```
 
 The wizard checks local existence of scope files and presence of runtime
 CLI binaries. It neither installs packages nor considers a project
