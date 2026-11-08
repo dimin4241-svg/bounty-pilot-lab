@@ -1,7 +1,15 @@
 name: target intelligence offline validation (GitHub-hosted)
 
 on:
-  # No Mac is needed for these entirely synthetic unit tests.
+  # PR verifies runner migration; push on main executes the replacement
+  # GitHub-hosted job exactly once when this workflow changes.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/target-intel-webapi-mac.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/target-intel-webapi-mac.yml'
   workflow_dispatch:
 
 permissions:
