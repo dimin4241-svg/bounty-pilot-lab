@@ -365,7 +365,8 @@ Read `references/passes.md`; it settles lens selection, dispatch and stop rules.
    `recommended` (non-EVM or mixed, from `stack_route.py`) — then add what the shape calls for:
    `config`, `logic`, `cross-stack`, `anchor-account`, `web` when a website or app is in scope,
    `node` for a client, runtime, precompile or prover, `artifacts` whenever the project ships a
-   built bundle, package or image, `wallet-app` for a user-facing wallet, and `signing` for
+   built bundle, package or image, `wallet-app` for a user-facing wallet, `agent-platform` for a
+   hosted agent that spends, renders or executes on the platform's own account, and `signing` for
    an in-scope off-chain signer, HSM/MPC adapter, withdrawal API or worker. This lens
    is also in `cross-stack` and conditionally in `recommended` when local source
    suggests signing infrastructure. The surface lenses go by name when the shape is there:

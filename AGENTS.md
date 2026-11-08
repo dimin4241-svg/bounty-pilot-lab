@@ -231,6 +231,12 @@ Preserve these invariants when editing:
   the earlier versions each case is still blind for. When the skill is edited in response to an
   incident, mark the case as no longer blind for that version and every later one.
 
+- **The platform lens owns a class, not a checklist.** `agentic-platform` reads a hosted agent that
+  spends the platform's money, stores the user's media and runs a sandbox. Its separation from
+  `agent-wallet`, `agent-runner` and `web` is asserted in `tests/test_agentic_platform_lens.py`.
+  Adding it to `frontier`, `web` or `wallet-app` would bundle a billing surface into every target
+  that has a page; the group stays `--lens agent-platform` and routes by shape.
+
 Skill entry point: `skills/bounty-pilot/SKILL.md`.
 Run tests: `python3 -m unittest discover -s tests -v`.
 Bump `VERSION` and `skills/bounty-pilot/VERSION` together; `.claude-plugin/plugin.json` carries the

@@ -8129,7 +8129,8 @@ LENSES = ('delta', 'upstream-diff', 'coverage-gap', 'spec-divergence', 'privileg
           'impact-first', 'classic', 'web-frontend', 'node-client', 'secrets-artifacts',
           'wallet', 'signing-control-plane', 'reality-boundary', 'web-api-boundary',
           'web-integrity', 'bridge-messaging', 'zk-soundness', 'oracle-listing',
-          'governance-capture', 'account-abstraction', 'hooks-keepers', 'agent-wallet')
+          'governance-capture', 'account-abstraction', 'hooks-keepers', 'agent-wallet',
+          'agentic-platform')
 TRIAGE = 'triage'
 # Aiming lenses produce a reading order, not findings: spec-divergence reads what the project
 # promised in its own documentation and says where to go looking for the promise being broken.
@@ -8163,6 +8164,10 @@ WALLET_LENSES = ('wallet',)
 # that hold keys. Each is also routed by stack_route.py when the source shows the surface.
 FRONTIER_LENSES = ('bridge-messaging', 'zk-soundness', 'oracle-listing', 'governance-capture',
                    'account-abstraction', 'hooks-keepers', 'agent-wallet')
+# A hosted platform whose agent spends, renders and executes on the platform's account. Not an
+# agent that holds the user's keys (agent-wallet) and not one reading a hostile repository
+# (agent-runner): the user's loss here is money-on-platform, foreign media and sandbox execution.
+AGENT_PLATFORM_LENSES = ('agentic-platform',)
 WEB_SOURCE_SUFFIXES = {'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.html', '.htm', '.vue',
                        '.svelte', '.astro'}
 # Build output and installed packages: a frontend's own tree holds megabytes of both.
@@ -8773,13 +8778,15 @@ def bundle(repo, run, lenses, scope_prefixes=None, includes=None):
             chosen.extend(WALLET_LENSES)
         elif lens == 'frontier':
             chosen.extend(FRONTIER_LENSES)
+        elif lens == 'agent-platform':
+            chosen.extend(AGENT_PLATFORM_LENSES)
         elif lens in LENSES or lens == TRIAGE:
             chosen.append(lens)
         else:
             raise ValueError(f'unknown lens {lens!r}; choose from ' + ', '.join(LENSES)
                              + f', {TRIAGE}, or the groups aim / attack / config / logic / '
                                'cross-stack / signing / high-impact / web / node / artifacts / '
-                                'wallet-app / frontier / recommended / all')
+                                'wallet-app / frontier / agent-platform / recommended / all')
     chosen = list(dict.fromkeys(chosen))
     for lens in chosen:
         source_file = (references / f'{TRIAGE}.md' if lens == TRIAGE

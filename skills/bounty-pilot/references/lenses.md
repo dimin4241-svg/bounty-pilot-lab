@@ -110,6 +110,14 @@ sources when the target ships them and the ordinary source tree otherwise. The e
 decides the class: **a precondition of a compromised host pays nothing** on every programme in it,
 so the entry point has to be remote — a page, a link, a message, a peer.
 
+**`agentic-platform` → `hunt-agents/agentic-platform-agent.md`.** A hosted agent that is not the
+user's: it spends the platform's money on generation, runs a code sandbox, stores the user's media
+and bills a subscription. Not `agent-wallet` (keys) and not `agent-runner` (hostile repository):
+the surfaces are spend and model control enforced only in a prompt, foreign projects, jobs and
+assets behind unguessable IDs, signed upload and CDN presigns, refund arithmetic under retries, and
+sandbox tenancy. Bundled by `--lens agent-platform`; a bare web app with no agent and no billing
+is still `web`, not this.
+
 ## The frontier group
 
 Seven aimed lenses for surfaces where 2025–2026 losses and payouts concentrated and the older

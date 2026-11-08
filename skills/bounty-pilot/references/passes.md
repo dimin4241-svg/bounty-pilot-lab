@@ -74,6 +74,7 @@ or justified in `scope.md`. Pick by shape, and say in `coverage.md` which you ch
 | In-scope signing API / withdrawal worker / HSM-MPC adapter | `signing-control-plane` (`--lens signing`) | `privileged-path`, `semantic-mismatch`; local mock tests only |
 | A website or dApp listed in scope | `web-frontend` + `web-api-boundary` + `web-integrity` (`--lens web`) | exact-origin exclusions, local financial/intent candidate-control, pinned JS artifact comparison |
 | In-scope Web3 backend, payment API or wallet login | `web-api-boundary` + `privileged-path` | `recovery-failure`, `semantic-mismatch`, `reality-boundary` |
+| Hosted agent platform (agent spends, renders, executes on the platform's account) | `agentic-platform` (`--lens agent-platform`) | `web-api-boundary`, `web-integrity`; two-owned-account object tests, spend delta |
 | Any EVM target | `classic` (Part A always; Part B unless `solidity-auditor` ran) | — |
 
 The seven lenses added in this table — `bridge-messaging`, `zk-soundness`, `oracle-listing`,

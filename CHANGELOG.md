@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.54.0 — the hosted agent platform
+
+A target class the lens set had no owner for: a platform whose agent is not the user's — it spends
+the platform's money on generation, runs a code sandbox, holds the user's media and bills a
+subscription. `agent-wallet` reads keys, `agent-runner` reads a hostile repository, `web` reads a
+page; none of them reads spend controls, foreign object identity or sandbox tenancy.
+
+- `agentic-platform` lens, bundled as `--lens agent-platform`: the identity graph (two OAuth servers,
+  dynamic client registration, API keys, one-click connectors, shared session cookies), every tool
+  that spends, writes or executes, prompt-injection channels into those tools, foreign project /
+  job / asset IDs, billing arithmetic under retries and concurrency, sandbox reach, model and key
+  routing, and the positive OAuth question — whether the *final* RFC 6749 redirect carries a code.
+  Its "what does not pay" list keeps bare 302s, reflected parameters and header hygiene out, and
+  the proof standard is two owned accounts with a credited-credit delta.
+- Documented in `references/lenses.md` and the `passes.md` shape table; the group is not part of
+  `frontier`, `web` or `wallet-app`, and `tests/test_agentic_platform_lens.py` asserts both the
+  wiring and the separation.
+
 ## 0.53.0 — frontier surfaces: what the 2025-2026 losses and payouts were made of
 
 Built from a review of 2025 to November 2026 incidents, paid disclosures and AI-auditor

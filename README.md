@@ -18,7 +18,16 @@
 
 ---
 
-## Current release: 0.53.0 — frontier surfaces from the 2025-2026 losses
+## Current release: 0.54.0 — the hosted agent platform
+
+One new lens, `agentic-platform` (`--lens agent-platform`), for a platform whose agent is not the
+user's: generation billed to the platform, a code sandbox, the user's media library, and a
+subscription behind it. It reads spend and model control that lives only in a prompt, foreign
+projects, jobs and assets behind unguessable IDs, signed uploads and CDN presigns, refund
+arithmetic under retries, sandbox tenancy, and the final OAuth redirect. It is deliberately not
+`frontier`, `web` or `wallet-app`. Built on 0.53.0; see `CHANGELOG.md`.
+
+### 0.53.0 — frontier surfaces from the 2025-2026 losses
 
 Seven new lenses (`frontier`: bridge messages, ZK soundness, oracles and listings, governance
 capture, smart accounts, v4 hooks and keepers, agent wallets), ZK and Cosmos SDK adapters, and six
