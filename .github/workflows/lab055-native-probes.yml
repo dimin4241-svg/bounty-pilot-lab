@@ -1,0 +1,44 @@
+name: Lab 0.55 real rustc MIR + offline adversarial probes
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lab055-native-probes.yml'
+      - 'skills/bounty-pilot/scripts/native_ir_flow.py'
+      - 'tests/test_lab055_native_probes.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/lab055-native-probes.yml'
+      - 'skills/bounty-pilot/scripts/native_ir_flow.py'
+      - 'tests/test_lab055_native_probes.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-compiler-and-offline-stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require actual native rustc compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v rustc
+          rustc --version
+          command -v cargo
+          cargo --version
+      - name: Real compiler MIR and 5,700 synthetic operations with controls
+        run: python3 -m unittest discover -s tests -p 'test_lab055_native_probes.py' -v

@@ -71,7 +71,9 @@ def scan_rust_mir(s, revision):
             used = sorted({v for v in VAR.findall(expr) if v in taint})
             if used:
                 taint[out] = sorted({source for u in used for source in taint[u]})[:24]
-            elif out in taint and out not in params:
+            elif out in taint:
+                # MIR argument locals may be reassigned. A constant overwrite
+                # kills the data dependency even when this was a seed parameter.
                 del taint[out]
         if SENSITIVE.search(line):
             inputs = sorted({v for v in VAR.findall(line) if v in taint})
