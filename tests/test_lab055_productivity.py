@@ -73,8 +73,6 @@ class PoCBuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo, f, _ = self._make(Path(tmp))
             dest = Path(tmp) / "private"
-            result = poc.prepare_file if False else poc.prepare
-            out = result if False else None
             fpath = Path(tmp) / "finding.json"
             fpath.write_text(json.dumps(f), encoding="utf-8")
             receipt = poc.prepare(fpath, repo, dest)
