@@ -63,6 +63,10 @@ rules (isolation, inputs, what the output does **not** establish) are in
 `references/lab-releases.md` and the reference named on the line. None of them promotes a lead to a
 finding, sends live target traffic, or replaces the stages below.
 
+- **Reality gate (0.56)** — `reality_gate.py` (also `bounty.py reality-gate`) classifies every
+  advertised component as `LIVE`, `AUTH_ONLY`, `BACKEND_BROKEN`, `MARKETING_ONLY`, `NOT_DEPLOYED`
+  or `UNKNOWN` from saved probe statuses, bodies and bundle-scan signals, before a pass is aimed
+  at it. It is offline, sends no request and proves no absence. Read `references/reality-gate.md`.
 - **PoC and evaluation productivity (0.55)** — pinned-source
   `poc_builder.py` creates a deliberately failing candidate/control
   authoring task for a manually operated local agent, never an executed
@@ -121,6 +125,16 @@ python3 $S init --repo <local-checkout> --out <new-private-run-dir>
 Skip only when the user named the target and does not want it questioned. Read
 `references/targets.md`, fill `<run>/program.json` from the program's published pages, then measure
 before committing the week:
+
+If the programme advertises components but publishes no repository, address or RPC, run the
+**reality gate** before the value and score commands. It sorts each advertised component into
+`LIVE`, `AUTH_ONLY`, `BACKEND_BROKEN`, `MARKETING_ONLY`, `NOT_DEPLOYED` or `UNKNOWN` from the
+probe statuses and bundle scans you saved, so the week is not aimed at a wallet mockup or a
+deleted database. Read `references/reality-gate.md`; it sends no request and proves no absence.
+
+```sh
+python3 $S reality-gate --probes <run>/reality-probes.json --out <run>/reality-gate.json
+```
 
 ```sh
 python3 $S value --rpc <url> --address <each in-scope address> --token <main assets>

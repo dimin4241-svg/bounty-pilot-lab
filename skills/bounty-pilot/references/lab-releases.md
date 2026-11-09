@@ -4,6 +4,15 @@ The release-by-release guidance for the optional lab tools, moved out of `SKILL.
 workflow reads first. `SKILL.md` keeps an index; read the section for a tool before running it.
 Every rule here still applies: nothing below is weaker for living in a reference file.
 
+### Experimental Lab 0.56 — the reality gate
+
+Read `references/reality-gate.md` before aiming a run at a programme whose published components
+may not be deployed. `reality_gate.py` sorts supplied page, API, auth, chain and bundle probes into
+`LIVE`, `AUTH_ONLY`, `BACKEND_BROKEN`, `MARKETING_ONLY`, `NOT_DEPLOYED` or `UNKNOWN`, and emits the
+next experiment for each gated or broken surface. It sends no request, executes nothing and reads
+no target code. `NOT_DEPLOYED` is bounded by the asset and chain set it was told about, and an
+unprobed claim stays `UNKNOWN`; the output is a reading order, never a scope decision or a finding.
+
 ### Experimental Lab 0.55 — reproducible research productivity
 
 Read `references/lab-055-productivity.md` before any local PoC

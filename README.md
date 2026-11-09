@@ -18,9 +18,24 @@
 
 ---
 
-## Current release: 0.55.0 — PoC evidence productivity and honest model evaluation
+## Current release: 0.56.0 — the reality gate before the hunt
 
-Five **offline-first** additions build on 0.54.0:
+One **offline** addition builds on 0.55.0:
+
+- **Reality gate:** `reality_gate.py` (also `bounty.py reality-gate`) sorts every
+  advertised component into `LIVE`, `AUTH_ONLY`, `BACKEND_BROKEN`,
+  `MARKETING_ONLY`, `NOT_DEPLOYED` or `UNKNOWN` from page, API, auth, chain and
+  bundle probes you already saved. Gated and broken surfaces carry their next
+  experiment; unprobed claims stay `UNKNOWN` instead of passing as absent.
+  It sends no request, executes nothing and reads no target code.
+
+**Not verified:** that a surface can never exist, that unlisted scope is
+ineligible, or that a gated API is correctly authorized. `NOT_DEPLOYED` is
+bounded by the asset set it was given. It is a reading order, not a finding.
+Read [the 0.56 reality gate](skills/bounty-pilot/references/reality-gate.md)
+and `CHANGELOG.md`.
+
+### 0.55.0 — PoC evidence productivity and honest model evaluation
 
 - **Source-anchored PoC Builder:** check pinned file SHA-256 and generate a
   deliberately failing native test plus a bounded task for the coding agent

@@ -12021,6 +12021,8 @@ HELPER_COMMANDS = {
                                'implementations'),
     'legacy-sweep': ('legacy_sweep', 'list deprecated addresses from repository history, with '
                                      'code and balances when read'),
+    'reality-gate': ('reality_gate', 'classify advertised components as live, gated, broken or '
+                                     'unbuilt from saved probes (offline, no target calls)'),
 }
 
 

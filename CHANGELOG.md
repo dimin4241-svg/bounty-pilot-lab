@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.56.0 — the reality gate before the hunt
+
+- `reality_gate.py` (also `bounty.py reality-gate`): classifies every
+  advertised component as `LIVE`, `AUTH_ONLY`, `BACKEND_BROKEN`,
+  `MARKETING_ONLY`, `NOT_DEPLOYED` or `UNKNOWN` from saved page, API, auth,
+  chain and bundle probes plus aggregate scan signals. Gated and broken
+  surfaces carry their next experiment; `dead_claims` and
+  `unverified_components` are listed separately. Fully offline: no request,
+  no target execution, no code read. An unprobed claim stays `UNKNOWN`, and
+  `NOT_DEPLOYED` is bounded by the asset set the file names.
+- `references/reality-gate.md`: input schema, decision order, warning
+  glossary and the boundary that this is a reading order, not a scope
+  decision or a finding.
+- `tests/test_reality_gate.py`: synthetic six-state fixture, unprobed-claim
+  behaviour, fail-closed validation and both CLI entry points. No network.
+- `SKILL.md` Stage 0 wires the gate before `value`/`score-target` when a
+  programme advertises components without a repository, address or RPC.
+
 ## 0.55.0 — PoC authoring, reproducible blind evaluation and native IR leads
 
 - `poc_builder.py`: source-anchored SHA-256 PoC authoring bundle with
