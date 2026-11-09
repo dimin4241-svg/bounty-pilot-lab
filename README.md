@@ -18,21 +18,27 @@
 
 ---
 
-## Current release: 0.56.0 — the reality gate before the hunt
+## Current release: 0.56.1 — stricter reality-gate evidence
 
-One **offline** addition builds on 0.55.0:
+This patch tightens the offline reality gate introduced in 0.56.0:
 
 - **Reality gate:** `reality_gate.py` (also `bounty.py reality-gate`) sorts every
   advertised component into `LIVE`, `AUTH_ONLY`, `BACKEND_BROKEN`,
   `MARKETING_ONLY`, `NOT_DEPLOYED` or `UNKNOWN` from page, API, auth, chain and
-  bundle probes you already saved. Gated and broken surfaces carry their next
-  experiment; unprobed claims stay `UNKNOWN` instead of passing as absent.
-  It sends no request, executes nothing and reads no target code.
+  bundle probes you already saved. Plain text, health envelopes, error payloads
+  and HTML fallbacks do not count as API data; every saved API/auth probe must be gated for `AUTH_ONLY`.
+  A successful chain probe is required for a chain `LIVE` result, and
+  `NOT_DEPLOYED` requires the explicit `address_search_complete: true` signal;
+  `MARKETING_ONLY` requires `client_search_complete: true`. Partial searches
+  and unprobed claims stay `UNKNOWN`. It sends no request,
+  executes nothing and reads no target code.
 
 **Not verified:** that a surface can never exist, that unlisted scope is
 ineligible, or that a gated API is correctly authorized. `NOT_DEPLOYED` is
-bounded by the asset set it was given. It is a reading order, not a finding.
-Read [the 0.56 reality gate](skills/bounty-pilot/references/reality-gate.md)
+bounded by the search the investigator marked complete; the tool does not
+verify that assertion or the completeness of the source set. The same applies
+to the client search behind `MARKETING_ONLY`. It is a reading
+order, not a finding. Read [the reality gate](skills/bounty-pilot/references/reality-gate.md)
 and `CHANGELOG.md`.
 
 ### 0.55.0 — PoC evidence productivity and honest model evaluation

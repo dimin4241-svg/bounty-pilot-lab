@@ -38,9 +38,11 @@ def document(rows):
 class RealityGateTests(unittest.TestCase):
     def fixture(self):
         return document([
-            component("drc", "onchain", assets_scanned=89, addresses_found=0,
+            component("drc", "onchain", assets_scanned=89, address_search_complete=True,
+                      addresses_found=0,
                       probes=[{"kind": "dns", "target": "explorer.test", "status": 200}]),
             component("wallet", "client-app", assets_scanned=12,
+                      client_search_complete=True,
                       client_crypto_libs=[], client_api_calls=0,
                       download_links={"total": 5, "resolving": 0},
                       probes=[{"kind": "page", "target": "https://wallet.test/", "status": 200}]),
@@ -100,8 +102,114 @@ class RealityGateTests(unittest.TestCase):
         out = gate.evaluate(document([
             component("api", "api-backend",
                       probes=[{"kind": "page", "target": "https://x.test/", "status": 200}])]))
-        self.assertEqual(out["components"][0]["status"], "MARKETING_ONLY")
+        self.assertEqual(out["components"][0]["status"], "UNKNOWN")
         self.assertIn("api:api-claim-unprobed", out["warnings"])
+        out = gate.evaluate(document([
+            component("contracts-page-only", "onchain",
+                      probes=[{"kind": "page", "target": "https://x.test/", "status": 200}])]))
+        self.assertEqual(out["components"][0]["status"], "UNKNOWN")
+        self.assertNotIn("contracts-page-only", out["dead_claims"])
+        out = gate.evaluate(document([
+            component("client-page-only", "client-app",
+                      probes=[{"kind": "page", "target": "https://x.test/", "status": 200}])]))
+        self.assertEqual(out["components"][0]["status"], "UNKNOWN")
+        self.assertIn("client-page-only:client-search-incomplete", out["warnings"])
+
+    def test_error_payloads_and_app_fallbacks_are_not_live(self):
+        cases = [
+            ("error-json", '{"error":"route not found"}'),
+            ("problem-json", '{"title":"Not Found","status":404,"detail":"missing"}'),
+            ("html-fallback", '<!doctype html><html><body>app shell</body></html>'),
+            ("truncated-json", '{"items":[{"id":1}'),
+            ("plain-text", "ok"),
+            ("health-envelope", '{"status":"ok","uptime":120}'),
+            ("json-error-string", '"route not found"'),
+        ]
+        for ident, excerpt in cases:
+            with self.subTest(ident=ident):
+                out = gate.evaluate(document([component(
+                    ident, "api-backend", probes=[{
+                        "kind": "api", "target": "/v1/orders", "status": 200,
+                        "body_excerpt": excerpt,
+                    }])]))
+                self.assertEqual(out["components"][0]["status"], "UNKNOWN")
+                self.assertNotIn(ident, out["live_components"])
+
+    def test_auth_only_requires_every_api_probe_to_be_gated(self):
+        out = gate.evaluate(document([component("mixed", "api-backend", probes=[
+            {"kind": "api", "target": "/private", "status": 401,
+             "body_excerpt": '{"error":"Unauthorized"}'},
+            {"kind": "api", "target": "/missing", "status": 404,
+             "body_excerpt": '{"error":"not found"}'},
+        ])]))
+        self.assertEqual(out["components"][0]["status"], "UNKNOWN")
+        self.assertIn("mixed:api-claim-inconclusive", out["warnings"])
+
+    def test_login_redirect_destination_is_recorded_as_auth_evidence(self):
+        out = gate.evaluate(document([component("login", "api-backend", probes=[
+            {"kind": "api", "target": "/private", "status": 302,
+             "redirect_to": "https://example.test/login"},
+        ])]))
+        self.assertEqual(out["components"][0]["status"], "AUTH_ONLY")
+
+    def test_chain_live_requires_successful_chain_probe(self):
+        out = gate.evaluate(document([component(
+            "rpc-down", "onchain", addresses_found=1, addresses_verified=1,
+            probes=[{"kind": "chain", "target": "rpc.test", "status": 503}])]))
+        self.assertEqual(out["components"][0]["status"], "UNKNOWN")
+        self.assertIn("rpc-down:chain-probe-inconclusive", out["warnings"])
+
+    def test_evidence_must_match_the_claimed_component_kind(self):
+        api_is_not_chain = gate.evaluate(document([component(
+            "api-only", "onchain", probes=[{
+                "kind": "api", "target": "/status", "status": 200,
+                "body_excerpt": '{"contracts":[]}',
+            }])]))
+        self.assertEqual(api_is_not_chain["components"][0]["status"], "UNKNOWN")
+        self.assertNotIn("api-only", api_is_not_chain["live_components"])
+
+    def test_address_absence_requires_explicit_complete_search(self):
+        partial = gate.evaluate(document([component(
+            "partial-scan", "onchain", assets_scanned=1, addresses_found=0,
+            probes=[{"kind": "page", "target": "https://example.test/", "status": 200}])]))
+        self.assertEqual(partial["components"][0]["status"], "UNKNOWN")
+        self.assertNotIn("partial-scan", partial["dead_claims"])
+        complete = gate.evaluate(document([component(
+            "complete-scan", "onchain", assets_scanned=1,
+            address_search_complete=True, addresses_found=0)]))
+        self.assertEqual(complete["components"][0]["status"], "NOT_DEPLOYED")
+        client_partial = gate.evaluate(document([component(
+            "client-partial", "client-app", assets_scanned=1,
+            probes=[{"kind": "page", "target": "https://example.test/", "status": 200}])]))
+        self.assertEqual(client_partial["components"][0]["status"], "UNKNOWN")
+        client_complete = gate.evaluate(document([component(
+            "client-complete", "client-app", assets_scanned=1,
+            client_search_complete=True,
+            probes=[{"kind": "page", "target": "https://example.test/", "status": 200}])]))
+        self.assertEqual(client_complete["components"][0]["status"], "MARKETING_ONLY")
+        client_runtime = gate.evaluate(document([component(
+            "client-runtime", "client-app", assets_scanned=1,
+            client_search_complete=True, client_api_calls=2,
+            probes=[{"kind": "page", "target": "https://example.test/", "status": 200}])]))
+        self.assertEqual(client_runtime["components"][0]["status"], "UNKNOWN")
+        self.assertIn("client-runtime:client-runtime-unverified", client_runtime["warnings"])
+
+    def test_working_api_survives_a_failing_sibling_route(self):
+        out = gate.evaluate(document([component("partial", "api-backend", probes=[
+            {"kind": "api", "target": "/feed", "status": 200,
+             "body_excerpt": '{"items":[1]}'},
+            {"kind": "api", "target": "/private", "status": 503,
+             "body_excerpt": "temporarily unavailable"},
+        ])]))
+        self.assertEqual(out["components"][0]["status"], "LIVE")
+        self.assertIn("partial:partial-backend-failure", out["warnings"])
+
+    def test_api_201_with_domain_payload_is_live(self):
+        out = gate.evaluate(document([component("created", "api-backend", probes=[
+            {"kind": "api", "target": "/v1/items", "status": 201,
+             "body_excerpt": '{"item":{"id":"synthetic-1"}}'},
+        ])]))
+        self.assertEqual(out["components"][0]["status"], "LIVE")
 
     def test_client_release_or_crypto_calls_is_live(self):
         shipped = document([component(
@@ -123,6 +231,8 @@ class RealityGateTests(unittest.TestCase):
             document([component("x", "client-app",
                                 download_links={"total": 1, "resolving": 2})]),
             document([component("x", "onchain", mystery=1)]),
+            document([component("x", "onchain", address_search_complete="yes")]),
+            document([component("x", "client-app", client_search_complete=1)]),
             document([component("x", "onchain",
                                 probes=[{"kind": "request", "status": 200}])]),
             document([component("x", "onchain",
@@ -130,6 +240,9 @@ class RealityGateTests(unittest.TestCase):
             document([component("x", "onchain",
                                 probes=[{"kind": "api", "status": 200,
                                          "body_excerpt": "x" * 2001}])]),
+            document([component("x", "onchain",
+                                probes=[{"kind": "api", "status": 200,
+                                         "redirect_to": "x" * 501}])]),
         ]
         for case in cases:
             with self.assertRaises(ValueError):

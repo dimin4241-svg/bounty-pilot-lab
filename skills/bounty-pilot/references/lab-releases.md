@@ -4,14 +4,19 @@ The release-by-release guidance for the optional lab tools, moved out of `SKILL.
 workflow reads first. `SKILL.md` keeps an index; read the section for a tool before running it.
 Every rule here still applies: nothing below is weaker for living in a reference file.
 
-### Experimental Lab 0.56 — the reality gate
+### Experimental Lab 0.56.1 — conservative reality-gate evidence
 
 Read `references/reality-gate.md` before aiming a run at a programme whose published components
 may not be deployed. `reality_gate.py` sorts supplied page, API, auth, chain and bundle probes into
 `LIVE`, `AUTH_ONLY`, `BACKEND_BROKEN`, `MARKETING_ONLY`, `NOT_DEPLOYED` or `UNKNOWN`, and emits the
-next experiment for each gated or broken surface. It sends no request, executes nothing and reads
-no target code. `NOT_DEPLOYED` is bounded by the asset and chain set it was told about, and an
-unprobed claim stays `UNKNOWN`; the output is a reading order, never a scope decision or a finding.
+next experiment for each gated or broken surface. API `LIVE` needs a structured, non-error-looking
+2xx payload; plain text, health envelopes and HTML fallbacks stay inconclusive;
+`AUTH_ONLY` needs every saved API/auth probe to be gated; chain `LIVE` needs a successful chain
+probe and verified addresses. `NOT_DEPLOYED` needs `address_search_complete: true` plus zero found
+addresses, and `MARKETING_ONLY` needs `client_search_complete: true`; both completeness flags are
+the investigator's assertions, not something the offline tool can verify. Partial searches and
+ambiguous probes stay `UNKNOWN`. It sends no request, executes
+nothing and reads no target code. The output is a reading order, never a scope decision or a finding.
 
 ### Experimental Lab 0.55 — reproducible research productivity
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.56.1 — conservative reality-gate evidence
+
+- `reality_gate.py` no longer treats arbitrary HTTP 200 bodies, plain text, HTML
+  fallbacks, health checks, or error envelopes as live API data. `LIVE` from an API
+  requires a 2xx response with a structured, non-error-looking payload; a live route
+  remains `LIVE` when a sibling route fails, with `partial-backend-failure` recorded.
+- `AUTH_ONLY` now requires every saved API/auth probe to be gated. Login redirects
+  use the observed `redirect_to` destination. Verified addresses require a
+  successful chain probe before they establish a live chain surface.
+- `NOT_DEPLOYED` now requires the explicit investigator signal
+  `address_search_complete: true` and zero found addresses. Partial asset scans and
+  unprobed on-chain/API/client claims remain `UNKNOWN`. `MARKETING_ONLY` also requires
+  `client_search_complete: true` and no client runtime cues; a single page or partial bundle count
+  is insufficient.
+- Regression tests cover error payloads, SPA fallbacks, mixed auth results, failed
+  chain probes, partial address searches and mixed working/broken API routes.
+
 ## 0.56.0 — the reality gate before the hunt
 
 - `reality_gate.py` (also `bounty.py reality-gate`): classifies every

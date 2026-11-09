@@ -46,6 +46,8 @@ python3 scripts/reality_gate.py --probes <run>/reality-probes.json --out <run>/r
       "claims": ["seeding", "referrals", "liquidity"],
       "signals": {
         "assets_scanned": 89,
+        "address_search_complete": true,
+        "client_search_complete": false,
         "addresses_found": 0,
         "addresses_verified": 0,
         "client_api_calls": 0,
@@ -66,30 +68,42 @@ python3 scripts/reality_gate.py --probes <run>/reality-probes.json --out <run>/r
 structured claim category, not a name guess.
 
 `signals` are aggregate scan results. `assets_scanned` counts fetched pages and bundles;
-`addresses_found` counts addresses seen anywhere; `addresses_verified` counts those whose code you
-actually read (bytecode, explorer source or a verified build) — never promote one to the other
-without that read. `download_links.total` counts published download controls, `resolving` counts
-those that returned an artifact. `client_crypto_libs` lists libraries found in the bundles
-(`ethers`, `viem`, `web3`, `@solana/web3.js`, `bip39`, ...), not libraries you expected.
+`address_search_complete` is the investigator's explicit assertion that every supplied claim asset
+relevant to this component was searched for addresses. `client_search_complete` is the matching
+assertion that every relevant client bundle and release control was inspected. Leave either `false`
+when coverage is partial or uncertain; the tool cannot verify completeness. `addresses_found` counts
+addresses seen anywhere; `addresses_verified` counts those whose code you actually read (bytecode,
+explorer source or a verified build) — never promote one to the other without that read.
+`download_links.total` counts published download controls, `resolving` counts those that returned
+an artifact. `client_crypto_libs` lists libraries found in the bundles (`ethers`, `viem`, `web3`,
+`@solana/web3.js`, `bip39`, ...), not libraries you expected.
 
 `probes` are individual observations: `kind` is `page`, `api`, `auth`, `chain`, `bundle`, `dns`,
 `repo` or `asset`; `status` is the HTTP status or `null` for a non-HTTP observation;
-`body_excerpt` is a short saved excerpt (≤2000 chars). The excerpt is scanned only for an auth
-challenge or a backend-initialisation failure and is not copied into the report.
+`body_excerpt` is a short saved excerpt (≤2000 chars). Optional `redirect_to` records the observed
+destination of an HTTP redirect; a 30x status without its destination is not enough to call a path
+gated. Excerpts are checked for auth challenges, common API error envelopes and backend
+initialisation failures; they are not copied into the report. This is heuristic payload inspection,
+not schema validation for the target API.
 
 ## States
 
 | State | Meaning | Typical basis |
 |---|---|---|
-| `LIVE` | A real surface answered with data, verified code, or a shipped client | API 2xx with a non-empty body and no auth challenge; chain probe with verified addresses; client crypto code plus API calls; a resolving release |
-| `AUTH_ONLY` | The API exists but every probed path is gated | 401/403 or a login redirect on every API/auth probe, no data probe |
-| `BACKEND_BROKEN` | The handler failed inside the backend | 5xx, `PrismaClientInitializationError`, `ENOTFOUND`, connection refused |
-| `MARKETING_ONLY` | A page renders; no backend, chain artifact or release exists | 200 page with no API data, no verified address, no resolving download |
-| `NOT_DEPLOYED` | The claimed on-chain artifact is absent from the searched set | assets and/or chain probes scanned, zero addresses found |
-| `UNKNOWN` | Not enough observation to say anything | no probes, no scan signals, or an address without verified code |
+| `LIVE` | A supplied probe shows a working surface | API 2xx with valid structured, non-error-looking data; successful 2xx chain probe plus verified addresses; client crypto code plus API calls; a resolving release |
+| `AUTH_ONLY` | Every saved API/auth path is gated | every API/auth probe is 401/403 or redirects to a recorded login destination |
+| `BACKEND_BROKEN` | API probes show backend failure and no other supplied signal proves a working surface | 5xx, `PrismaClientInitializationError`, `ENOTFOUND`, connection refused |
+| `MARKETING_ONLY` | A page renders, the relevant client search is marked complete, and no client runtime cues or functional surface were observed | page plus `client_search_complete: true`, no crypto/API-call cues, API data or resolving release |
+| `NOT_DEPLOYED` | The complete supplied on-chain claim-asset search found no addresses | `address_search_complete: true` and `addresses_found: 0` |
+| `UNKNOWN` | The supplied observations do not establish a state | missing/incomplete search, mixed auth responses, ambiguous API payload, failed chain probe, or an address without verified code |
 
-Precedence is deliberate: a backend that errors outranks a page that renders; real API data
-outranks a gated sibling path; a verified address outranks a page-only claim. The full decision
+Precedence is deliberate: a positive live surface wins over a failing sibling API route, and the
+failure is retained as `partial-backend-failure`; without a positive surface, a backend error
+outranks a page-only response. `AUTH_ONLY` requires every supplied API/auth probe to be gated, and
+a mixed result stays `UNKNOWN`. A verified address alone is not enough for chain `LIVE`: at least
+one chain probe must have a successful 2xx status. A client page alone is not enough for
+`MARKETING_ONLY`: the investigator must mark the client search complete. An on-chain zero-address
+result is `NOT_DEPLOYED` only when the investigator marked the supplied search complete. The full decision
 order is in `classify()` and is covered by `tests/test_reality_gate.py`.
 
 ## Output
@@ -100,13 +114,16 @@ component's `basis` and `next_action`.
 
 Warnings are prompts to collect evidence, not verdicts:
 
-- `api-claim-unprobed`, `chain-claim-unsearched`, `client-bundles-unprobed` — the claim was never
-  actually tested, so the state stays `UNKNOWN` or `MARKETING_ONLY`;
+- `api-claim-unprobed`, `api-claim-inconclusive`, `chain-claim-unsearched`,
+  `client-bundles-unprobed`, `client-search-incomplete`, `client-runtime-unverified` — the claim
+  was not tested or the evidence is mixed, so it stays `UNKNOWN`;
+- `partial-backend-failure`, `chain-probe-inconclusive` — a sibling API path or the chain probe
+  failed even though another saved signal may establish a live surface;
 - `inert-download-controls` — published download buttons have no resolving target;
-- `no-client-crypto-or-api` — bundles were read and contain neither key/signing code nor a backend
-  call, which is what a wallet mockup looks like;
+- `no-client-crypto-or-api` — the completed client search found neither crypto libraries nor API
+  calls, which is what a wallet mockup can look like;
 - `addresses-without-bytecode` — an address exists but its code was not verified;
-- `page-only-surface` — only a rendered page was observed;
+- `page-only-surface` — a rendered page did not establish the component's functional surface;
 - `unprobed-component`, `inconclusive-probes` — nothing to classify.
 
 ## How it feeds the run

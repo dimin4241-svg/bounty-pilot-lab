@@ -63,10 +63,12 @@ rules (isolation, inputs, what the output does **not** establish) are in
 `references/lab-releases.md` and the reference named on the line. None of them promotes a lead to a
 finding, sends live target traffic, or replaces the stages below.
 
-- **Reality gate (0.56)** — `reality_gate.py` (also `bounty.py reality-gate`) classifies every
+- **Reality gate (0.56.1)** — `reality_gate.py` (also `bounty.py reality-gate`) classifies every
   advertised component as `LIVE`, `AUTH_ONLY`, `BACKEND_BROKEN`, `MARKETING_ONLY`, `NOT_DEPLOYED`
   or `UNKNOWN` from saved probe statuses, bodies and bundle-scan signals, before a pass is aimed
-  at it. It is offline, sends no request and proves no absence. Read `references/reality-gate.md`.
+  at it. Ambiguous API payloads, partial authorization results, failed chain probes and incomplete
+  address/client searches stay unverified. It is offline and sends no request. Read
+  `references/reality-gate.md`.
 - **PoC and evaluation productivity (0.55)** — pinned-source
   `poc_builder.py` creates a deliberately failing candidate/control
   authoring task for a manually operated local agent, never an executed

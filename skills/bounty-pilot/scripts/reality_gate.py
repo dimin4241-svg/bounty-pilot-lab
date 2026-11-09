@@ -17,14 +17,19 @@ KINDS = {"onchain", "client-app", "api-backend", "marketplace", "game", "infra"}
 PROBE_KINDS = {"page", "api", "auth", "chain", "bundle", "dns", "repo", "asset"}
 STATES = {"LIVE", "AUTH_ONLY", "BACKEND_BROKEN", "MARKETING_ONLY",
           "NOT_DEPLOYED", "UNKNOWN"}
-SIGNAL_KEYS = {"assets_scanned", "addresses_found", "addresses_verified",
-               "client_api_calls", "client_crypto_libs", "download_links",
-               "source_repository"}
+SIGNAL_KEYS = {"assets_scanned", "address_search_complete", "client_search_complete",
+               "addresses_found", "addresses_verified", "client_api_calls",
+               "client_crypto_libs", "download_links", "source_repository"}
 INIT_FAILURE = ("prismaclientinitializationerror", "enotfound", "econnrefused",
                 "connection refused", "could not connect", "database is down",
                 "tenant/user", "no such host")
-AUTH_MARKERS = ("unauthorized", "forbidden", "not authenticated", "sign in",
-                "login required")
+AUTH_MARKERS = ("unauthorized", "forbidden", "not authenticated", "not authorized",
+                "authentication required", "sign in", "login required", "access denied")
+API_FAILURE_TEXT = ("not found", "does not exist", "method not allowed",
+                    "internal server error", "temporarily unavailable",
+                    "service unavailable", "bad gateway", "gateway timeout",
+                    "upstream error", "upstream timed out", "something went wrong",
+                    "failed to fetch", "traceback")
 NEXT = {
     "LIVE": "Review the live entry points named by the probes; establish actor, "
             "reachability and money impact before writing anything up.",
@@ -40,7 +45,9 @@ NEXT = {
 
 
 def _merge_signals(component):
-    out = {"assets_scanned": 0, "addresses_found": 0, "addresses_verified": 0,
+    out = {"assets_scanned": 0, "address_search_complete": False,
+           "client_search_complete": False,
+           "addresses_found": 0, "addresses_verified": 0,
            "client_api_calls": 0, "client_crypto_libs": [],
            "download_links": {"total": 0, "resolving": 0},
            "source_repository": False}
@@ -50,6 +57,14 @@ def _merge_signals(component):
     for key, value in raw.items():
         if key not in SIGNAL_KEYS:
             raise ValueError("unknown signal %r" % key)
+    complete = raw.get("address_search_complete", False)
+    if not isinstance(complete, bool):
+        raise ValueError("signal address_search_complete must be boolean")
+    out["address_search_complete"] = complete
+    client_complete = raw.get("client_search_complete", False)
+    if not isinstance(client_complete, bool):
+        raise ValueError("signal client_search_complete must be boolean")
+    out["client_search_complete"] = client_complete
     for key in ("assets_scanned", "addresses_found", "addresses_verified",
                 "client_api_calls"):
         value = raw.get(key, 0)
@@ -101,67 +116,173 @@ def _probe(component):
         target = raw.get("target", "")
         if not isinstance(target, str) or len(target) > 500:
             raise ValueError("probe %d target must be a string <=500" % pos)
+        redirect_to = raw.get("redirect_to", "")
+        if not isinstance(redirect_to, str) or len(redirect_to) > 500:
+            raise ValueError("probe %d redirect_to must be a string <=500" % pos)
         out.append({"index": pos, "kind": kind, "status": status,
-                    "excerpt": excerpt, "target": target})
+                    "excerpt": excerpt, "target": target,
+                    "redirect_to": redirect_to})
     return out
+
+
+def _api_payload_is_data(excerpt):
+    """Return whether a saved 2xx response looks like a successful API payload.
+
+    This is intentionally conservative. An error envelope, auth challenge, HTML app
+    fallback, empty payload or truncated JSON excerpt must not make a backend look LIVE.
+    Unstructured plain text is deliberately inconclusive because it can be a health
+    message, proxy fallback or generic error page.
+    """
+    text = excerpt.strip()
+    if not text or text.lower() in ("{}", "[]", "null", "false"):
+        return False
+    lower = text.lower()
+    if lower.startswith(("<!doctype html", "<html", "<head", "<body", "<div", "<main")):
+        return False
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, RecursionError):
+        # Plain text and clipped JSON cannot establish a useful API surface.
+        return False
+    return _api_json_has_data(payload)
+
+
+def _api_json_has_data(value, depth=0):
+    """Reject common error/health envelopes while accepting structured payloads."""
+    if depth > 20:
+        return False
+    if isinstance(value, dict):
+        if value.get("success") is False or value.get("ok") is False:
+            return False
+        status = value.get("status")
+        if isinstance(status, int) and not isinstance(status, bool) and status >= 400:
+            return False
+        if value.get("error") not in (None, "", False, [], {}):
+            return False
+        errors = value.get("errors")
+        if errors and value.get("data") is None:
+            return False
+        for key in ("message", "title", "detail", "type"):
+            text = value.get(key)
+            if isinstance(text, str):
+                lower = text.lower()
+                if any(marker in lower for marker in AUTH_MARKERS + API_FAILURE_TEXT):
+                    return False
+        # Health/error metadata alone is not useful application data. A populated
+        # `data` envelope is checked recursively; ordinary domain keys count as data.
+        metadata = {"error", "errors", "status", "success", "ok", "message",
+                    "title", "detail", "type", "code", "health", "healthy",
+                    "uptime", "service", "version", "timestamp", "environment",
+                    "build", "dependencies", "checks"}
+        data_keys = set(value) - metadata
+        if not data_keys:
+            return False
+        if data_keys == {"data"}:
+            return _api_json_has_data(value["data"], depth + 1)
+        return True
+    if isinstance(value, list):
+        return any(_api_json_has_data(item, depth + 1) for item in value)
+    if isinstance(value, str):
+        text = value.strip()
+        lower = text.lower()
+        return bool(text) and not lower.startswith(
+            ("<!doctype html", "<html", "<head", "<body", "<div", "<main")) \
+            and not any(marker in lower for marker in AUTH_MARKERS + API_FAILURE_TEXT)
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, (int, float))
 
 
 def classify(component):
     signals = _merge_signals(component)
     probes = _probe(component)
     kind = component["kind"]
+    client_kinds = ("client-app", "marketplace", "game")
     pages = [p for p in probes if p["kind"] == "page"]
     apis = [p for p in probes if p["kind"] in ("api", "auth")]
     chains = [p for p in probes if p["kind"] == "chain"]
     page_ok = any(p["status"] == 200 for p in pages)
     api_data = [p for p in apis
-                if p["status"] == 200 and p["excerpt"].strip() not in ("", "{}", "[]", "null")
-                and not any(m in p["excerpt"].lower() for m in AUTH_MARKERS)]
-    backend_error = any(
+                if kind != "onchain" and p["status"] is not None
+                and 200 <= p["status"] < 300
+                and _api_payload_is_data(p["excerpt"])]
+    backend_error = kind != "onchain" and any(
         (p["status"] or 0) >= 500
         or any(token in p["excerpt"].lower() for token in INIT_FAILURE)
         for p in apis)
-    gated = [p for p in apis if p["status"] in (401, 403)
-             or (p["status"] in (301, 302, 307, 308) and "login" in p["target"].lower())]
-    chain_live = bool(signals["addresses_verified"]) and bool(chains)
-    client_live = bool(signals["client_crypto_libs"]) and signals["client_api_calls"] > 0
+    gated = [p for p in apis if kind != "onchain" and (
+        p["status"] in (401, 403)
+        or (p["status"] in (301, 302, 303, 307, 308)
+            and any(marker in p["redirect_to"].lower()
+                    for marker in ("login", "signin", "sign-in", "/authorize", "/sso/"))))]
+    auth_only = bool(apis) and len(gated) == len(apis)
+    chain_live = (kind == "onchain" and bool(signals["addresses_verified"])
+                  and any(p["status"] is not None and 200 <= p["status"] < 300
+                          for p in chains))
+    client_live = (kind in client_kinds and bool(signals["client_crypto_libs"])
+                   and signals["client_api_calls"] > 0)
     release_live = signals["download_links"]["resolving"] > 0
-    chain_searched = bool(chains) or signals["assets_scanned"] > 0
+    bundle_searched = (bool(signals["client_crypto_libs"])
+                       or signals["client_api_calls"] > 0
+                       or any(p["kind"] in ("bundle", "asset") for p in probes))
     inert_page = page_ok and signals["download_links"]["total"] > 0 and not release_live
     basis = []
     warnings = []
 
-    if not probes and not any(signals[k] for k in
+    if not probes and not signals["address_search_complete"] and not any(signals[k] for k in
                               ("assets_scanned", "addresses_found", "client_api_calls")) \
             and not signals["download_links"]["resolving"] and not signals["client_crypto_libs"]:
         state = "UNKNOWN"
         basis.append("no probes or scan signals supplied")
         warnings.append("unprobed-component")
+    elif api_data or chain_live or client_live or (release_live and kind in client_kinds):
+        state = "LIVE"
+        if api_data:
+            basis.append("API probe returned a non-error payload: %s"
+                         % ", ".join(p["target"] for p in api_data[:3]))
+        if chain_live:
+            basis.append("successful chain probe with %d verified deployed address(es)"
+                         % signals["addresses_verified"])
+        if client_live:
+            basis.append("client bundle signals include crypto code and API calls")
+        if release_live and kind in client_kinds:
+            basis.append("a downloadable release resolves")
+        if backend_error:
+            basis.append("another API/auth probe failed; this is a partial backend failure")
+            warnings.append("partial-backend-failure")
     elif backend_error:
         state = "BACKEND_BROKEN"
         basis.append("an api/auth probe failed inside the backend (5xx or init failure)")
-    elif api_data:
-        state = "LIVE"
-        basis.append("api probe returned data without an auth challenge: %s"
-                     % ", ".join(p["target"] for p in api_data[:3]))
-    elif chain_live:
-        state = "LIVE"
-        basis.append("chain probe verified %d deployed address(es)"
-                     % signals["addresses_verified"])
-    elif client_live or (release_live and kind in ("client-app", "marketplace", "game")):
-        state = "LIVE"
-        basis.append("client artifact ships crypto code and API calls"
-                     if client_live else "a downloadable release resolves")
-    elif gated:
+    elif auth_only:
         state = "AUTH_ONLY"
         basis.append("every api/auth probe is gated (401/403/login redirect)")
-    elif kind == "onchain" and chain_searched and not signals["addresses_found"]:
+    elif (kind == "onchain" and signals["address_search_complete"]
+          and not signals["addresses_found"]):
         state = "NOT_DEPLOYED"
-        basis.append("%d asset(s) and %d chain probe(s) scanned, zero addresses found"
-                     % (signals["assets_scanned"], len(chains)))
-    elif page_ok:
+        basis.append("complete search of the supplied on-chain claim assets found zero addresses")
+    elif kind == "onchain":
+        state = "UNKNOWN"
+        basis.append("on-chain address search is not marked complete")
+    elif kind == "api-backend" and not apis:
+        state = "UNKNOWN"
+        basis.append("the API claim has no API/auth probes")
+    elif kind == "api-backend":
+        state = "UNKNOWN"
+        basis.append("API/auth probes did not establish data, a full auth gate or a backend failure")
+    elif kind in client_kinds and not signals["client_search_complete"]:
+        state = "UNKNOWN"
+        basis.append("the relevant client asset search is not marked complete")
+    elif kind in client_kinds and (signals["client_crypto_libs"]
+                                   or signals["client_api_calls"] > 0):
+        state = "UNKNOWN"
+        basis.append("the client search found runtime cues but no live client surface was probed")
+    elif page_ok and kind in client_kinds:
         state = "MARKETING_ONLY"
         basis.append("page responds but no API data, chain artifact or client release was observed")
+        warnings.append("page-only-surface")
+    elif page_ok:
+        state = "UNKNOWN"
+        basis.append("a page responds, but the component's functional surface is not established")
         warnings.append("page-only-surface")
     else:
         state = "UNKNOWN"
@@ -172,16 +293,28 @@ def classify(component):
         warnings.append("addresses-without-bytecode")
     if kind == "api-backend" and not apis:
         warnings.append("api-claim-unprobed")
-    if kind == "onchain" and not chain_searched:
+    if kind == "onchain" and not signals["address_search_complete"]:
         warnings.append("chain-claim-unsearched")
-    if kind == "client-app" and not signals["assets_scanned"] and not any(
-            p["kind"] == "bundle" for p in probes):
+    if kind in client_kinds and not bundle_searched \
+            and not signals["client_search_complete"]:
         warnings.append("client-bundles-unprobed")
+    if kind in client_kinds \
+            and not signals["client_search_complete"]:
+        warnings.append("client-search-incomplete")
     if inert_page:
         warnings.append("inert-download-controls")
-    if (kind == "client-app" and signals["assets_scanned"]
+    if (kind in client_kinds
+            and signals["client_search_complete"]
             and not signals["client_crypto_libs"] and not signals["client_api_calls"]):
         warnings.append("no-client-crypto-or-api")
+    if kind == "api-backend" and apis and not (api_data or backend_error or auth_only):
+        warnings.append("api-claim-inconclusive")
+    if kind == "onchain" and chains and signals["addresses_verified"] and not chain_live:
+        warnings.append("chain-probe-inconclusive")
+    if (kind in client_kinds and signals["client_search_complete"]
+            and not (signals["client_crypto_libs"] and signals["client_api_calls"])
+            and (signals["client_crypto_libs"] or signals["client_api_calls"])):
+        warnings.append("client-runtime-unverified")
     return {"id": component["id"], "kind": kind, "status": state,
             "basis": basis, "next_action": NEXT[state],
             "signals": signals,

@@ -6,22 +6,27 @@
 
 ---
 
-## Актуальный релиз: 0.56.0 — reality gate до начала охоты
+## Актуальный релиз: 0.56.1 — более строгие основания reality gate
 
-Одно **офлайн**-дополнение к 0.55.0:
+Этот патч уточняет офлайн reality gate, добавленный в 0.56.0:
 
 - **Reality gate:** `reality_gate.py` (и `bounty.py reality-gate`) раскладывает
   каждый заявленный компонент по состояниям `LIVE`, `AUTH_ONLY`,
   `BACKEND_BROKEN`, `MARKETING_ONLY`, `NOT_DEPLOYED` или `UNKNOWN` по уже
-  сохранённым пробам page/API/auth/chain/bundle. Для закрытых и сломанных
-  поверхностей выдаётся следующий эксперимент, а непроверенные заявки
-  остаются `UNKNOWN`, а не «отсутствующими». Запросов не отправляет, код не
+  сохранённым пробам page/API/auth/chain/bundle. Обычный текст, health-check,
+  ответы-ошибки и HTML-fallback не считаются данными API; для `AUTH_ONLY` должны быть закрыты все сохранённые
+  API/auth-пробы. Для `LIVE` on-chain нужен успешный chain probe, а для
+  `NOT_DEPLOYED` — явный сигнал `address_search_complete: true`; для
+  `MARKETING_ONLY` нужен `client_search_complete: true`. Неполный поиск и
+  непроверенные заявки остаются `UNKNOWN`. Запросов не отправляет, код не
   исполняет и не читает.
 
 **Не доказано:** что поверхность не может появиться, что неперечисленное
 вне скоупа или что закрытый API корректно авторизует. `NOT_DEPLOYED`
-ограничен тем набором ассетов, который ему дали. Это порядок чтения, не
-находка. См. [reality gate](skills/bounty-pilot/references/reality-gate.md)
+ограничен поиском, который исследователь отметил полным; инструмент не
+проверяет полноту этого утверждения. То же относится к client search для
+`MARKETING_ONLY`. Это порядок чтения, не находка. См.
+[reality gate](skills/bounty-pilot/references/reality-gate.md)
 и `CHANGELOG.md`.
 
 ### 0.55.0 — подготовка PoC и честные бенчмарки
