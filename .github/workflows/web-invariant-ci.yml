@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - 'skills/bounty-pilot/scripts/web_*.py'
+      - 'skills/bounty-pilot/scripts/web_*.cjs'
       - 'skills/bounty-pilot/scripts/bounty.py'
       - 'tests/test_web_invariant_engine.py'
       - 'tests/test_web_route_ast.py'
       - 'tests/test_web_identity_nday.py'
       - 'tests/test_web_ts_ast.py'
+      - 'tests/test_web_ts_flow.py'
+      - 'tests/test_web_http_boundary.py'
+      - 'tests/test_web_bench_ab.py'
       - '.github/workflows/web-invariant-ci.yml'
   workflow_dispatch:
 
@@ -34,22 +38,34 @@ jobs:
           python3 -m py_compile skills/bounty-pilot/scripts/web_identity_flow.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_nday_regression.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_ts_ast.py
+          python3 -m py_compile skills/bounty-pilot/scripts/web_ts_flow.py
+          python3 -m py_compile skills/bounty-pilot/scripts/web_http_boundary.py
+          python3 -m py_compile skills/bounty-pilot/scripts/web_bench_ab.py
+          node --check skills/bounty-pilot/scripts/web_ts_flow_parser.cjs
       - name: Synthetic offline and loopback-only checks
         run: |
           python3 -m unittest discover -s tests -p 'test_web_invariant_engine.py' -v
           python3 -m unittest discover -s tests -p 'test_web_route_ast.py' -v
           python3 -m unittest discover -s tests -p 'test_web_identity_nday.py' -v
           python3 -m unittest discover -s tests -p 'test_web_ts_ast.py' -v
+          python3 -m unittest discover -s tests -p 'test_web_ts_flow.py' -v
+          python3 -m unittest discover -s tests -p 'test_web_http_boundary.py' -v
+          python3 -m unittest discover -s tests -p 'test_web_bench_ab.py' -v
       - name: Pinned TypeScript parser fixture (no install scripts)
         run: |
           npm install --prefix "$RUNNER_TEMP/bp-ts-parser" --ignore-scripts --no-audit --no-fund --save-exact typescript@5.9.3
           BP_TYPESCRIPT_PARSER="$RUNNER_TEMP/bp-ts-parser/node_modules/typescript/lib/typescript.js" \
             python3 -m unittest discover -s tests -p 'test_web_ts_ast.py' -v
+          BP_TYPESCRIPT_PARSER="$RUNNER_TEMP/bp-ts-parser/node_modules/typescript/lib/typescript.js" \
+            python3 -m unittest discover -s tests -p 'test_web_ts_flow.py' -v
       - name: CLI smoke
         run: |
           python3 skills/bounty-pilot/scripts/bounty.py web-invariants --help
           python3 skills/bounty-pilot/scripts/bounty.py web-route-ast --help
           python3 skills/bounty-pilot/scripts/bounty.py web-ts-ast --help
+          python3 skills/bounty-pilot/scripts/bounty.py web-ts-flow --help
+          python3 skills/bounty-pilot/scripts/bounty.py web-http-boundary --help
+          python3 skills/bounty-pilot/scripts/bounty.py web-bench-ab --help
           python3 skills/bounty-pilot/scripts/bounty.py web-identity-flow --help
           python3 skills/bounty-pilot/scripts/bounty.py web-nday-review --help
           python3 skills/bounty-pilot/scripts/bounty.py web-local-replay --help

@@ -26,3 +26,13 @@ to actual guards and object lifecycle. For local owned-account traces, apply
 positive and outsider controls. The replay helper is literal-loopback-only;
 none of these offline leads or local observations establish a real deployed
 vulnerability. See `references/web-invariant-engine.md` for limits.
+
+## Phase 2 Web research queue
+
+Apply `web-ts-flow` to pinned, source-authorized JS/TS for cross-file
+argument-to-sensitive-call reading leads. For conflicting frontend/backend
+HTTP parsing, `web-http-boundary` consumes **saved, local fixture**
+observations and a separate negative control, without generating traffic.
+For comparisons use the `web-bench-ab` evaluator-separated protocol,
+not self-scored model claims. These are unverified investigation aids.
+See `references/web-semantic-phase2.md`.

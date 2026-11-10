@@ -735,3 +735,15 @@ live exploitability. Do not infer permissions from OpenAPI schemas or run
 production tests based on generated leads. The existing Web/API scope and
 safety workflow remains mandatory.
 
+
+## Web semantic research phase 2 (experimental)
+
+For bounded cross-file JavaScript/TypeScript request argument flow, use the
+`web-ts-flow` helper with separately vetted, SHA-256-pinned TypeScript
+compiler code and an externally isolated runner. For HTTP protocol questions,
+use `web-http-boundary` on saved independent local parser observations
+with a matched negative control; no live HTTP probes are generated. For
+measurement, use `web-bench-ab` to prepare paired historical tasks and
+compare independently reviewed, sealed arms with matching budgets.
+These engines never establish production exploitability or payout likelihood.
+See `references/web-semantic-phase2.md` for required scope and evidence gates.

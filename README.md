@@ -18,6 +18,17 @@
 
 ---
 
+## Experimental Web Semantic Research — phase 2
+
+Adds bounded cross-file TypeScript/JavaScript route-to-sensitive-call **syntactic**
+flow tracing, saved paired HTTP parser observation comparison with a negative
+control, and a separate-evaluator historical A/B protocol with honest cost and
+false-positive accounting.
+
+Commands: `bounty.py web-ts-flow`, `bounty.py web-http-boundary`, and
+`bounty.py web-bench-ab`. None runs a production scanner or proves
+novel vulnerability discovery. Read the [phase 2 guide](skills/bounty-pilot/references/web-semantic-phase2.md).
+
 ## Experimental Web Invariant Research (new)
 
 An offline-first Web/API operation graph, owned-account test matrix, Python
