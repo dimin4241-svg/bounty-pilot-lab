@@ -724,3 +724,14 @@ auto-submittable findings. Production API authorization testing is optional
 and is never triggered by a scheduled CI job. The regression workflow on
 the experimental branch runs only synthetic offline tests on a self-hosted
 macOS runner.
+
+## Web invariant research extension (experimental)
+
+For Web/API tasks, use the [Web Invariant Research guide](references/web-invariant-engine.md)
+for offline route graphs, Python AST, owned-account authorization matrices,
+stateful trace review, signed-intent/session/tenant checks, N-day review and
+literal-loopback-only replay. These are unverified research aids, not proof of
+live exploitability. Do not infer permissions from OpenAPI schemas or run
+production tests based on generated leads. The existing Web/API scope and
+safety workflow remains mandatory.
+

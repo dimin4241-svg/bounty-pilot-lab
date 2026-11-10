@@ -12009,6 +12009,11 @@ def build_parser():
 
 # Standalone helpers reachable as `bounty.py <command> ...`: each owns its argument parser.
 HELPER_COMMANDS = {
+    'web-invariants': ('web_invariant_engine', 'offline OpenAPI operation graph, owned-account matrix, state and parser leads'),
+    'web-local-replay': ('web_local_replay', 'two-owned-account evidence on literal loopback only'),
+    'web-route-ast': ('web_route_ast', 'offline Python AST route and guard-name cues'),
+    'web-identity-flow': ('web_identity_flow', 'offline session, signed-intent and tenant traces'),
+    'web-nday-review': ('web_nday_regression', 'offline Python route guard changes across pinned snapshots'),
     'nday-scan': ('nday_scan', 'list upstream security fixes newer than the pinned version '
                                'the target never took (offline, local upstream clones)'),
     'config-snapshot': ('config_snapshot', 'read deployed thresholds, owners, delays, roles and '

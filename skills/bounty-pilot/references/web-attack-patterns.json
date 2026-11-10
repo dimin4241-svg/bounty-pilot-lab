@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "classification": "RESEARCH_TAXONOMY_NOT_PROVEN_FINDINGS",
+  "patterns": [
+    {
+      "id": "route-equivalence",
+      "family": "authorization",
+      "invariant": "Every route reaching the same private resource enforces equivalent rights",
+      "minimum_evidence": [
+        "same backend business operation",
+        "two owned identities",
+        "positive and denied controls"
+      ],
+      "engine": "web-invariants graph"
+    },
+    {
+      "id": "revocation-lifecycle",
+      "family": "session",
+      "invariant": "Revoked authorization stays revoked until explicit regrant or new token",
+      "minimum_evidence": [
+        "clear revoke event",
+        "accepted subsequent operation",
+        "control without revoke"
+      ],
+      "engine": "web-identity-flow sessions"
+    },
+    {
+      "id": "cross-tenant-worker",
+      "family": "async-state",
+      "invariant": "Workers recheck current tenant and object ownership when executing queued operations",
+      "minimum_evidence": [
+        "controlled local queue",
+        "ownership transition",
+        "database state diff"
+      ],
+      "engine": "web-invariants state"
+    },
+    {
+      "id": "webhook-order-binding",
+      "family": "payments",
+      "invariant": "Settlement requires verified event bound to exact order, amount, currency and identity",
+      "minimum_evidence": [
+        "valid owner payment control",
+        "invalid binding control",
+        "settled DB state"
+      ],
+      "engine": "web-invariants state"
+    },
+    {
+      "id": "idempotency-after-retry",
+      "family": "payments",
+      "invariant": "The same event key cannot credit a balance twice",
+      "minimum_evidence": [
+        "same idempotency key",
+        "two executions in local harness",
+        "ledger delta"
+      ],
+      "engine": "web-invariants state"
+    },
+    {
+      "id": "wallet-display-sign-execute",
+      "family": "signing",
+      "invariant": "Displayed, signed and executed transaction legs must match",
+      "minimum_evidence": [
+        "locally verified signature",
+        "locally observed execution",
+        "matching object/chain context"
+      ],
+      "engine": "web-identity-flow intent"
+    },
+    {
+      "id": "multi-stage-normalization",
+      "family": "parser",
+      "invariant": "Ingress proxy and application agree on canonical request identity",
+      "minimum_evidence": [
+        "two independently captured parser views",
+        "local-only request boundary experiment",
+        "independent negative control"
+      ],
+      "engine": "web-invariants parser"
+    },
+    {
+      "id": "nday-sibling-route",
+      "family": "regression",
+      "invariant": "All equivalent handlers adopt a necessary security check",
+      "minimum_evidence": [
+        "old/new pinned Git revisions",
+        "root cause of upstream patch",
+        "local fixed and affected controls"
+      ],
+      "engine": "web-nday-review"
+    },
+    {
+      "id": "agent-tenant-tool-context",
+      "family": "ai",
+      "invariant": "A tool or RAG result is constrained by the caller's tenant and session",
+      "minimum_evidence": [
+        "two owned tenants",
+        "privately marked documents",
+        "observed retrieval boundary"
+      ],
+      "engine": "web-identity-flow tenant"
+    }
+  ]
+}
