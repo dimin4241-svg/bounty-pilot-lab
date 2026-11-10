@@ -23,8 +23,10 @@ run web scans, or prove that a deployed service is vulnerable.
 
 All of these are independent commands exposed through the main CLI:
 
-    python3 skills/bounty-pilot/scripts/bounty.py web-invariants --help
-    python3 skills/bounty-pilot/scripts/bounty.py web-local-replay --help
+```sh
+python3 skills/bounty-pilot/scripts/bounty.py web-invariants --help
+python3 skills/bounty-pilot/scripts/bounty.py web-local-replay --help
+```
 
 ## 1. Operation graph and matrix
 
@@ -209,9 +211,12 @@ OS-level sandbox. Run only trusted, owned fixture code in a disposable machine.
 
 ## 6. Testing and limitations
 
-    python3 -m unittest discover -s tests -p 'test_web_invariant_engine.py' -v
-    python3 -m unittest discover -s tests -p 'test_web_route_ast.py' -v
-    python3 -m unittest discover -s tests -p 'test_web_identity_nday.py' -v
+```sh
+python3 -m unittest discover -s tests -p 'test_web_invariant_engine.py' -v
+python3 -m unittest discover -s tests -p 'test_web_route_ast.py' -v
+python3 -m unittest discover -s tests -p 'test_web_identity_nday.py' -v
+python3 -m unittest discover -s tests -p 'test_web_ts_ast.py' -v
+```
 
 Tests use synthetic OpenAPI/AST/trace fixtures and an in-process loopback
 server. No external target is tested. These prove local implementation
