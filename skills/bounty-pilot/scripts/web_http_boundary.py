@@ -81,6 +81,8 @@ def _capture(c):
                 not 0 <= a < b <= 1_000_000 or a < last):
             raise ValueError("invalid or overlapping request byte offsets")
         last = b
+        if b > length:
+            raise ValueError("request end boundary exceeds parser consumed bytes")
         if row["body_sha256"] is not None and (
                 not isinstance(row["body_sha256"], str) or
                 not SHA.fullmatch(row["body_sha256"])):
@@ -105,6 +107,11 @@ def _trial(trial):
 
 
 def _differences(a, b):
+    # Unknown semantic fields must not masquerade as a parser disagreement.
+    def known_difference(left, right, field):
+        return (left[field] is not None and right[field] is not None and
+                left[field] != right[field])
+
     differences = []
     if (a["request_count"] != b["request_count"] or
             a["consumed_bytes"] != b["consumed_bytes"] or
@@ -112,13 +119,13 @@ def _differences(a, b):
             [(r["start_offset"], r["end_offset"]) for r in b["requests"]]):
         differences.append(CATEGORIES[0])
     for ar, br in zip(a["requests"], b["requests"]):
-        if any(ar[field] != br[field] for field in ("method", "canonical_route", "authority")):
+        if any(known_difference(ar, br, field) for field in ("method", "canonical_route", "authority")):
             differences.append(CATEGORIES[1])
-        if ar["auth_context"] != br["auth_context"]:
+        if known_difference(ar, br, "auth_context"):
             differences.append(CATEGORIES[2])
-        if ar["cache_key"] != br["cache_key"]:
+        if known_difference(ar, br, "cache_key"):
             differences.append(CATEGORIES[3])
-        if ar["body_sha256"] != br["body_sha256"]:
+        if known_difference(ar, br, "body_sha256"):
             differences.append(CATEGORIES[4])
     return sorted(set(differences))
 
@@ -142,6 +149,8 @@ def compare(doc):
         seen.add(pid)
         candidate_a, candidate_b = _trial(row["candidate"])
         control_a, control_b = _trial(row["negative_control"])
+        if candidate_a["input_sha256"] == control_a["input_sha256"]:
+            raise ValueError("negative control must use a distinct input digest")
         if candidate_a["parser_id"] != control_a["parser_id"] or (
                 candidate_b["parser_id"] != control_b["parser_id"] or
                 candidate_a["parser_build"] != control_a["parser_build"] or

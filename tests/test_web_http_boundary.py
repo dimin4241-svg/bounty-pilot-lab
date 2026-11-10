@@ -30,10 +30,14 @@ def trial(front=None, back=None):
 
 
 def document(candidate=None, control=None):
+    independent = control or trial()
+    # Different synthetic request bytes, same two parser builds.
+    for side in ("front", "back"):
+        independent[side]["input_sha256"] = "b" * 64
     return {"schema_version": 1, "environment": "researcher_owned_isolated_lab",
             "pairs": [{"pair_id": "p-01",
                        "candidate": candidate or trial(capture("front"), capture("back", offset=45)),
-                       "negative_control": control or trial()}]}
+                       "negative_control": independent}]}
 
 
 class HTTPBoundaryTests(unittest.TestCase):
@@ -67,6 +71,20 @@ class HTTPBoundaryTests(unittest.TestCase):
         r = http.compare(document(candidate=trial(capture("front"), back)))
         self.assertEqual(r["results"][0]["candidate_differences"],
                          ["HTTP_CACHE_KEY_DIFFERENCE"])
+
+    def test_unknown_semantic_context_does_not_create_false_disagreement(self):
+        front = capture("front")
+        back = capture("back", auth=None)
+        r = http.compare(document(candidate=trial(front, back)))
+        self.assertEqual(r["results"][0]["candidate_differences"], [])
+        self.assertEqual(r["controlled_difference_leads"], 0)
+
+    def test_control_must_use_different_input_bytes(self):
+        x = document()
+        for side in ("front", "back"):
+            x["pairs"][0]["negative_control"][side]["input_sha256"] = "a" * 64
+        with self.assertRaisesRegex(ValueError, "distinct input"):
+            http.compare(x)
 
     def test_reject_mismatched_input_hash(self):
         x = document()
