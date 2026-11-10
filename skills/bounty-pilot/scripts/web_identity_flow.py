@@ -5,7 +5,6 @@ Consumes investigator-supplied observations only. It does not validate crypto,
 authenticate logs, decode tokens, or execute the target. Every lead is unverified.
 """
 import argparse
-import hashlib
 import json
 import os
 import sys

@@ -7,7 +7,6 @@ runtime policies may be unseen. No repository code is imported or executed.
 """
 import argparse
 import ast
-import hashlib
 import json
 import os
 import re
