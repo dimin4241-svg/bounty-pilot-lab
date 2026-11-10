@@ -7,7 +7,6 @@ two owned, isolated parser fixtures on identical input bytes. Input claims
 are not independently authenticated; output never labels exploitation proven.
 """
 import argparse
-import hashlib
 import json
 import os
 import re

@@ -15,7 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections import defaultdict, deque
+from collections import deque
 from pathlib import Path
 
 EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
