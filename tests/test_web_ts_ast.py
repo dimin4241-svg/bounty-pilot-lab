@@ -86,10 +86,14 @@ export async function GET(req: Request) {
 }
 export const POST = async (req: Request) => Response.json(await db.create());
 ''')
+            marker = root / "must-not-be-created"
+            (root / "danger.ts").write_text(
+                "require('fs').writeFileSync(" + json.dumps(str(marker)) + ", 'BAD');")
             parser = Path(os.environ["BP_TYPESCRIPT_PARSER"])
             sha = hashlib.sha256(parser.read_bytes()).hexdigest()
             got = module.inspect(root, parser, sha)
             self.assertEqual(got["parse_problems"], [])
+            self.assertFalse(marker.exists(), "AST parsing must not execute target JavaScript")
             self.assertEqual(len(got["routes"]), 4)
             self.assertTrue(any(r["path"] == "/api/payments" and
                                 r["method"] == "GET" for r in got["routes"]))
