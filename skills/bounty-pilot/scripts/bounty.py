@@ -12013,6 +12013,9 @@ HELPER_COMMANDS = {
     'web-local-replay': ('web_local_replay', 'two-owned-account evidence on literal loopback only'),
     'web-route-ast': ('web_route_ast', 'offline Python AST route and guard-name cues'),
     'web-ts-ast': ('web_ts_ast', 'offline, pinned TypeScript compiler AST route leads'),
+    'web-ts-flow': ('web_ts_flow', 'offline pinned TypeScript cross-file argument-to-sink syntax leads'),
+    'web-http-boundary': ('web_http_boundary', 'compare saved owned-lab HTTP parser observations'),
+    'web-bench-ab': ('web_bench_ab', 'paired sealed historical Web benchmark preparation/comparison'),
     'web-identity-flow': ('web_identity_flow', 'offline session, signed-intent and tenant traces'),
     'web-nday-review': ('web_nday_regression', 'offline Python route guard changes across pinned snapshots'),
     'nday-scan': ('nday_scan', 'list upstream security fixes newer than the pinned version '

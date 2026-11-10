@@ -74,3 +74,12 @@ non-literal-argument classification; and for each record, the data flow step by 
 sink, which eligible impact class it reaches, and how plausible the required user action is. A clean
 "no eligible finding, here is the sink inventory and why each is unreachable" is a result — it is the
 first coverage that surface has had, and it tells the next pass where not to look.
+
+## Cross-file JavaScript research
+
+For saved, authorized source spanning multiple ESM modules, use
+`bounty.py web-ts-flow` before asking a paid model to examine the
+route-to-sensitive-call chain. This syntactic tracer identifies potential
+request argument propagation, not actual authorization bypass or executable
+taint proof. Inspect the real dataflow and trust boundary manually.
+See `references/web-semantic-phase2.md`.

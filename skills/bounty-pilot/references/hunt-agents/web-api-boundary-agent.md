@@ -20,6 +20,13 @@ vetted TypeScript parser and exact pinned SHA-256, as documented in
 repository or execute target code. Use the actual source handler, authorization
 middleware, object loader and DB state before asserting route equivalence.
 
+When a JavaScript/TypeScript repo has cross-file calls, run `web-ts-flow` on
+a tightly scoped source directory. Its ESM import and argument propagation
+records potential request-to-sensitive-call syntax paths; read real handlers,
+input transformations and middleware before assigning any impact. It does
+not reason about runtime guard reachability. See
+`references/web-semantic-phase2.md` for the bounded workflow.
+
 Prioritize cross-route/cross-method authorization discrepancies, revoked-session
 reappearance, asynchronous payment binding and idempotency. Use `web-invariants
 state` and `web-identity-flow sessions/intent/tenant` on investigator-owned
@@ -99,3 +106,12 @@ Record exact file:line entry-to-sink trace, attacker rights, invariant,
 negative control, falsifier, native test result and scope. Hand research
 hypotheses to evidence verifier, independent reviewer and
 novelty/eligibility checks. No severity or payout without proven impact.
+
+## HTTP parser and benchmark handoff
+
+Use `web-http-boundary` only on two independently saved parser
+observations of the same synthetic input and a separate matched negative
+control. Never send HTTP desync payloads to a production service using this
+lens. Track hypotheses in the existing novelty/dup-map before report drafting.
+To measure actual discovery improvements, use `web-bench-ab` and independent
+scoring; the built-in public sample is insufficient to claim uplift.
