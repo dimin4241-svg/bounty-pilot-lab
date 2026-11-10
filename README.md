@@ -18,6 +18,19 @@
 
 ---
 
+## Experimental Web Invariant Research (new)
+
+An offline-first Web/API operation graph, owned-account test matrix, Python
+Python and optional pinned TypeScript route AST indices, session/payment/tenant trace checks, N-day review and a
+**loopback-only** two-account replay tool are available through
+`bounty.py web-invariants`, `bounty.py web-route-ast`,
+`bounty.py web-ts-ast`, `bounty.py web-identity-flow`, `bounty.py web-nday-review` and
+`bounty.py web-local-replay`.
+
+All results are **unverified leads or local fixture observations**; none proves
+a live vulnerability. No production scanning or secret ingestion.
+See [Web Invariant Research guide](skills/bounty-pilot/references/web-invariant-engine.md).
+
 ## Current release: 0.56.1 — stricter reality-gate evidence
 
 This patch tightens the offline reality gate introduced in 0.56.0:

@@ -13,6 +13,17 @@ impact, server banners, user enumeration, bare open redirects, no-TLS. So aim at
 **can an attacker change what the user is asked to sign, or execute script on the real origin where a
 wallet is injected.**
 
+## Offline JavaScript/TypeScript AST preflight
+
+When saved in-scope source is available, run `bounty.py web-ts-ast` with an
+explicitly vetted, SHA-256-pinned TypeScript compiler parser. It inventories
+a subset of Express/Next.js routes and middleware cues without executing
+target JavaScript. Pair that inventory with `js_change_intel`, wallet sink
+classification and the existing source-to-sink tracing procedure below.
+Treat all source and AST results as unverified cues; do not infer vulnerability
+from a missing function name. More detail:
+`references/web-invariant-engine.md`.
+
 ## Procedure
 
 1. **Pin the scope literally.** These briefs name one origin and exclude subdomains. Note every other

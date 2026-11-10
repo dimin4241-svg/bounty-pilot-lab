@@ -15,3 +15,14 @@ operation; wallet-intent requires actual local success or rejection
 observations. Check the published program scope independently; an
 investigator-authored scope policy is not authorization to test a
 production target. See references/web3-security.md. Follow full input-to-output lifecycle including async queues and webhooks. Prioritize IDOR, authorization scope mismatch, stale cache permissions, nonce/signature intent binding, JS Number safe-integer loss, Decimal/bigint/canonicalization, duplicate payments/claims and time-of-check/time-of-use. Trace retry/idempotency and what remains durable on partial failure. Use pytest/hypothesis or Jest/Vitest/fast-check native harnesses with transaction fixtures and authenticated cross-user negative controls. Do not use a live external service as a load-test target. Separate reported REST success from confirmed chain/DB effects.
+
+## Web invariant and evidence extensions
+
+Before broad model passes, review saved OpenAPI through `bounty.py web-invariants
+graph`, and source routes through `bounty.py web-route-ast` or the
+explicitly pinned `bounty.py web-ts-ast` parser. Trace claimed discrepancies
+to actual guards and object lifecycle. For local owned-account traces, apply
+`web-invariants state`, `web-identity-flow` and `web-local-replay` with
+positive and outsider controls. The replay helper is literal-loopback-only;
+none of these offline leads or local observations establish a real deployed
+vulnerability. See `references/web-invariant-engine.md` for limits.
