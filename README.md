@@ -21,10 +21,10 @@
 ## Experimental Web Invariant Research (new)
 
 An offline-first Web/API operation graph, owned-account test matrix, Python
-route AST index, session/payment/tenant trace checks, N-day review and a
+Python and optional pinned TypeScript route AST indices, session/payment/tenant trace checks, N-day review and a
 **loopback-only** two-account replay tool are available through
 `bounty.py web-invariants`, `bounty.py web-route-ast`,
-`bounty.py web-identity-flow`, `bounty.py web-nday-review` and
+`bounty.py web-ts-ast`, `bounty.py web-identity-flow`, `bounty.py web-nday-review` and
 `bounty.py web-local-replay`.
 
 All results are **unverified leads or local fixture observations**; none proves

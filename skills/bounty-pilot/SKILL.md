@@ -728,7 +728,7 @@ macOS runner.
 ## Web invariant research extension (experimental)
 
 For Web/API tasks, use the [Web Invariant Research guide](references/web-invariant-engine.md)
-for offline route graphs, Python AST, owned-account authorization matrices,
+for offline route graphs, Python AST, pinned TypeScript AST, owned-account authorization matrices,
 stateful trace review, signed-intent/session/tenant checks, N-day review and
 literal-loopback-only replay. These are unverified research aids, not proof of
 live exploitability. Do not infer permissions from OpenAPI schemas or run

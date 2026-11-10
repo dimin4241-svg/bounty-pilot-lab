@@ -11,6 +11,7 @@ run web scans, or prove that a deployed service is vulnerable.
 |---|---|---|---|
 | web-invariants graph | saved OpenAPI 3 JSON, optional x-bp-handler/x-bp-operation/x-bp-roles hints | cross-route/method authorization review leads | offline |
 | web-route-ast | local Python source directory | FastAPI/Flask-style decorator routes and apparent guard cues | offline Python AST only |
+| web-ts-ast | local JS/TS source + pinned TypeScript compiler | Express/Next.js routes and middleware-name discrepancies | offline TypeScript AST; vetted parser executed |
 | web-invariants matrix | graph JSON + private owned fixtures | owner/outsider/revoked authorization test-plan descriptions | offline |
 | web-invariants state | saved event observations | revocation, private resource, payment binding and idempotency contradictions | offline |
 | web-invariants parser | curated URL cases | multi-decoding and normalization review leads | offline |
@@ -84,6 +85,30 @@ after Git revisions separately and review the actual patch.
 Use the existing js_change_intel for saved JS assets; it currently provides
 URL/keyword cues, not a TypeScript call graph. No claim of JavaScript AST
 authorization analysis is made here.
+
+### JavaScript/TypeScript source AST (experimental)
+
+The script `web-ts-ast` uses an operator-vetted, explicitly SHA-256 pinned
+TypeScript compiler library. It parses saved JavaScript/TypeScript source
+without evaluating or importing the target. It recognizes a subset of
+Express/router methods and Next.js App Router exports.
+
+Install TypeScript in an isolated parser-toolchain directory, not within
+the target checkout, with lifecycle scripts disabled. Example pinned version:
+
+    npm install --prefix /isolated/bp-ts-parser \
+      --ignore-scripts --no-audit --no-fund --save-exact typescript@5.9.3
+    TS_LIB=/isolated/bp-ts-parser/node_modules/typescript/lib/typescript.js
+    TS_SHA=$(shasum -a 256 "$TS_LIB" | awk '{print $1}')
+    python3 "$BP" web-ts-ast --repo /isolated/pinned-js-source \
+      --typescript-parser "$TS_LIB" --parser-sha256 "$TS_SHA" \
+      --out /private/web-ts-routes.json
+
+Security note: TypeScript parser code is executable third-party tooling;
+**use a disposable, secret-free, network-isolated environment**, independently
+vet the installed parser and pin its exact digest. A source-level
+middleware-name cue is not proof of effective authorization. No cross-file
+JS/TS whole-program taint or framework middleware inheritance is implemented.
 
 ## 3. Stateful observation traces
 
@@ -192,7 +217,7 @@ Tests use synthetic OpenAPI/AST/trace fixtures and an in-process loopback
 server. No external target is tested. These prove local implementation
 contracts only, **not** an improved bug bounty detection or payout rate.
 
-Known gaps (do not silently call these complete): TypeScript framework AST,
+Known gaps (do not silently call these complete): complete framework-aware TypeScript AST and inherited guards,
 cross-file JS dataflow, independently authenticated native traces, actual
 JWT/PKCE cryptographic verification, distributed cache semantics, and
 multi-hop HTTP request parsing. Those require native language-aware analyzers

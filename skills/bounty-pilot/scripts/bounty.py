@@ -12012,6 +12012,7 @@ HELPER_COMMANDS = {
     'web-invariants': ('web_invariant_engine', 'offline OpenAPI operation graph, owned-account matrix, state and parser leads'),
     'web-local-replay': ('web_local_replay', 'two-owned-account evidence on literal loopback only'),
     'web-route-ast': ('web_route_ast', 'offline Python AST route and guard-name cues'),
+    'web-ts-ast': ('web_ts_ast', 'offline, pinned TypeScript compiler AST route leads'),
     'web-identity-flow': ('web_identity_flow', 'offline session, signed-intent and tenant traces'),
     'web-nday-review': ('web_nday_regression', 'offline Python route guard changes across pinned snapshots'),
     'nday-scan': ('nday_scan', 'list upstream security fixes newer than the pinned version '
