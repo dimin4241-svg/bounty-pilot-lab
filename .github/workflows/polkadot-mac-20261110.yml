@@ -1,0 +1,84 @@
+name: Polkadot read-only research (Mac only)
+
+on:
+  push:
+    branches:
+      - research/polkadot-mac-20261110
+    paths:
+      - '.github/workflows/polkadot-mac-20261110.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-on-mac:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Mac-only Bounty Pilot Lab tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_reality_differential.py' -v
+          python3 -m unittest discover -s tests -p 'test_outcome_consistency.py' -v
+
+      - name: Pin and inspect public SDK source without production traffic
+        shell: bash
+        env:
+          PINNED_SDK_SHA: ceb65d8059ab785f0eb1d481ef9be23811952189
+        run: |
+          set -euo pipefail
+          umask 077
+          target="$RUNNER_TEMP/polkadot-sdk-readonly"
+          git clone --no-checkout --depth 1 --filter=blob:none --sparse https://github.com/paritytech/polkadot-sdk.git "$target"
+          git -C "$target" sparse-checkout set substrate/frame/treasury substrate/frame/bounties substrate/frame/asset-conversion substrate/frame/multi-asset-bounties polkadot/xcm/xcm-builder
+          git -C "$target" fetch --depth 1 origin "$PINNED_SDK_SHA"
+          git -C "$target" checkout --detach "$PINNED_SDK_SHA"
+          [[ "$(git -C "$target" rev-parse HEAD)" == "$PINNED_SDK_SHA" ]]
+          mkdir -p "$HOME/bounty-pilot-runs"
+          run_dir="$HOME/bounty-pilot-runs/polkadot-20261110-$GITHUB_RUN_ID"
+          python3 "$GITHUB_WORKSPACE/skills/bounty-pilot/scripts/bounty.py" init --repo "$target" --out "$run_dir"
+          TARGET_DIR="$target" RUN_DIR="$run_dir" python3 - <<'PY'
+          import json, os, pathlib
+          target = pathlib.Path(os.environ["TARGET_DIR"])
+          run = pathlib.Path(os.environ["RUN_DIR"])
+          files = {
+              "treasury": "substrate/frame/treasury/src/lib.rs",
+              "xcm_transfer": "polkadot/xcm/xcm-builder/src/transfer.rs",
+              "asset_conversion": "substrate/frame/asset-conversion/src/lib.rs",
+              "credit_swaps": "substrate/frame/asset-conversion/src/swap.rs",
+              "multi_asset_bounties": "substrate/frame/multi-asset-bounties/src/lib.rs",
+              "bounties": "substrate/frame/bounties/src/lib.rs",
+          }
+          source = {key: (target / path).read_text() for key, path in files.items()}
+          observations = {
+              "sdk_commit": os.environ["PINNED_SDK_SHA"],
+              "treasury_unknown_finalizes": "Status::Success | Status::Unknown" in source["treasury"],
+              "xcm_notfound_is_unknown": "NotFound | UnexpectedVersion => TransferStatus::Unknown" in source["xcm_transfer"],
+              "multi_asset_bounties_unknown_is_inconclusive": "PaymentStatus::InProgress | PaymentStatus::Unknown" in source["multi_asset_bounties"],
+              "asset_conversion_credit_swap_transactional": "with_transaction(" in source["credit_swaps"],
+              "bounties_claim_transfer_propagates_error": "T::Currency::transfer(&bounty_account, &beneficiary, payout, AllowDeath)?" in source["bounties"],
+          }
+          (run / "source-observations.json").write_text(json.dumps(observations, indent=2) + "\n")
+          assert all(value for key, value in observations.items() if key != "sdk_commit"), observations
+          print("Pinned source inspection passed; private observations saved only on Mac.")
+          print("This is source triage, not native PoC or confirmed vulnerability.")
+          PY
+
+      - name: Native SDK test only if an already-pinned full checkout is installed
+        shell: bash
+        env:
+          PINNED_SDK_SHA: ceb65d8059ab785f0eb1d481ef9be23811952189
+        run: |
+          set -euo pipefail
+          checkout="$HOME/polkadot-sdk"
+          if [[ ! -f "$checkout/Cargo.toml" ]] || [[ "$(git -C "$checkout" rev-parse HEAD 2>/dev/null || true)" != "$PINNED_SDK_SHA" ]]; then
+            echo "NATIVE_NOT_RUN: no pre-existing full SDK checkout at the pinned commit; no large clone or build forced."
+            exit 0
+          fi
+          command -v cargo >/dev/null || { echo "NATIVE_NOT_RUN: cargo unavailable"; exit 0; }
+          CARGO_BUILD_JOBS=2 cargo test --manifest-path "$checkout/substrate/frame/treasury/Cargo.toml" check_status_works --lib --locked --offline
