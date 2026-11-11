@@ -99,7 +99,7 @@ def _diff(a, b):
 
 
 def analyze(doc, node_binary=None):
-    if not isinstance(doc, dict) or set(doc) != {
+    if (not isinstance(doc, dict) or set(doc) != {
             "schema_version", "environment", "pairs"} or
             type(doc["schema_version"]) is not int or doc["schema_version"] != 1 or
             doc["environment"] != "synthetic_offline_fixtures"):
