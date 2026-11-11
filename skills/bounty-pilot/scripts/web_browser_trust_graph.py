@@ -94,11 +94,17 @@ def analyze(doc):
             raise ValueError("observed_in_source/evidence digest invalid")
         adj[src].append(edge)
     paths, seen = [], set()
+    total_expansions = 0
+    truncated = False
     for src, node in sorted(ns.items()):
         if not node["user_controlled"] or node["trust"] != "untrusted":
             continue
         queue = deque([(src, [src], [], False, False)])
         while queue and len(paths) < 100:
+            if total_expansions >= 10000:
+                truncated = True
+                break
+            total_expansions += 1
             current, visited, hops, crossed, carried = queue.popleft()
             if len(hops) >= MAX_DEPTH:
                 continue
@@ -140,6 +146,7 @@ def analyze(doc):
                     queue.append((dest, visited + [dest], trace, new_cross, new_carried))
     return {"schema_version": 1, "mode": "web-browser-trust-graph",
             "nodes": len(nodes), "edges": len(edges), "review_paths": paths,
+            "truncated": truncated or len(paths) >= 100,
             "network_requests": 0, "confirmed_vulnerabilities": 0,
             "limitations": ("Edges and trust labels are investigator supplied. "
                             "This is not browser execution, flow-sensitive taint "

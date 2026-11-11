@@ -83,6 +83,8 @@ def _path(value):
         raise ValueError("absolute unambiguous ASCII path required")
     # An encoded slash, percent, backslash or traversal must not change
     # whether a URL falls within an allowlisted prefix.
+    if "%" in value:
+        raise ValueError("encoded path requires independent manual scope review")
     decoded = unquote(value)
     if decoded != value and any(x in decoded for x in ("\\", "%")):
         raise ValueError("ambiguous encoded path")
@@ -163,12 +165,16 @@ def evaluate(policy, requests, now=None):
     if not isinstance(requests, list) or not 1 <= len(requests) <= 100:
         raise ValueError("requests must be 1..100 entries")
     rows = []
+    seen_request_ids = set()
     for item in requests:
         if (not isinstance(item, dict) or set(item) != {"id", "url", "action",
                                                         "provided_header_names"}):
             raise ValueError("request must specify id/url/action/provided_header_names")
         if not isinstance(item["id"], str) or not LABEL.fullmatch(item["id"]):
             raise ValueError("invalid request id")
+        if item["id"] in seen_request_ids:
+            raise ValueError("duplicate request ID")
+        seen_request_ids.add(item["id"])
         action = item["action"]
         if action not in ACTIONS:
             raise ValueError("unknown requested action")

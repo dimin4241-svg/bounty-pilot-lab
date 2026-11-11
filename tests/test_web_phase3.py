@@ -140,6 +140,8 @@ class ProgramPolicyTests(unittest.TestCase):
         cases = [request("/not-url"), request("https://api.demo.test/v1/admin"),
                  request("https://api.demo.test/v1/admin-foo"),
                  request("https://api.demo.test/v1admin")]
+        for i, case in enumerate(cases):
+            case["id"] = "test" + str(i + 1)
         out = policy.evaluate(program(), cases, NOW)
         self.assertEqual([x["allowed_by_saved_preflight"] for x in out["checks"]],
                          [False, False, True, False])
@@ -174,6 +176,13 @@ class ProgramPolicyTests(unittest.TestCase):
         r["provided_header_names"] = []
         self.assertIn("MISSING_REQUIRED_HEADER_NAMES",
                       policy.evaluate(program(), [r], NOW)["checks"][0]["reasons"])
+
+    def test_duplicate_plan_ids_and_encoded_nonseparator_denied(self):
+        with self.assertRaises(ValueError):
+            policy.evaluate(program(), [request(), request()], NOW)
+        out = policy.evaluate(program(), [
+            request("https://api.demo.test/v1/%41ccount")], NOW)
+        self.assertFalse(out["checks"][0]["allowed_by_saved_preflight"])
 
     def test_fails_closed_on_stale_schema_and_duplicate_keys(self):
         raw = program()

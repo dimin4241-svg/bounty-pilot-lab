@@ -131,7 +131,7 @@ def analyze(doc):
                     "preferred_review_id": ranked[0]["id"],
                     "top_evidence_score_0_to_10": ranked[0]["score"],
                     "member_count": len(rows),
-                    "dedup_status": ("HUMAN_REVIEWED_SAME_ROOT_CAUSE" if
+                    "dedup_status": ("OPERATOR_ASSERTED_ROOT_CAUSE_NOT_ATTESTED" if
                                      json.loads(gkey)[2][0] == "reviewed"
                                      else "STRICT_STRUCTURAL_MATCH_NOT_VERIFIED"),
                     "confirmed_vulnerabilities": 0})

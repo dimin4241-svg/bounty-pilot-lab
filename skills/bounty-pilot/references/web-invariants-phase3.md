@@ -13,11 +13,11 @@ parser discrepancies. Existing Phase 1/2 commands remain available.
 
 ## 1. Program-specific fail-closed preflight
 
-Command: \`bounty.py web-program-policy\`
+Command: `bounty.py web-program-policy`
 
 Create private JSON with these required keys:
 
-\`\`\`json
+```json
 {
   "schema_version": 1,
   "platform": "bizone",
@@ -44,17 +44,17 @@ Create private JSON with these required keys:
   "required_headers": ["X-Research-Id"],
   "operator_reviewed": true
 }
-\`\`\`
+```
 
 **This example is fictional. Never use it as an assertion of real program
-permission.** \`rules_sha256\` must come from the rules actually inspected
+permission.** `rules_sha256` must come from the rules actually inspected
 and reviewed by the researcher. The CLI does not download, verify signatures
 or authenticate the rules. Snapshot validity is capped at 30 days; earlier
 program changes can revoke permission immediately.
 
 A separate request plan contains an array of objects:
 
-\`\`\`json
+```json
 [
   {
     "id": "offline-1",
@@ -63,21 +63,21 @@ A separate request plan contains an array of objects:
     "provided_header_names": ["X-Research-Id"]
   }
 ]
-\`\`\`
+```
 
-\`\`\`sh
+```sh
 BP=skills/bounty-pilot/scripts/bounty.py
 python3 "$BP" web-program-policy \
   --policy /private/program-policy.json \
   --requests /private/request-plan.json \
   --out /private/scope-decision.json
-\`\`\`
+```
 
-Supported actions: \`source-review\`, \`read-only\`, \`account-test\`,
-\`state-change\`, \`browser-test\`, \`automation\`, \`upload\`, and
-\`payment-sandbox\`. Paths and origins must match **exactly**, including
-case and path-segment boundaries; wildcards, encoded separators, nested
-URL-decoding, ambiguous traversal, username/password, query and fragment
+Supported actions: `source-review`, `read-only`, `account-test`,
+`state-change`, `browser-test`, `automation`, `upload`, and
+`payment-sandbox`. Paths and origins must match **exactly**, including
+case and path-segment boundaries; wildcards, all percent-encoded paths,
+nested URL-decoding, ambiguous traversal, username/password, query and fragment
 are rejected. Rules can explicitly exclude otherwise included actions.
 The output contains request IDs and reason codes only, not tokens or URL
 values. Header names are recorded, never secret values.
@@ -87,45 +87,45 @@ Offline snapshots are NOT legal or platform authorization.
 
 ## 2. Actor/resource/state graph
 
-Command: \`bounty.py web-actor-state-graph\`
+Command: `bounty.py web-actor-state-graph`
 
 Private input describes:
 
-- \`environment="researcher_owned_lab"\`, \`schema_version=1\`.
-- \`actors\`: \`{"id":"user-a","tenant":"org-1"}\`.
-- \`resources\`: \`{"id":"invoice-1","owner":"user-a","tenant":"org-1","visibility":"private"}\`.
-- \`initial_grants\`: optional \`{"actor":"user-b","resource":"invoice-1","action":"read"}\` facts.
-- \`events\`: monotonically increasing \`seq\` objects of type \`grant\`,
-  \`revoke\`, \`transfer\` or \`action\`.
+- `environment="researcher_owned_lab"`, `schema_version=1`.
+- `actors`: `{"id":"user-a","tenant":"org-1"}`.
+- `resources`: `{"id":"invoice-1","owner":"user-a","tenant":"org-1","visibility":"private"}`.
+- `initial_grants`: optional `{"actor":"user-b","resource":"invoice-1","action":"read"}` facts.
+- `events`: monotonically increasing `seq` objects of type `grant`,
+  `revoke`, `transfer` or `action`.
 
-Every event has the exact keys \`id\`, \`seq\`, \`type\`, \`actor\`, \`resource\`,
-\`action\`, \`subject\`, \`new_owner\`, \`observed_effect\`, and
-\`evidence_sha256\`; non-applicable fields are JSON \`null\`.
-\`observed_effect\` represents an explicitly supplied protected state
-change, not HTTP status. An unknown effect is \`null\` and does not count
+Every event has the exact keys `id`, `seq`, `type`, `actor`, `resource`,
+`action`, `subject`, `new_owner`, `observed_effect`, and
+`evidence_sha256`; non-applicable fields are JSON `null`.
+`observed_effect` represents an explicitly supplied protected state
+change, not HTTP status. An unknown effect is `null` and does not count
 as a violation.
 
 The engine applies the declared grants and revocations across sequence
 positions, rejects undisclosed actors and malformed histories, and emits
 review leads for effects that conflict with the lab's declared
-tenant/owner/grant rules. Public visibility grants \`read\` only. The
+tenant/owner/grant rules. Public visibility grants `read` only. The
 effective authorization model is synthetic and deliberately incomplete:
 global admins, delegated owners, group inheritance, actual IAM configuration
 and asynchronous consistency require independent review. No live exploit
 can be inferred from these leads.
 
-\`\`\`sh
+```sh
 python3 "$BP" web-actor-state-graph \
   --input /private/actor-events.json --out /private/actor-leads.json
-\`\`\`
+```
 
 ## 3. Two-repeat business-effect oracle
 
-Command: \`bounty.py web-effect-oracle\`
+Command: `bounty.py web-effect-oracle`
 
 Use a private research fixture document:
 
-\`\`\`json
+```json
 {
   "schema_version": 1,
   "environment": "researcher_owned_lab",
@@ -152,7 +152,7 @@ Use a private research fixture document:
     ]
   }]
 }
-\`\`\`
+```
 
 The example shows a controlled **effect**, not proof of unauthorized
 subscription activation: an authorization rule and approved fixture still
@@ -160,11 +160,11 @@ need to establish that the actor lacked that right. The module requires
 2–5 independent candidate/control paired repetitions, explicit pre/post
 state fields, a matching starting state and unique observation digests.
 
-\`\`\`sh
+```sh
 python3 "$BP" web-effect-oracle \
   --input /private/effect-observations.json \
   --out /private/effect-review.json
-\`\`\`
+```
 
 Accepted resource kinds include subscriptions, exports, approvals, jobs,
 objects, and explicitly **sandbox** payments/refunds. Only saved scalar
@@ -173,27 +173,27 @@ are produced.
 
 ## 4. Browser/third-party trust graph
 
-Command: \`bounty.py web-browser-trust\`
+Command: `bounty.py web-browser-trust`
 
-Create a bounded \`{"schema_version":1,
-"environment":"offline_owned_source_or_fixture","nodes":[],"edges":[]}\`
-file. Nodes have \`id\`, \`kind\`, \`trust\` (\`trusted\`, \`untrusted\`,
-\`unknown\`), \`sensitive\` (boolean) and \`user_controlled\`
-(boolean). Edges have \`from\`, \`to\`, \`kind\`,
-\`observed_in_source\` and \`evidence_sha256\`.
+Create a bounded `{"schema_version":1,
+"environment":"offline_owned_source_or_fixture","nodes":[],"edges":[]}`
+file. Nodes have `id`, `kind`, `trust` (`trusted`, `untrusted`,
+`unknown`), `sensitive` (boolean) and `user_controlled`
+(boolean). Edges have `from`, `to`, `kind`,
+`observed_in_source` and `evidence_sha256`.
 
 The engine looks for user-controlled data crossing an explicitly labeled
 trusted/untrusted boundary and encountering an explicit privileged-context
-edge such as \`sends-auth\`, \`sends-cookie\`, \`uses-auth\` or
-\`executes-script\` before reaching a sensitive sink. It never infers
+edge such as `sends-auth`, `sends-cookie`, `uses-auth` or
+`executes-script` before reaching a sensitive sink. It never infers
 that a cookie or authorization header was sent merely from the existence
 of an image request, redirect or script URL.
 
-\`\`\`sh
+```sh
 python3 "$BP" web-browser-trust \
   --input /private/browser-trust.json \
   --out /private/browser-paths.json
-\`\`\`
+```
 
 This is an offline **declared graph**, not an instrumented browser.
 It does not prove SameSite bypass, XSS, session exposure or production
@@ -202,14 +202,14 @@ independent browser verification; do not fetch third-party user data.
 
 ## 5. Real local URL parser lab
 
-Command: \`bounty.py web-parser-lab\`
+Command: `bounty.py web-parser-lab`
 
-Compares Python \`urllib.parse.urlsplit\` with Node's WHATWG \`URL\`
+Compares Python `urllib.parse.urlsplit` with Node's WHATWG `URL`
 constructor, **not** two imaginary parser observations. Requires Node.js
 on the operator's machine. The fixed Node script does not evaluate source
 from the target.
 
-\`\`\`json
+```json
 {
   "schema_version": 1,
   "environment": "synthetic_offline_fixtures",
@@ -219,45 +219,46 @@ from the target.
     "negative_control_url": "https://fixture.invalid/path"
   }]
 }
-\`\`\`
+```
 
-\`\`\`sh
+```sh
 python3 "$BP" web-parser-lab \
   --input /private/urls.json --out /private/parser-result.json
-\`\`\`
+```
 
-Only \`*.invalid\`, \`*.test\`, and \`*.example\` are allowed. The
+Only `*.invalid`, `*.test`, and `*.example` are allowed. The
 report contains only difference categories and test IDs; URLs and query
 values are omitted. No sockets, HTTP requests or DNS resolution occur.
 This tests **URL normalization only**. It is not a request smuggling,
 cache poisoning or production reverse-proxy test. Existing
-\`web-http-boundary\` continues to compare saved HTTP observations.
+`web-http-boundary` continues to compare saved HTTP observations.
 A native Docker-backed HTTP Garden comparison is **not** included.
 
 ## 6. Conservative root-cause review queue
 
-Command: \`bounty.py web-root-cause-dedup\`
+Command: `bounty.py web-root-cause-dedup`
 
 Input contains a project ID, pinned 40-hex revision and a bounded array
-of candidates with concrete \`source_file\`, \`code_anchor\`,
-\`invariant_id\`, \`trust_boundary_id\`, \`claimed_effect_id\`,
-optional \`reviewed_root_cause_id\`, optional \`evidence_digest\`,
-\`disposition\`, and \`evidence\` scores. Five scores from 0 to 2
-(\`reachability\`, \`trust_boundary\`, \`business_effect\`, \`novelty\`,
-\`testability\`) give a review order, **not a payout probability**.
+of candidates with concrete `source_file`, `code_anchor`,
+`invariant_id`, `trust_boundary_id`, `claimed_effect_id`,
+optional `reviewed_root_cause_id`, optional `evidence_digest`,
+`disposition`, and `evidence` scores. Five scores from 0 to 2
+(`reachability`, `trust_boundary`, `business_effect`, `novelty`,
+`testability`) give a review order, **not a payout probability**.
 
 A candidate is grouped automatically only when project, pinned commit,
-source file, code anchor, invariant and boundary all match, or when a
-human has explicitly provided a reviewed root-cause ID. Leads sharing
+source file, code anchor, invariant and boundary all match, or when an
+operator explicitly supplies a root-cause ID. That asserted review is
+not authenticated or independently attested by the tool. Leads sharing
 an anchor but differing in invariant/boundary remain separate and are
-merely linked for manual review. \`refuted\` findings rank at zero;
-\`parked\` findings stay in the queue at reduced priority.
+merely linked for manual review. `refuted` findings rank at zero;
+`parked` findings stay in the queue at reduced priority.
 
-\`\`\`sh
+```sh
 python3 "$BP" web-root-cause-dedup \
   --input /private/research-candidates.json \
   --out /private/root-cause-queue.json
-\`\`\`
+```
 
 Use the queue before expensive model dispatch so one known hypothesis is
 not re-audited repeatedly under different endpoint names.
@@ -269,19 +270,19 @@ Recommended agent order:
 1. Review **current official program rules**, obtain permitted source,
    and run the **offline scope preflight**. Never auto-authorize from a
    green indicator.
-2. Run existing \`web-invariants graph\`, \`web-ts-flow\` and
-   \`web-route-ast\` on local, pinned, in-scope input.
+2. Run existing `web-invariants graph`, `web-ts-flow` and
+   `web-route-ast` on local, pinned, in-scope input.
 3. Build actor-state and browser-trust hypotheses from verified code facts,
    preserving unknown fields as unknown.
 4. Prioritize with root-cause grouping. Use one cheap agent first for
    alternative causes, runtime guards and existing fixes.
 5. In an **owned or explicitly authorized test environment**, collect
    paired candidate/control effects; validate with
-   \`web-effect-oracle\`.
+   `web-effect-oracle`.
 6. Only send evidence-supported, still-novel issues to the stronger model
    for review. No auto-reporting from static leads.
 7. Compare the old and new workflow using existing
-   \`web-bench-ab\` separately sealed evaluator roles.
+   `web-bench-ab` separately sealed evaluator roles.
 
 The bundled three publicly known historical cases do NOT establish
 new-issue rediscovery or an uplift number. A diverse, independently
@@ -290,9 +291,9 @@ evaluation work. Do not call the test suite a discovery benchmark.
 
 ## 8. Local tests and limits
 
-\`\`\`sh
+```sh
 python3 -m unittest discover -s tests -p 'test_web_phase3.py' -v
-\`\`\`
+```
 
 No synthetic unit result can establish real exploitability, program
 eligibility or bounty payout. All six helpers use Python 3.9+ and mostly
