@@ -21,6 +21,11 @@ on:
       - 'tests/test_web_native_toolchain.py'
       - 'tests/test_web_benchmark_readiness.py'
       - 'tests/test_web_hunt_loop.py'
+      - 'skills/bounty-pilot/scripts/harness_gen.py'
+      - 'skills/bounty-pilot/scripts/experimenter.py'
+      - 'skills/bounty-pilot/scripts/scenario_fuzz.py'
+      - 'tests/test_intent_mutation_phase6.py'
+      - 'skills/bounty-pilot/references/intent-mutation-phase6.md'
       - 'skills/bounty-pilot/references/web-hunt-loop-phase5.md'
       - 'skills/bounty-pilot/references/web-native-phase4.md'
       - '.github/workflows/web-invariant-ci.yml'
@@ -60,6 +65,9 @@ jobs:
           python3 -m py_compile skills/bounty-pilot/scripts/web_benchmark_readiness.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_workflow_capture.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_hunt_loop.py
+          python3 -m py_compile skills/bounty-pilot/scripts/harness_gen.py
+          python3 -m py_compile skills/bounty-pilot/scripts/scenario_fuzz.py
+          python3 -m py_compile skills/bounty-pilot/scripts/experimenter.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_dispatch_prepare.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_evidence_packet.py
           node --check skills/bounty-pilot/scripts/web_playwright_local.cjs
@@ -82,6 +90,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_web_native_toolchain.py' -v
           python3 -m unittest discover -s tests -p 'test_web_benchmark_readiness.py' -v
           python3 -m unittest discover -s tests -p 'test_web_hunt_loop.py' -v
+          python3 -m unittest discover -s tests -p 'test_intent_mutation_phase6.py' -v
       - name: Pinned TypeScript parser fixture (no install scripts)
         run: |
           npm install --prefix "$RUNNER_TEMP/bp-ts-parser" --ignore-scripts --no-audit --no-fund --save-exact typescript@5.9.3
@@ -108,6 +117,12 @@ jobs:
           python3 skills/bounty-pilot/scripts/bounty.py web-hunt-loop --help
           python3 skills/bounty-pilot/scripts/bounty.py web-dispatch-prepare --help
           python3 skills/bounty-pilot/scripts/bounty.py web-evidence-packet --help
+          python3 skills/bounty-pilot/scripts/bounty.py harness-gen mutation-plan --help
+          python3 skills/bounty-pilot/scripts/bounty.py harness-gen mutation-score --help
+          python3 skills/bounty-pilot/scripts/bounty.py harness-gen coverage-review --help
+          python3 skills/bounty-pilot/scripts/bounty.py harness-gen mutation-stage --help
+          python3 skills/bounty-pilot/scripts/bounty.py harness-gen intent-bundle --help
+          python3 skills/bounty-pilot/scripts/bounty.py experimenter causal-review --help
           python3 skills/bounty-pilot/scripts/bounty.py web-browser-trust --help
           python3 skills/bounty-pilot/scripts/bounty.py web-parser-lab --help
           python3 skills/bounty-pilot/scripts/bounty.py web-root-cause-dedup --help

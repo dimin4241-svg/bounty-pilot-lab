@@ -152,6 +152,28 @@ def actions_for(model):
                              _substitute(rule, actor)))
     return sorted(expanded, key=lambda v: (v[0], v[1]))
 
+
+def _changed_scalar_fields(before, after, max_changes=40):
+    """Explain FIRST observed invariant transition, not a proved code root cause."""
+    changes = []
+    def descend(a, b, prefix, depth):
+        if len(changes) >= max_changes or depth > 8:
+            return
+        if isinstance(a, dict) and isinstance(b, dict):
+            for k in sorted(set(a) | set(b)):
+                if len(changes) >= max_changes:
+                    break
+                if k not in a or k not in b:
+                    changes.append({"field": prefix + k, "kind": "added-or-removed"})
+                else:
+                    descend(a[k], b[k], prefix + k + ".", depth+1)
+        elif a != b:
+            # Avoid emitting sensitive values, huge structures or raw addresses.
+            changes.append({"field": prefix[:-1], "kind": "changed"})
+    descend(before, after, "", 0)
+    return changes
+
+
 def explore(model, depth=4, max_states=3000, max_seconds=60):
     if not isinstance(depth, int) or not 1 <= depth <= 8:
         raise ValueError("depth must be 1..8")
@@ -204,9 +226,14 @@ def explore(model, depth=4, max_states=3000, max_seconds=60):
                 raise ValueError("unknown invariant in generated state: " +
                                  ", ".join(x["id"] for x in unknown))
             if failing:
-                counterexamples.append({"trace": new_trace, "depth": len(new_trace),
-                                        "invariant_ids": [x["id"] for x in failing],
-                                        "state": next_state, "evidence_level": "model-only"})
+                counterexamples.append({
+                    "trace": new_trace, "depth": len(new_trace),
+                    "first_observed_violation_step": len(new_trace),
+                    "changed_fields_at_violation": _changed_scalar_fields(
+                        state, next_state),
+                    "causal_root_proven": False,
+                    "invariant_ids": [x["id"] for x in failing],
+                    "state": next_state, "evidence_level": "model-only"})
                 # BFS: first counterexample is minimal depth.
                 return {"schema": 1, "status": "model-counterexample",
                         "counterexamples": counterexamples,

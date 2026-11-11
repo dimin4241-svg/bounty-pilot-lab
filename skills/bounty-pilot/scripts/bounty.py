@@ -12038,8 +12038,9 @@ HELPER_COMMANDS = {
                                            'verifier counts at one block (read-only RPC)'),
     'rounding-map': ('rounding_map', 'map rounding direction, the value it feeds and how cheaply '
                                      'it repeats'),
-    'harness-gen': ('harness_gen', 'write a deliberately failing stateful invariant harness '
-                                   'skeleton from ABIs'),
+    'harness-gen': ('harness_gen', 'generate bounded stateful harnesses, intent-verified getter assertions, '
+                                   'and blind deterministic mutation plans'),
+    'experimenter': ('experimenter', 'draft local test pairs and review counterfactual fix receipts'),
     'init-race': ('init_race', 'find deploy/initialize splits and initializable '
                                'implementations'),
     'legacy-sweep': ('legacy_sweep', 'list deprecated addresses from repository history, with '
