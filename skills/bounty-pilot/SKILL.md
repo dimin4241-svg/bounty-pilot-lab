@@ -747,3 +747,23 @@ measurement, use `web-bench-ab` to prepare paired historical tasks and
 compare independently reviewed, sealed arms with matching budgets.
 These engines never establish production exploitability or payout likelihood.
 See `references/web-semantic-phase2.md` for required scope and evidence gates.
+
+## Web/API Phase 3 — scope first, effects before report
+
+For Standoff 365, BI.ZONE, or another named web program, independently
+review current official scope and use `web-program-policy` as an offline
+fail-closed plan preflight. It is NOT an authorization provider and
+never executes requests. Existing `web-ts-flow`, `web-route-ast`,
+and `web-invariants` supply only static review candidates.
+Use `web-actor-state-graph` for explicit actor/owner/tenant/grant
+state histories and `web-browser-trust` for user-content → URL/cookie/
+third-party/credential trust boundaries. Where controlled local data
+exists, `web-effect-oracle` requires repeated concrete business-state
+effects and matched negative controls, not HTTP 200 or speculative
+model claims. `web-parser-lab` compares two real URL implementations
+only on synthetic local strings; it is NOT HTTP smuggling testing.
+Before expensive model calls, `web-root-cause-dedup` conservatively
+groups strict identical mechanisms while keeping differently scoped
+invariants separate. Reuse `web-bench-ab` for paired evaluation, but
+never claim uplift without independently reviewed holdout outcomes.
+See `references/web-invariants-phase3.md`.

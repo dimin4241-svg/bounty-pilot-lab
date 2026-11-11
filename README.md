@@ -18,6 +18,19 @@
 
 ---
 
+## Experimental Web Invariant Lab — phase 3
+
+Six additional offline-first controls improve Standoff/BI.ZONE-oriented Web/API
+research: `web-program-policy` (strict program scope and permitted actions),
+`web-actor-state-graph` (ownership/tenant/grant/revocation event sequences),
+`web-effect-oracle` (repeated controlled state change rather than status codes),
+`web-browser-trust` (explicit browser third-party/credential boundary paths),
+`web-parser-lab` (real local Python-vs-Node URL normalization differences), and
+`web-root-cause-dedup` (strict clustering and cheap review prioritization).
+
+These modules do not authorize production testing or prove vulnerabilities.
+See the [phase 3 guide](skills/bounty-pilot/references/web-invariants-phase3.md).
+
 ## Experimental Web Semantic Research — phase 2
 
 Adds bounded cross-file TypeScript/JavaScript route-to-sensitive-call **syntactic**

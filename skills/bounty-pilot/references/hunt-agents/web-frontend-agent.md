@@ -83,3 +83,16 @@ route-to-sensitive-call chain. This syntactic tracer identifies potential
 request argument propagation, not actual authorization bypass or executable
 taint proof. Inspect the real dataflow and trust boundary manually.
 See `references/web-semantic-phase2.md`.
+
+## Phase 3 browser trust and parser gate
+
+For user-controlled Markdown/images/scripts, redirects, cookies,
+SSO and authorization-bearing browser requests, build the offline
+`web-browser-trust` graph with an explicit privileged-context edge;
+mere adjacency to an external resource is not evidence of leaked
+credentials. Check URL parser differences only with
+`web-parser-lab` on synthetic fixture hosts; never interpret the
+Node/Python discrepancy as an HTTP request smuggling exploit.
+Independent Playwright verification belongs on a disposable owned
+test application with external network blocked. See
+`references/web-invariants-phase3.md`.

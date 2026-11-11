@@ -36,3 +36,16 @@ observations and a separate negative control, without generating traffic.
 For comparisons use the `web-bench-ab` evaluator-separated protocol,
 not self-scored model claims. These are unverified investigation aids.
 See `references/web-semantic-phase2.md`.
+
+## Phase 3 lab evidence contracts
+
+Use `web-program-policy` to check a specific current scope/action
+plan before any authorized external test. Static source routes from
+`web-ts-flow` are not taint proof. Event-based
+`web-actor-state-graph` and pre/post `web-effect-oracle` are
+the allowed offline interchange format for owned test-account
+observations; preserve unknowns. Do not join distinct root causes
+from matching route names alone; use `web-root-cause-dedup`.
+For URL/cookie parser questions, compare synthetic controlled inputs
+first and never automate production desync probes from this lens.
+See `references/web-invariants-phase3.md`.
