@@ -1,0 +1,67 @@
+name: Phase 6 blind mutation invariants (synthetic/offline CI)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mutation-intent-ci.yml'
+      - 'skills/bounty-pilot/scripts/harness_gen.py'
+      - 'skills/bounty-pilot/scripts/invariant_check.py'
+      - 'skills/bounty-pilot/scripts/scenario_fuzz.py'
+      - 'skills/bounty-pilot/scripts/experimenter.py'
+      - 'skills/bounty-pilot/scripts/sandbox_run.py'
+      - 'tests/test_mutation_intent_phase6.py'
+      - 'skills/bounty-pilot/references/mutation-intent-phase6.md'
+      - 'skills/bounty-pilot/SKILL.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mutation-intent-ci.yml'
+      - 'skills/bounty-pilot/scripts/harness_gen.py'
+      - 'skills/bounty-pilot/scripts/invariant_check.py'
+      - 'skills/bounty-pilot/scripts/scenario_fuzz.py'
+      - 'skills/bounty-pilot/scripts/experimenter.py'
+      - 'skills/bounty-pilot/scripts/sandbox_run.py'
+      - 'tests/test_mutation_intent_phase6.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile existing helper modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile skills/bounty-pilot/scripts/harness_gen.py
+          python3 -m py_compile skills/bounty-pilot/scripts/scenario_fuzz.py
+          python3 -m py_compile skills/bounty-pilot/scripts/experimenter.py
+          python3 -m py_compile skills/bounty-pilot/scripts/sandbox_run.py
+      - name: Test source mutation and blind property gates (no native target)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_mutation_intent_phase6.py' -v
+          python3 -m unittest discover -s tests -p 'test_harness_gen.py' -v
+          python3 -m unittest discover -s tests -p 'test_experimenter.py' -v
+          python3 -m unittest discover -s tests -p 'test_sandbox_run.py' -v
+      - name: Smoke new subcommands (no Docker or production execution)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BP=skills/bounty-pilot/scripts/bounty.py
+          python3 "$BP" harness-gen prepare-mutants --help
+          python3 "$BP" harness-gen prepare-intent --help
+          python3 "$BP" harness-gen validate-properties --help
+          python3 "$BP" sandbox-run mutation-campaign --help
+          python3 "$BP" experimenter mutation-score --help
+          python3 "$BP" experimenter counterfactual --help

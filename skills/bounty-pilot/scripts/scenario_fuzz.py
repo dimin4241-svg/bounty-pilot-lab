@@ -152,6 +152,68 @@ def actions_for(model):
                              _substitute(rule, actor)))
     return sorted(expanded, key=lambda v: (v[0], v[1]))
 
+
+def state_delta(before, after, limit=50):
+    """Bounded state difference after an exact model step (not a source-code root cause)."""
+    changes = []
+
+    def walk(left, right, prefix, depth):
+        if len(changes) >= limit:
+            return
+        if isinstance(left, dict) and isinstance(right, dict) and depth < 8:
+            for key in sorted(set(left) | set(right)):
+                if len(changes) >= limit:
+                    return
+                name = prefix + "." + str(key) if prefix else str(key)
+                if key not in left or key not in right:
+                    changes.append({"path": name, "before": left.get(key, "<absent>"),
+                                    "after": right.get(key, "<absent>")})
+                else:
+                    walk(left[key], right[key], name, depth + 1)
+        elif left != right:
+            changes.append({"path": prefix, "before": left, "after": right})
+
+    walk(before, after, "", 0)
+    return changes
+
+
+def replay_trace(model, trace):
+    """Replay an exact failing trace against a model of the proposed fix/control."""
+    if not isinstance(trace, list) or not 1 <= len(trace) <= 8:
+        raise ValueError("bounded model trace required")
+    checker = _load_invariants()
+    actions = actions_for(model)
+    state = copy.deepcopy(model["state"])
+    progress = []
+    for index, step in enumerate(trace, 1):
+        matches = [(label, actor, action) for label, actor, action in actions
+                   if label == step.get("action") and actor == step.get("actor")]
+        if len(matches) != 1:
+            return {"status": "TRACE_NOT_REPLAYABLE", "failed_at_step": index,
+                    "steps": progress, "model_only": True}
+        next_state = transition(state, matches[0][2])
+        if next_state is None:
+            return {"status": "TRACE_BLOCKED_BY_GUARD", "failed_at_step": index,
+                    "steps": progress, "model_only": True}
+        result = checker.evaluate({"invariants": model["invariants"]}, next_state)
+        progress.append({
+            "step": index, "action": step["action"], "actor": step["actor"],
+            "changed_fields": state_delta(state, next_state),
+            "invariants": {x["id"]: x["status"] for x in result["results"]},
+            "violations": [x["id"] for x in result["results"]
+                           if x["status"] == "fail"]
+        })
+        if result["summary"]["unknown"]:
+            return {"status": "INCONCLUSIVE_UNKNOWN_PROPERTY",
+                    "failed_at_step": index, "steps": progress, "model_only": True}
+        state = next_state
+    first = next((x["step"] for x in progress if x["violations"]), None)
+    return {"status": ("MODEL_INVARIANT_VIOLATED" if first else
+                       "NO_MODEL_VIOLATION_ON_THIS_TRACE"),
+            "first_violating_step": first, "steps": progress, "model_only": True,
+            "notice": "A first divergent model step cannot prove a deployed bug or safe fix."}
+
+
 def explore(model, depth=4, max_states=3000, max_seconds=60):
     if not isinstance(depth, int) or not 1 <= depth <= 8:
         raise ValueError("depth must be 1..8")
@@ -206,7 +268,8 @@ def explore(model, depth=4, max_states=3000, max_seconds=60):
             if failing:
                 counterexamples.append({"trace": new_trace, "depth": len(new_trace),
                                         "invariant_ids": [x["id"] for x in failing],
-                                        "state": next_state, "evidence_level": "model-only"})
+                                        "state": next_state, "evidence_level": "model-only",
+                                        "stepwise_causal_trace": replay_trace(model, new_trace)})
                 # BFS: first counterexample is minimal depth.
                 return {"schema": 1, "status": "model-counterexample",
                         "counterexamples": counterexamples,
@@ -253,6 +316,12 @@ def main(argv=None):
                 if candidate["status"] == "model-counterexample"
                 and result["negative_control"]["status"] == "no-model-counterexample-within-bounds"
                 else "inconclusive")
+            if candidate["counterexamples"]:
+                result["same_trace_control"] = replay_trace(
+                    control, candidate["counterexamples"][0]["trace"])
+                result["same_trace_control_passed"] = (
+                    result["same_trace_control"]["status"] ==
+                    "NO_MODEL_VIOLATION_ON_THIS_TRACE")
         payload = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
         if a.out:
             Path(a.out).write_text(payload, encoding="utf-8")

@@ -1,3 +1,25 @@
+## Blind invariant mining and mutation sensitivity — Phase 6
+
+Existing harness and experimenter now support a **fixed, sealed
+Solidity mutation catalog generated before property discovery**,
+a separate mutant-blind documentation task for the model, an explicit
+independent provenance/reviewer gate, and **real typed getter
+assertions** for a narrow approved ABI-based subset.
+
+The isolated Foundry mutation campaign uses an immutable offline
+Docker image (self-hosted Mac only for actual native execution). It
+records baseline tests and best-effort source-line coverage, but does
+**not** classify a generic test failure as a killed mutant. The
+mutation evaluator distinguishes unreachable, nonviable,
+possibly-equivalent, unknown-infection, killed and surviving cases
+and reports an undefined detection fraction when there is no
+meaningful denominator. The state-model explorer also records
+per-step deltas and replays the exact minimal trace against a
+counterfactual model. **No remote targets, models, or payout
+experiments were run by this addition.**
+
+[Phase 6 protocol and exact commands](skills/bounty-pilot/references/mutation-intent-phase6.md).
+
 <p align="center">
   <img src="docs/assets/banner.svg" alt="Bounty Pilot — Web3 security, backed by evidence" width="100%">
 </p>
