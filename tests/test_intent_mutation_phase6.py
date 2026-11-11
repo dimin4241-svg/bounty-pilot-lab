@@ -154,7 +154,10 @@ class Phase6Test(unittest.TestCase):
 
     def test_no_supported_mutation_returns_inconclusive_not_success(self):
         self.assertEqual(harness._mutate_line("// require(a >= b);"), [])
-        self.assertEqual(harness._mutate_line('require(a >= b, "x");'), [])
+        self.assertEqual(harness._mutate_line('require("a >= b");'), [])
+        candidates = harness._mutate_line('require(a >= b, "x");')
+        self.assertEqual(candidates, [
+            ("guard-strict-ge", 'require(a > b, "x");')])
         self.assertEqual(harness._mutate_line("uint256 x = 10;"), [])
 
     def test_intent_only_bundle_contains_no_mutants(self):

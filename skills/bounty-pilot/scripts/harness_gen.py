@@ -789,18 +789,21 @@ def _mutate_line(line):
     reachability and semantic-equivalence review.
     """
     if (not line.strip() or line.lstrip().startswith(("//", "*", "/*")) or
-            '"' in line or "'" in line or len(line) > 240):
+            len(line) > 240):
         return []
     found = []
-    # Only change stand-alone guards, avoiding operands inside string literals.
-    guard = line.lstrip()
+    # Ignore operator-looking text after a quoted revert message. Common
+    # require(condition, "reason") remains eligible when the guard itself
+    # is before the first string literal. Never rewrite quoted messages.
+    unquoted_prefix = line.split('"', 1)[0].split("'", 1)[0]
+    guard = unquoted_prefix.lstrip()
     if guard.startswith(("require(", "require (", "if (", "if(")):
         for original, mutant, label in (
                 (" >= ", " > ", "guard-strict-ge"),
                 (" <= ", " < ", "guard-strict-le"),
                 (" > ", " >= ", "guard-relax-gt"),
                 (" < ", " <= ", "guard-relax-lt")):
-            if original in line:
+            if original in unquoted_prefix:
                 changed = line.replace(original, mutant, 1)
                 if changed != line:
                     found.append((label, changed))
@@ -811,10 +814,10 @@ def _mutate_line(line):
             r"\s*[A-Za-z_][\w.]*(?:\[[A-Za-z0-9_.]+\])?\s*\+=\s*"
             r"[A-Za-z_][A-Za-z0-9_.]*\s*;\s*", line):
         found.append(("accounting-update-flip", line.replace("+=", "-=", 1)))
-    if "Math.Rounding.Up" in line:
+    if "Math.Rounding.Up" in unquoted_prefix:
         found.append(("rounding-direction-down",
                       line.replace("Math.Rounding.Up", "Math.Rounding.Down", 1)))
-    elif "Math.Rounding.Down" in line:
+    elif "Math.Rounding.Down" in unquoted_prefix:
         found.append(("rounding-direction-up",
                       line.replace("Math.Rounding.Down", "Math.Rounding.Up", 1)))
     return found
