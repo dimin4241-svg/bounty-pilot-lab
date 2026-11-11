@@ -142,7 +142,11 @@ NOT implement them. `mutation-lab score` tests actual bounded model
 transitions and distinguishes unreached, observationally equivalent,
 caught and uncaught changes. Mutation hits are not native exploits,
 and a missing mutant kill is not automatically a weak invariant.
-Existing `sandbox-run --mutation-bank --property-spec` executes this
+A separate explicit `sandbox-run --plan --forge-harness <Name>Invariants`
+runs an operator-approved native Foundry harness inside a trusted
+pinned no-network Docker and records per-handler revert/call summaries
+when present. Missing or high-revert counters mean coverage UNKNOWN/
+LOW, never success. Existing `sandbox-run --mutation-bank --property-spec` executes this
 data-only evaluator in a pinned offline non-root Docker image.
 
 ### D. Measuring whether the lab actually finds bugs

@@ -115,6 +115,43 @@ python3 "$BP" harness-gen --artifact /checkout/out/Vault.sol/Vault.json --repo /
 
 The harness plan records source-backed provenance. Solidity property functions remain deliberately failing TODO stubs. A researcher must author exact executable assertions, set up native dependencies and ghost state, execute controlled native tests, and record per-selector calls/reverts; a campaign dominated by revert calls is NOT useful coverage.
 
+## 6. Optional native Foundry campaign with per-handler revert diagnostics
+
+The existing sandbox wrapper can now run an operator-vetted Foundry
+*Invariants harness in offline, pinned, non-root Docker. This is distinct
+from the data-only mutation scorer:
+
+~~~sh
+python3 "$BP" sandbox-run \
+  --repo /absolute/disposable-checkout \
+  --plan /private/bpl/native-harness/harness-plan.json \
+  --forge-harness VaultInvariants \
+  --out /private/bpl/native-harness-receipt.json \
+  --image trusted/forge-toolchain@sha256:REPLACE_WITH_REAL_64_HEX_DIGEST
+~~~
+
+The source checkout is **read-only inside Docker**, all Foundry
+build/output/cache writes go to disposable /tmp, and the sandbox blocks
+networking, drops Linux capabilities and uses a non-root account.
+The fixed runner invokes forge test with a literal contract selection
+(no shell, no user-defined commands). The image must be already
+installed and pinned to a *real trusted* digest.
+
+The receipt never persists raw test logs. It keeps only a SHA-256 of
+stdout, exit status and parsed per-handler calls/reverts/accepted
+counts, when the existing harness emitted a recognizable signature
+summary. A handler with zero calls or ≥80% revert fraction is marked
+unexplored/low-acceptance. Missing/ambiguous console summaries are
+**HANDLER_COVERAGE_NOT_OBSERVED**, not proof of adequate fuzzing.
+
+These arguments construct a native execution path that needs a
+fully configured repository, Foundry dependencies, local deployment
+and correctly written properties. The CI tests ONLY the command
+builder and synthetic log parser; they do NOT actually run untrusted
+target code or validate that an arbitrary protocol harness compiles.
+If your native Foundry version formats logs differently, coverage
+must remain unknown until reviewed evidence is supplied.
+
 ## 6. Honest A/B research
 
 Use existing blind_campaign, bench_compare, backtest and benchmark-protocol. Seal pre-fix sources and hide patched commits, bug descriptions, reports and mutation banks from authors. Different isolated author and evaluator workspaces must be enforced by the operator. Both arms need identical model versions, context, tool access, fixed spend/time and independent reviewers. Public bugs may have been in training; prioritize independently verified post-training cases. Measure *unique confirmed* root causes and actual cost, not only mutant kills.

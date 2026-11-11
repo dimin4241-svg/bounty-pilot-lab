@@ -32,7 +32,10 @@ property-caught behavior changes, and reached but uncaught changes.
 tiers while preserving intentionally failing native Solidity property
 stubs. `sandbox-run --mutation-bank --property-spec` scores the
 **data-only** model in a pinned, offline Docker container without
-mounting target code. This is not automatically generated Solidity
+mounting target code. Separately, `sandbox-run --forge-harness` can
+execute a pre-approved native Foundry harness in the same offline
+Docker restrictions and record **per-handler calls/reverts** when
+available; absent or high-revert counts block coverage claims. This is not automatically generated Solidity
 property code or native Solidity mutant testing, and no independent
 LLM A/B research uplift is claimed.
 
