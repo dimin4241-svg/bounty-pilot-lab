@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 SHA = re.compile(r"^[a-f0-9]{64}$")
@@ -60,7 +61,12 @@ def assess(catalog, reviews):
         "bp_historical_gate",
         Path(__file__).with_name("web_historical_bench.py"))
     module = __import__("importlib.util").util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    helper_dir = str(Path(__file__).resolve().parent)
+    sys.path.insert(0, helper_dir)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     cases = module._catalog(catalog)
     if (not isinstance(reviews, dict) or set(reviews) != {
             "schema_version", "reviewer_role", "cases"} or
