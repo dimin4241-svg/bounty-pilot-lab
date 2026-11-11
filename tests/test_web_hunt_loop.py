@@ -399,6 +399,7 @@ class DispatchBridgeTests(unittest.TestCase):
         (self.repo / "src" / "service.ts").write_text(
             "function review(req) {\n"
             "  const apiKey = 'SECRET_SHOULD_BE_MASKED';\n"
+            "  if (!isAuthorized(req)) throw Error('denied');\n"
             "  return prisma.findUnique(req.id);\n"
             "}\n")
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
@@ -440,6 +441,8 @@ class DispatchBridgeTests(unittest.TestCase):
         self.assertIn(self.campaign["review_jobs"][0]["candidate_id"], text)
         self.assertIn(self.revision, text)
         self.assertIn("captured-http", text)
+        self.assertIn("Owner HTTP 200", text)
+        self.assertIn("outsider HTTP 200", text)
         self.assertNotIn("PRIVATE_SECRET", text)
         self.assertEqual(bundle.stat().st_mode & 0o777, 0o600)
 
@@ -473,7 +476,7 @@ class DispatchBridgeTests(unittest.TestCase):
                 "entry": {"file": "src/routes.ts", "method": "GET",
                           "path": "/api/v1/items"},
                 "sink": {"file": "src/service.ts", "call": "prisma.findUnique",
-                         "line": 3}
+                         "line": 4}
             }]
         }
         campaign = hunt.execute(m, now=NOW)
@@ -486,6 +489,7 @@ class DispatchBridgeTests(unittest.TestCase):
         self.assertIn("[REDACTED_SECRET_LIKE_LINE]", content)
         self.assertNotIn("SECRET_SHOULD_BE_MASKED", content)
         self.assertIn("Pinned source SHA-256:", content)
+        self.assertIn("isAuthorized(req)", content)
 
     def test_empty_or_blocked_review_queue_cannot_dispatch(self):
         campaign = copy.deepcopy(self.campaign)
