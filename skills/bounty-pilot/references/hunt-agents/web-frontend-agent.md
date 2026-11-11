@@ -107,3 +107,16 @@ testing an authorization/business-effect hypothesis with
 independent role fixtures; it is not proof that real role
 identities were established, nor an XSS exploit.
 See `references/web-native-phase4.md`.
+
+## Phase 5 workflow capture limitations
+
+For browser/API sequence capture, the new
+`web-workflow-capture` helper only ingests an already saved
+researcher-owned loopback HAR and drops secrets, object IDs and
+response bodies. It cannot authenticate the current browser
+session, discover actual company scopes, or prove script/credential
+exposure. The `web-hunt-loop` can combine those sanitized
+operations with source flow analysis and optionally replay a
+separate local business-effect fixture; use an independent
+authorization assertion and negative control before considering
+any result. See `references/web-hunt-loop-phase5.md`.

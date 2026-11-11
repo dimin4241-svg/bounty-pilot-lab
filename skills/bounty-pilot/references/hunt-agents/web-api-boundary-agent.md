@@ -157,3 +157,18 @@ remain hypotheses. For evaluation, distinguish
 `web-benchmark-regression`'s synthetic controls from
 the independently reviewer-scored `web-bench-ab`.
 See `references/web-native-phase4.md`.
+
+## Phase 5 integrated API review
+
+Start from owned-loopback HARs for two explicitly authorized
+fixture roles, sanitize with `web-workflow-capture`, and feed
+the two summarized captures to `web-hunt-loop` together with
+a current operator-reviewed program policy snapshot. A matching
+opaque object read with HTTP 2xx under both actors is ONLY a
+lead if the operator explicitly declares the route owner-only.
+Send the result to `web-root-cause-dedup` and independent
+review through the integrated loop, then use
+`web-evidence-packet` only after distinct local negative
+controls and a separate reviewer assertion. No production
+requests or model jobs are executed from this loop.
+See `references/web-hunt-loop-phase5.md`.

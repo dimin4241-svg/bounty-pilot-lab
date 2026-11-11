@@ -800,3 +800,42 @@ to gate a future 30–50 *real* source-pinned, independently
 reviewed historical Web A/B study. The shipped public Web
 history catalog has only 3 cases and cannot support an uplift
 claim. See `references/web-native-phase4.md`.
+
+## Phase 5 unified owned Web hunt workflow
+
+Prefer `web-workflow-capture` + `web-hunt-loop` over
+ad-hoc separate Web helpers when researching an API in a controlled
+fixture. Operator-supplied current program policy preflight is
+fail-closed and **never grants live production permission**.
+`web-workflow-capture` imports only two private owned-loopback
+HAR captures with the same operator-held 0600 HMAC comparison key,
+removing bodies, headers, auth, cookies, query and raw object IDs.
+`web-hunt-loop` joins cross-actor observations, optional offline
+`web-ts-flow` analysis, strict same-revision known-issue suppression
+and the existing `web-root-cause-dedup` review ranking.
+Its budget caps how many **unexecuted** independent model work
+orders are created; it does not enforce per-provider billing.
+A 2xx response is never protected-content or business-impact proof.
+For independently authorized owned loopback fixtures only, explicit
+`--execute-owned-fixture` executes the existing paired state
+replay, preserving negative controls. Use
+`web-evidence-packet` to combine a local controlled effect with
+a separate operator review. Every output remains **not ready to
+submit** without actual deployed authorization, exploit effect,
+scope and novelty review. Do not pass secret-bearing HARs, comparison
+keys, real customer state or unaudited external domains to models.
+See `references/web-hunt-loop-phase5.md`.
+
+## Phase 5 optional Codex/Claude dispatch bridge
+
+`web-dispatch-prepare` takes a preflight-passed
+`web-hunt-loop` result and a fresh source-pinned private
+Bounty Pilot run already created by `init`. It adds strict
+per-candidate bundles and uses existing `agent_dispatch.plan`
+with two or three fresh independent readings per candidate,
+subject to a total planning USD ceiling across **all replicas**.
+No model starts until the operator separately invokes
+`agent-dispatch run-job` with the provider's actual safety
+and billing configuration. Never claim planned spend is an
+enforced cap, or the source review a PoC. See
+`references/web-hunt-loop-phase5.md`.

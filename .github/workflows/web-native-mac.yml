@@ -11,6 +11,11 @@ on:
       - 'skills/bounty-pilot/scripts/web_benchmark_readiness.py'
       - 'tests/test_web_native_toolchain.py'
       - 'tests/test_web_benchmark_readiness.py'
+      - 'skills/bounty-pilot/scripts/web_workflow_capture.py'
+      - 'skills/bounty-pilot/scripts/web_hunt_loop.py'
+      - 'skills/bounty-pilot/scripts/web_dispatch_prepare.py'
+      - 'skills/bounty-pilot/scripts/web_evidence_packet.py'
+      - 'tests/test_web_hunt_loop.py'
   workflow_dispatch:
 
 permissions:
@@ -48,6 +53,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_web_native_toolchain.py' -v
           python3 -m unittest discover -s tests -p 'test_web_benchmark_readiness.py' -v
+          python3 -m unittest discover -s tests -p 'test_web_hunt_loop.py' -v
       - name: Run 40 pairs / 80 snapshots of real local deterministic analyzers
         shell: bash
         run: |

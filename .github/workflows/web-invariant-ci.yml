@@ -17,6 +17,8 @@ on:
       - 'tests/test_web_effect_fixture_replay.py'
       - 'tests/test_web_native_toolchain.py'
       - 'tests/test_web_benchmark_readiness.py'
+      - 'tests/test_web_hunt_loop.py'
+      - 'skills/bounty-pilot/references/web-hunt-loop-phase5.md'
       - 'skills/bounty-pilot/references/web-native-phase4.md'
       - '.github/workflows/web-invariant-ci.yml'
   workflow_dispatch:
@@ -53,6 +55,10 @@ jobs:
           python3 -m py_compile skills/bounty-pilot/scripts/web_native_toolchain.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_benchmark_regression.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_benchmark_readiness.py
+          python3 -m py_compile skills/bounty-pilot/scripts/web_workflow_capture.py
+          python3 -m py_compile skills/bounty-pilot/scripts/web_hunt_loop.py
+          python3 -m py_compile skills/bounty-pilot/scripts/web_dispatch_prepare.py
+          python3 -m py_compile skills/bounty-pilot/scripts/web_evidence_packet.py
           node --check skills/bounty-pilot/scripts/web_playwright_local.cjs
           python3 -m py_compile skills/bounty-pilot/scripts/web_browser_trust_graph.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_parser_lab.py
@@ -71,6 +77,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_web_effect_fixture_replay.py' -v
           python3 -m unittest discover -s tests -p 'test_web_native_toolchain.py' -v
           python3 -m unittest discover -s tests -p 'test_web_benchmark_readiness.py' -v
+          python3 -m unittest discover -s tests -p 'test_web_hunt_loop.py' -v
       - name: Pinned TypeScript parser fixture (no install scripts)
         run: |
           npm install --prefix "$RUNNER_TEMP/bp-ts-parser" --ignore-scripts --no-audit --no-fund --save-exact typescript@5.9.3
@@ -93,6 +100,10 @@ jobs:
           python3 skills/bounty-pilot/scripts/bounty.py web-native-toolchain --help
           python3 skills/bounty-pilot/scripts/bounty.py web-benchmark-regression --help
           python3 skills/bounty-pilot/scripts/bounty.py web-benchmark-readiness --help
+          python3 skills/bounty-pilot/scripts/bounty.py web-workflow-capture --help
+          python3 skills/bounty-pilot/scripts/bounty.py web-hunt-loop --help
+          python3 skills/bounty-pilot/scripts/bounty.py web-dispatch-prepare --help
+          python3 skills/bounty-pilot/scripts/bounty.py web-evidence-packet --help
           python3 skills/bounty-pilot/scripts/bounty.py web-browser-trust --help
           python3 skills/bounty-pilot/scripts/bounty.py web-parser-lab --help
           python3 skills/bounty-pilot/scripts/bounty.py web-root-cause-dedup --help

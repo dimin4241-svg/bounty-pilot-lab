@@ -18,6 +18,35 @@
 
 ---
 
+## Integrated Web Hunt Loop — phase 5
+
+Bounty Pilot now has an integrated **offline-first, owned-fixture
+research loop** instead of only separate Web/API helpers.
+
+`web-workflow-capture` safely reduces owner/outsider HAR files from
+researcher-owned literal loopback fixtures into HMACed object fingerprints,
+HTTP status classes and sanitized operation graphs. It retains no cookies,
+token values, query, raw body or original opaque IDs.
+
+`web-hunt-loop` combines the current manually reviewed policy snapshot,
+cross-actor capture, optional `web-ts-flow` syntax leads, conservative
+root-cause deduplication, same-revision reviewed suppression and a bounded
+**planned** model-review budget. Only explicit
+`--execute-owned-fixture` triggers actual GET/empty-POST/GET
+candidate/negative-control checks on literal `127.0.0.1`.
+`web-dispatch-prepare` now converts the bounded review queue into
+real **prepared** independent-blind `agent_dispatch` jobs within an
+already initialized, source-pinned private Bounty run. It never starts
+a model and checks the combined replica budget before writing bundles.
+`web-evidence-packet` joins a proposed finding to those controlled
+observations and a separate reviewer statement, but never considers it
+a verified production vulnerability or auto-submittable bug.
+
+**No external site scanning or model execution is added by this loop.**
+Policy preflight is not permission; a planning USD ceiling is not a
+provider-enforced billing limit. See the
+[Phase 5 guide](skills/bounty-pilot/references/web-hunt-loop-phase5.md).
+
 ## Local Web Native Toolchains — phase 4
 
 The `web-native-toolchain` helper now gates **locally installed**
