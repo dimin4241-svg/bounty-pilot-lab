@@ -12038,6 +12038,7 @@ HELPER_COMMANDS = {
                                            'verifier counts at one block (read-only RPC)'),
     'rounding-map': ('rounding_map', 'map rounding direction, the value it feeds and how cheaply '
                                      'it repeats'),
+    'mutation-lab': ('mutation_lab', 'fixed pre-property state-model mutations, blind author brief, bounded evaluator'),
     'harness-gen': ('harness_gen', 'write a deliberately failing stateful invariant harness '
                                    'skeleton from ABIs'),
     'init-race': ('init_race', 'find deploy/initialize splits and initializable '

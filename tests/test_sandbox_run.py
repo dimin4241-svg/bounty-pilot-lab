@@ -31,6 +31,31 @@ class SandboxWrapperTests(unittest.TestCase):
         params.update(changes)
         return sandbox.build_command(**params)
 
+    def test_mutation_scoring_uses_same_offline_isolation_without_target_mount(self):
+        rules = self.logs / "rules.json"
+        rules.write_text('{"rules":[]}')
+        command = sandbox.build_mutation_command(
+            self.repo, self.plan, rules, self.out, IMAGE,
+            uid=1001, gid=1001)
+        self.assertIn("--network=none", command)
+        self.assertIn("--read-only", command)
+        self.assertIn("--pull=never", command)
+        self.assertIn("score", command)
+        self.assertIn("/input/rules.json", command)
+        self.assertIn("/pilot/mutation_lab.py", command)
+        self.assertNotIn("/pilot/scenario_runner.py", command)
+        self.assertFalse(any(",dst=/target" in arg for arg in command))
+        self.assertTrue(any(",dst=/input/rules.json,readonly" in arg
+                            for arg in command))
+
+    def test_mutation_property_spec_cannot_be_target_source(self):
+        inside = self.repo / "rules.json"
+        inside.write_text("{}")
+        with self.assertRaises(ValueError):
+            sandbox.build_mutation_command(
+                self.repo, self.plan, inside, self.out, IMAGE,
+                uid=1001, gid=1001)
+
     def test_isolated_command_mounts_only_required_paths(self):
         command = self.build()
         for flag in ("--network=none", "--cap-drop=ALL", "--security-opt=no-new-privileges",

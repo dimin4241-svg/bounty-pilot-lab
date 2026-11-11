@@ -5,6 +5,13 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/web-native-mac.yml'
+      - 'skills/bounty-pilot/scripts/mutation_lab.py'
+      - 'skills/bounty-pilot/scripts/harness_gen.py'
+      - 'skills/bounty-pilot/scripts/sandbox_run.py'
+      - 'tests/test_mutation_lab.py'
+      - 'tests/test_harness_gen.py'
+      - 'tests/test_sandbox_run.py'
+      - 'skills/bounty-pilot/references/intent-mutation-phase6.md'
       - 'skills/bounty-pilot/scripts/web_native_toolchain.py'
       - 'skills/bounty-pilot/scripts/web_playwright_local.cjs'
       - 'skills/bounty-pilot/scripts/web_benchmark_regression.py'
@@ -56,6 +63,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_web_native_toolchain.py' -v
+          python3 -m unittest discover -s tests -p 'test_mutation_lab.py' -v
+          python3 -m unittest discover -s tests -p 'test_harness_gen.py' -v
+          python3 -m unittest discover -s tests -p 'test_sandbox_run.py' -v
           python3 -m unittest discover -s tests -p 'test_web_ts_flow.py' -v
           python3 -m unittest discover -s tests -p 'test_web_benchmark_readiness.py' -v
           python3 -m unittest discover -s tests -p 'test_web_hunt_loop.py' -v

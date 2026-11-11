@@ -18,6 +18,26 @@
 
 ---
 
+## Independent intent and mutation adequacy — phase 6
+
+The new `mutation-lab` adds a fixed, deterministic **property-blind**
+state-model mutation bank, external-intent-only model-author task
+generation, and a bounded original/mutant reachability comparison.
+Mutants are generated **before** independently authored invariants and
+sealed privately. The evaluator separates unreached mutants,
+observationally equivalent mutations within the tested bounds,
+property-caught behavior changes, and reached but uncaught changes.
+
+`harness-gen --property-spec` accepts externally grounded provenance
+tiers while preserving intentionally failing native Solidity property
+stubs. `sandbox-run --mutation-bank --property-spec` scores the
+**data-only** model in a pinned, offline Docker container without
+mounting target code. This is not automatically generated Solidity
+property code or native Solidity mutant testing, and no independent
+LLM A/B research uplift is claimed.
+
+[Phase 6 guide](skills/bounty-pilot/references/intent-mutation-phase6.md).
+
 ## Integrated Web Hunt Loop — phase 5
 
 Bounty Pilot now has an integrated **offline-first, owned-fixture

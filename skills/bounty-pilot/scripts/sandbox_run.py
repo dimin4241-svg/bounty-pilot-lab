@@ -75,16 +75,61 @@ def build_command(repo, plan, out, image, *, docker="docker", uid=None, gid=None
     ]
 
 
+def build_mutation_command(repo, bank, property_spec, out, image, *,
+                           docker="docker", uid=None, gid=None):
+    """Run ONLY the fixed data-only mutation scorer inside the no-network Docker.
+
+    The target checkout is checked for output separation, but not mounted
+    inside the mutation container: the scorer needs only bank and rule JSON.
+    In particular, an AI property author must be a different OS process
+    without the bank mount.
+    """
+    old = build_command(repo, bank, out, image, docker=docker, uid=uid, gid=gid)
+    prop = _path(property_spec, "--property-spec", False)
+    root = _path(repo, "--repo", True)
+    if root == prop or root in prop.parents:
+        raise ValueError("--property-spec must stay outside the target source checkout")
+    new_mount = "--mount=type=bind,src=" + str(prop) + ",dst=/input/rules.json,readonly"
+    args = []
+    for flag in old:
+        if flag.startswith("--mount=type=bind,") and ",dst=/target" in flag:
+            continue
+        if flag.startswith("--mount=type=bind,") and ",dst=/input/plan.json" in flag:
+            flag = flag + ",readonly"
+        args.append(flag)
+    args.insert(args.index("--env=HOME=/tmp"), new_mount)
+    args[args.index("--workdir=" + CONTAINER_REPO)] = "--workdir=/tmp"
+    entry = args.index(CONTAINER_HELPERS + "/scenario_runner.py")
+    args[entry:] = [
+        CONTAINER_HELPERS + "/mutation_lab.py", "score",
+        "--bank", CONTAINER_PLAN, "--property-spec", "/input/rules.json",
+        "--out", CONTAINER_OUT + "/" + Path(out).name]
+    return args
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True, help="disposable target checkout; writable INSIDE Docker")
-    parser.add_argument("--plan", required=True, help="approved candidate/control JSON plan")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--plan", help="approved candidate/control JSON plan")
+    source.add_argument("--mutation-bank", help="previously sealed property-blind model bank")
+    parser.add_argument("--property-spec", help="separately authored data-only invariant spec")
     parser.add_argument("--out", required=True, help="new private output JSON outside --repo")
     parser.add_argument("--image", required=True, help="trusted locally installed Docker image by sha256 digest")
     parser.add_argument("--docker", default="docker", help="Docker CLI executable name")
     args = parser.parse_args(argv)
     try:
-        command = build_command(args.repo, args.plan, args.out, args.image, docker=args.docker)
+        if args.mutation_bank:
+            if not args.property_spec:
+                raise ValueError("--mutation-bank requires --property-spec")
+            command = build_mutation_command(
+                args.repo, args.mutation_bank, args.property_spec,
+                args.out, args.image, docker=args.docker)
+        else:
+            if args.property_spec:
+                raise ValueError("--property-spec requires --mutation-bank")
+            command = build_command(
+                args.repo, args.plan, args.out, args.image, docker=args.docker)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     try:

@@ -344,6 +344,33 @@ def render_invariants(contract, functions, properties, framework, preset=None, f
     return "\n".join(out)
 
 
+def source_backed_properties(spec):
+    """Import independently authored property proposals, never the mutation bank.
+
+    The harness still emits deliberately failing property stubs: source
+    intent is not silently translated into a passing executable assertion.
+    """
+    import importlib.util
+    script = SCRIPTS / "mutation_lab.py"
+    loader = importlib.util.spec_from_file_location("bp_harness_property_schema", script)
+    module = importlib.util.module_from_spec(loader)
+    loader.exec_module(module)
+    module._properties(spec)
+    found = []
+    for row in spec["rules"]:
+        ident = row["id"]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,40}", ident):
+            raise ValueError("Solidity invariant requires a safe short identifier")
+        src = row["provenance"]
+        found.append({"name": ident,
+                      "text": "INDEPENDENT RULE " + ident + " [basis " +
+                              src["tier"] + "; source " + src["source_kind"] +
+                              "/" + src["source_ref"] +
+                              "]: implement the independently verified exact "
+                              "assertion and appropriate negative control"})
+    return found
+
+
 def parse_properties(text):
     """`INVARIANT: [name:] text` lines of model.md -> [{name, text}] with unique identifiers."""
     found, used = [], set()
@@ -462,7 +489,7 @@ def require_private_output(out, repo=None):
 
 def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
              framework="foundry", repo=None, preset=None, fork=None,
-             confirm_direct_custody=False):
+             confirm_direct_custody=False, property_spec=None):
     if framework not in ("foundry", "medusa"):
         raise ValueError("framework must be foundry or medusa")
     if preset not in (None, "erc4626-direct-custody"):
@@ -495,7 +522,15 @@ def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
     plan = {"schema_version": 1, "framework": framework, "actors": actors, "contracts": [],
             "functions_included": [], "functions_skipped": [], "contracts_skipped": [],
             "properties": list(properties or []), "files": [], "notice": NOTICE,
-            "property_preset": preset, "fork_block": fork["block"] if fork else None,
+            "property_preset": preset,
+            "property_provenance": ([{"id": rule["id"], **rule["provenance"]}
+                                    for rule in property_spec["rules"]]
+                                   if property_spec is not None else []),
+            "mutation_bank_read": False,
+            "property_author_independence": (
+                "OPERATOR_ASSERTED_NOT_VERIFIED" if property_spec is not None
+                else "not-asserted"),
+            "fork_block": fork["block"] if fork else None,
             "direct_custody_assumptions_operator_confirmed": bool(preset and confirm_direct_custody)}
     writes = {}
     for contract, entries, origin in found:
@@ -561,6 +596,7 @@ def main(argv=None):
     p.add_argument("--contract", action="append", help="only these contracts; repeatable")
     p.add_argument("--actors", type=int, default=3)
     p.add_argument("--model", help="<run>/model.md; `INVARIANT:` lines become property stubs")
+    p.add_argument("--property-spec", help="source-backed independently authored JSON proposals; not mutation bank")
     p.add_argument("--out-dir", required=True, help="private directory outside the checkout")
     p.add_argument("--repo", help="target checkout, so --out-dir can be refused inside it")
     p.add_argument("--framework", choices=("foundry", "medusa"), default="foundry")
@@ -575,7 +611,13 @@ def main(argv=None):
     if not sources:
         p.error("give at least one --artifact or --semantic-graph")
     try:
-        props = parse_properties(Path(a.model).read_text(encoding="utf-8")) if a.model else []
+        if a.model and a.property_spec:
+            raise ValueError("--model and --property-spec cannot be mixed")
+        intent = (json.loads(Path(a.property_spec).read_text(encoding="utf-8"))
+                  if a.property_spec else None)
+        props = (source_backed_properties(intent) if intent is not None else
+                 parse_properties(Path(a.model).read_text(encoding="utf-8"))
+                 if a.model else [])
         fork = None
         if a.target_address or a.fork_block or a.rpc_env:
             if not (a.target_address and a.fork_block and a.rpc_env):
@@ -583,7 +625,8 @@ def main(argv=None):
             fork = {"address": a.target_address, "block": a.fork_block, "rpc_env": a.rpc_env}
         plan = generate(sources, a.out_dir, a.contract, a.actors, props, a.framework, a.repo,
                         preset=a.property_preset, fork=fork,
-                        confirm_direct_custody=a.confirm_direct_custody)
+                        confirm_direct_custody=a.confirm_direct_custody,
+                        property_spec=intent)
     except (OSError, ValueError) as exc:
         p.error(str(exc))
     print(json.dumps({"out_dir": str(Path(a.out_dir).resolve()),
