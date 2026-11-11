@@ -87,7 +87,12 @@ def _collect(root, prefixes=None):
                    for pre in validated):
             omitted["excluded"] += 1
             continue
-        if file.is_symlink() or any(p.is_symlink() for p in file.parents if p != root):
+        # Test only components *inside* the checkout. Absolute parents
+        # above the root may be OS-managed aliases (macOS /var -> /private/var)
+        # and must not silently eliminate every otherwise normal source file.
+        if file.is_symlink() or any(
+                (root / Path(*rel.parts[:depth])).is_symlink()
+                for depth in range(1, len(rel.parts))):
             omitted["symlinked"] += 1
             continue
         if not file.is_file():

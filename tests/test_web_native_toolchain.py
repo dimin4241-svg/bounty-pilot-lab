@@ -67,6 +67,49 @@ def fixture(tmp, mode):
 
 
 class NativeBridgeTests(unittest.TestCase):
+    def test_macos_style_symlink_above_fixture_root_is_allowed(self):
+        # Reproduce /var -> /private/var on Linux and macOS without
+        # relying on the host having that exact alias.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            real = base / "private-storage"
+            (real / "owned").mkdir(parents=True)
+            alias = base / "var-alias"
+            alias.symlink_to(real, target_is_directory=True)
+            fixture = alias / "owned"
+            spec = fixture / "api.json"
+            spec.write_text(json.dumps(openapi()))
+            canonical = native._local_dir(str(fixture))
+            self.assertEqual(canonical, (real / "owned").resolve())
+            self.assertEqual(native._file(str(spec), root=canonical), spec.resolve())
+            self.assertEqual(native._file(str(spec), root=fixture), spec.resolve())
+
+    def test_symlink_directory_below_canonical_fixture_root_remains_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            real = base / "private-storage"
+            owned = real / "owned"
+            inside = owned / "inside"
+            inside.mkdir(parents=True)
+            (inside / "api.json").write_text(json.dumps(openapi()))
+            (owned / "alias-inside").symlink_to(
+                inside, target_is_directory=True)
+            top_alias = base / "var-alias"
+            top_alias.symlink_to(real, target_is_directory=True)
+            canonical = native._local_dir(str(top_alias / "owned"))
+            with self.assertRaisesRegex(ValueError, "symlink directory"):
+                native._file(str(top_alias / "owned" / "alias-inside" / "api.json"),
+                             root=canonical)
+            # And a link to an external directory cannot circumvent containment.
+            external = base / "elsewhere"
+            external.mkdir()
+            (external / "api.json").write_text(json.dumps(openapi()))
+            (owned / "outside-link").symlink_to(
+                external, target_is_directory=True)
+            with self.assertRaises(ValueError):
+                native._file(str(top_alias / "owned" / "outside-link" / "api.json"),
+                             root=canonical)
+
     def test_schemathesis_dry_run_and_strict_schema(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = fixture(tmp, "schemathesis")
