@@ -1060,8 +1060,55 @@ def stage_mutation(plan, plan_dir, ident, disposable_root, understood=False):
                        "do not claim equivalence or a verified vulnerability.")}
 
 
+
+def coverage_review(receipt):
+    """Classify per-handler native fuzz calls/reverts; not source-line coverage."""
+    if (not isinstance(receipt, dict) or
+            set(receipt) != {"schema_version", "source_revision", "handlers"} or
+            receipt["schema_version"] != 1 or
+            not re.fullmatch(r"[a-f0-9]{40}", str(receipt["source_revision"])) or
+            not isinstance(receipt["handlers"], list) or
+            not 1 <= len(receipt["handlers"]) <= 100):
+        raise ValueError("bounded native fuzz handler receipt required")
+    seen, summary = set(), []
+    for row in receipt["handlers"]:
+        if not isinstance(row, dict) or set(row) != {
+                "selector", "calls", "reverts"}:
+            raise ValueError("handler requires selector/calls/reverts")
+        key, calls, reverts = row["selector"], row["calls"], row["reverts"]
+        if (not isinstance(key, str) or not re.fullmatch(r"0x[a-fA-F0-9]{8}", key)
+                or key in seen):
+            raise ValueError("invalid or duplicated selector")
+        seen.add(key)
+        if (type(calls) is not int or type(reverts) is not int or
+                not 0 <= reverts <= calls <= 1000000000):
+            raise ValueError("calls/reverts must be bounded counts")
+        state = ("NOT_CALLED" if calls == 0 else
+                 "MOSTLY_REVERTING_FIX_SETUP" if 5 * reverts >= 4 * calls else
+                 "REACHED_WITH_CALLS_NOT_PATH_PROOF")
+        summary.append({"selector": key, "calls": calls,
+                        "reverts": reverts, "status": state})
+    total_calls = sum(x["calls"] for x in summary)
+    total_reverts = sum(x["reverts"] for x in summary)
+    return {
+        "schema_version": 1, "mode": "handler-native-coverage-review",
+        "source_revision": receipt["source_revision"],
+        "handlers": summary, "total_calls": total_calls,
+        "total_reverts": total_reverts,
+        "aggregate_revert_fraction": (
+            {"numerator": total_reverts, "denominator": total_calls}
+            if total_calls else None),
+        "native_output_authenticated_by_tool": False,
+        "mutated_line_reachability_proven": False,
+        "confirmed_vulnerabilities": 0,
+        "notice": ("Per-handler counters were supplied by an operator, not "
+                   "collected directly by this tool. Revert-heavy or never "
+                   "called handlers represent coverage gaps; successful "
+                   "calls do NOT establish that the mutated statement ran.")
+    }
+
+
 def _mutation_cli(argv):
-    import sys
     sub = argparse.ArgumentParser(
         description="Blind fixed source mutants and receipt-based sensitivity scoring")
     modes = sub.add_subparsers(dest="mode", required=True)
@@ -1076,6 +1123,9 @@ def _mutation_cli(argv):
     stage.add_argument("--mutant-id", required=True)
     stage.add_argument("--disposable-repo", required=True)
     stage.add_argument("--understand-modifies-disposable", action="store_true")
+    coverage = modes.add_parser("coverage-review")
+    coverage.add_argument("--input", required=True)
+    coverage.add_argument("--out", required=True)
     score = modes.add_parser("mutation-score")
     score.add_argument("--plan", required=True)
     score.add_argument("--receipts", required=True)
@@ -1088,6 +1138,12 @@ def _mutation_cli(argv):
             print(json.dumps({"out": args.out_dir,
                               "mutants": len(result["mutants"]),
                               "property_material_read": False}))
+        elif args.mode == "coverage-review":
+            result = coverage_review(
+                json.loads(Path(args.input).read_text(encoding="utf-8")))
+            _private_json(args.out, result)
+            print(json.dumps({"out": args.out, "total_calls": result["total_calls"],
+                              "native_authenticated": False}))
         elif args.mode == "mutation-stage":
             result = stage_mutation(
                 json.loads(Path(args.plan).read_text(encoding="utf-8")),
@@ -1111,7 +1167,8 @@ def _mutation_cli(argv):
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
-    if argv and argv[0] in ("mutation-plan", "mutation-score", "mutation-stage"):
+    if argv and argv[0] in ("mutation-plan", "mutation-score",
+                            "mutation-stage", "coverage-review"):
         return _mutation_cli(argv)
     if argv and argv[0] == "intent-bundle":
         return _intent_cli(argv[1:])

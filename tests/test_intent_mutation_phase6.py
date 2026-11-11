@@ -250,6 +250,30 @@ class Phase6Test(unittest.TestCase):
         with self.assertRaises(ValueError):
             harness.mutation_score(plan, receipts)
 
+    def test_fuzz_handler_revert_rate_identifies_useless_campaigns(self):
+        report = harness.coverage_review({
+            "schema_version": 1, "source_revision": self.sha,
+            "handlers": [
+                {"selector": "0x00000001", "calls": 100, "reverts": 95},
+                {"selector": "0x00000002", "calls": 0, "reverts": 0},
+                {"selector": "0x00000003", "calls": 60, "reverts": 2}]})
+        self.assertEqual([r["status"] for r in report["handlers"]],
+                         ["MOSTLY_REVERTING_FIX_SETUP", "NOT_CALLED",
+                          "REACHED_WITH_CALLS_NOT_PATH_PROOF"])
+        self.assertEqual(report["total_calls"], 160)
+        self.assertFalse(report["mutated_line_reachability_proven"])
+
+    def test_fuzz_counters_refuse_invalid_or_duplicated_selectors(self):
+        example = {"schema_version": 1, "source_revision": self.sha,
+                   "handlers": [{"selector": "0x00000001", "calls": 2,
+                                 "reverts": 3}]}
+        with self.assertRaises(ValueError):
+            harness.coverage_review(example)
+        example["handlers"][0]["reverts"] = 1
+        example["handlers"].append(dict(example["handlers"][0]))
+        with self.assertRaises(ValueError):
+            harness.coverage_review(example)
+
     def test_first_violation_delta_is_observation_not_root_cause(self):
         before = {"reserve": {"cash": "10", "secret": "private"}}
         after = {"reserve": {"cash": "11", "secret": "private"}}

@@ -145,6 +145,26 @@ exit or mostly reverting handler does not establish useful coverage.
 Unchanged controls and ordinary test passing should be confirmed
 for the baseline and the local patch counterfactual.
 
+### Record native call/revert counters before scoring mutant reachability
+
+The existing `harness_gen` handlers already emit selector-level
+`calls` and `reverts`. Use `harness-gen coverage-review`
+to flag handlers whose actions almost always revert:
+
+```sh
+python3 "$BP" harness-gen coverage-review \
+  --input /private/research/native-handler-counts.json \
+  --out /private/research/handler-coverage-review.json
+```
+
+The input schema is `{"schema_version":1,"source_revision":"<40 hex>",
+"handlers":[{"selector":"0x00000001","calls":100,"reverts":95}]}`.
+Output marks `NOT_CALLED`, `MOSTLY_REVERTING_FIX_SETUP`
+(revert fraction >= 80%) or `REACHED_WITH_CALLS_NOT_PATH_PROOF`.
+**Handler reach does not equal line reach**: changed lines still
+require independently evidenced coverage in the mutation receipts.
+Counters are operator-supplied and not authenticated by this script.
+
 ### 4. Evaluate receipts without confusing unreached mutants with bad properties
 
 Create a complete private receipt set for all planned mutants:

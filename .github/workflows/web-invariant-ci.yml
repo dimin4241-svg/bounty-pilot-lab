@@ -119,6 +119,7 @@ jobs:
           python3 skills/bounty-pilot/scripts/bounty.py web-evidence-packet --help
           python3 skills/bounty-pilot/scripts/bounty.py harness-gen mutation-plan --help
           python3 skills/bounty-pilot/scripts/bounty.py harness-gen mutation-score --help
+          python3 skills/bounty-pilot/scripts/bounty.py harness-gen coverage-review --help
           python3 skills/bounty-pilot/scripts/bounty.py harness-gen mutation-stage --help
           python3 skills/bounty-pilot/scripts/bounty.py harness-gen intent-bundle --help
           python3 skills/bounty-pilot/scripts/bounty.py experimenter causal-review --help
