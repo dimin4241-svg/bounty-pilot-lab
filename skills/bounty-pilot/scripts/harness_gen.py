@@ -259,7 +259,7 @@ def _sol_string(text):
     return clean.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def render_invariants(contract, functions, properties, framework, preset=None, fork=None):
+def render_invariants(contract, functions, properties, framework, preset=None, fork=None, auto_lines=None):
     handler = "%sHandler" % contract
     out = ["// SPDX-License-Identifier: UNLICENSED", PRAGMA, "",
            "// Generated skeleton (bounty-pilot harness_gen.py). DELIBERATELY FAILING: every",
@@ -307,7 +307,7 @@ def render_invariants(contract, functions, properties, framework, preset=None, f
         out.append("        selectors[%d] = %s.%s.selector;" % (i, handler, fn["handler"]))
     out += ["        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));",
             "    }", ""]
-    props = properties or ([] if preset else [{"name": "todo_property",
+    props = properties or ([] if preset or auto_lines else [{"name": "todo_property",
                             "text": "no INVARIANT: line was supplied; write at least one"}])
     for prop in props:
         out += ["    /// %s" % _sol_string(prop["text"]),
@@ -326,6 +326,8 @@ def render_invariants(contract, functions, properties, framework, preset=None, f
             '        assertLe(claim, backing, "direct custody backing violated");',
             "    }", "",
         ]
+    if auto_lines:
+        out += auto_lines
     out += ["    function invariant_callSummary() public view {",
             "        handler.callSummary();",
             "    }"]
@@ -462,7 +464,7 @@ def require_private_output(out, repo=None):
 
 def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
              framework="foundry", repo=None, preset=None, fork=None,
-             confirm_direct_custody=False):
+             confirm_direct_custody=False, approved_properties=None):
     if framework not in ("foundry", "medusa"):
         raise ValueError("framework must be foundry or medusa")
     if preset not in (None, "erc4626-direct-custody"):
@@ -492,10 +494,20 @@ def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
             path = Path(source)
             found += _abi_entries(json.loads(path.read_text(encoding="utf-8")), str(path))
     wanted = set(contracts or [])
+    if approved_properties:
+        if not repo:
+            raise ValueError("approved properties require an exact pinned --repo")
+        _, head = _phase6_git(repo)
+        if approved_properties.get("source_revision") != head or (
+                approved_properties.get("mode") != "reviewed-intent-properties"):
+            raise ValueError("approved property catalog and Git revision mismatch")
+        if len(approved_properties.get("approved_rules", [])) > 20:
+            raise ValueError("at most twenty source-backed approved rules per harness")
     plan = {"schema_version": 1, "framework": framework, "actors": actors, "contracts": [],
             "functions_included": [], "functions_skipped": [], "contracts_skipped": [],
             "properties": list(properties or []), "files": [], "notice": NOTICE,
             "property_preset": preset, "fork_block": fork["block"] if fork else None,
+            "intent_property_count": len((approved_properties or {}).get("approved_rules", [])),
             "direct_custody_assumptions_operator_confirmed": bool(preset and confirm_direct_custody)}
     writes = {}
     for contract, entries, origin in found:
@@ -526,8 +538,13 @@ def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
             continue
         handler_file, inv_file = contract + "Handler.sol", contract + "Invariants.t.sol"
         writes[handler_file] = render_handler(contract, included, actors)
+        confirmed = (approved_properties or {}).get("approved_rules", [])
+        if set(rule["name"] for rule in confirmed) & set(
+                prop["name"] for prop in (properties or [])):
+            raise ValueError("generated property collides with existing invariant name")
+        auto_lines = _phase6_auto_properties(confirmed, entries, contract) if confirmed else []
         writes[inv_file] = render_invariants(contract, included, plan["properties"], framework,
-                                              preset=preset, fork=fork)
+                                              preset=preset, fork=fork, auto_lines=auto_lines)
         plan["contracts"].append({"name": contract, "source": origin, "handler": handler_file,
                                   "invariants": inv_file, "functions": len(included)})
         plan["functions_included"] += [{k: fn[k] for k in ("contract", "signature", "selector",
@@ -535,6 +552,8 @@ def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
     missing = sorted(wanted - {c for c, _, _ in found})
     if missing:
         plan["contracts_not_found"] = missing
+    if approved_properties and len(plan["contracts"]) != 1:
+        raise ValueError("automated intent properties require exactly one selected contract")
     if not writes:
         raise ValueError("no contract with a state-changing function to drive; see the skip "
                          "reasons: " + json.dumps(plan["functions_skipped"][:5]))
@@ -552,7 +571,384 @@ def generate(abi_sources, out_dir, contracts=None, actors=3, properties=None,
     return plan
 
 
+
+# --- Phase 6: deterministic, blind mutation and externally sourced invariants ---
+# The sealed mutant catalog must be generated BEFORE an independent agent
+# sees the intent task. Never include the catalog in an agent bundle.
+import hashlib
+import os
+import subprocess
+from datetime import datetime, timezone
+
+MUTATION_KINDS = (
+    "skip-state-update", "reverse-accounting-sign",
+    "tighten-time-boundary", "flip-sender-auth", "skip-require-guard",
+    "reverse-rounding"
+)
+PROPERTY_TIERS = ("confirmed_requirement", "industry_assumption", "hypothesis")
+MAX_MUTATION_FILES = 200
+MAX_MUTANTS = 96
+
+
+def _phase6_digest(payload):
+    return hashlib.sha256(json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")).hexdigest()
+
+
+def _phase6_write(path, value):
+    output = Path(path).expanduser()
+    if output.exists() or output.is_symlink():
+        raise ValueError("refusing to overwrite phase-6 artifact")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as file:
+        json.dump(value, file, ensure_ascii=False, sort_keys=True, indent=2)
+        file.write("\n")
+
+
+def _phase6_read(path, size=1_000_000):
+    p = Path(path).expanduser()
+    if p.is_symlink() or not p.is_file() or p.stat().st_size > size:
+        raise ValueError("bounded regular private JSON input required")
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _phase6_git(repo):
+    root = Path(repo).expanduser().resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("source root must be a checkout directory")
+    command = ["git", "--no-optional-locks", "-C", str(root),
+               "rev-parse", "--verify", "HEAD^{commit}"]
+    try:
+        result = subprocess.run(command, text=True, capture_output=True,
+                                timeout=6, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("could not inspect pinned source Git revision") from exc
+    commit = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"[a-f0-9]{40}", commit):
+        raise ValueError("pinned 40-hex Git revision required")
+    status = subprocess.run(
+        ["git", "--no-optional-locks", "-C", str(root), "status",
+         "--porcelain", "--untracked-files=no"],
+        text=True, capture_output=True, timeout=6, check=False)
+    if status.returncode or status.stdout.strip():
+        raise ValueError("mutation source checkout must be clean and pinned")
+    return root, commit
+
+
+def _phase6_source(root, relative, suffixes):
+    if (not isinstance(relative, str) or len(relative) > 240 or
+            "\\" in relative or "\x00" in relative):
+        raise ValueError("unsafe source path")
+    rel = Path(relative)
+    if (rel.is_absolute() or ".." in rel.parts or "." in rel.parts or
+            rel.suffix not in suffixes):
+        raise ValueError("source path must be a scoped relative file")
+    current = root
+    for part in rel.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("source symlink under checkout is forbidden")
+    resolved = current.resolve(strict=True)
+    if root not in resolved.parents or not resolved.is_file() or resolved.stat().st_size > 160000:
+        raise ValueError("source must be a bounded regular file inside checkout")
+    return resolved
+
+
+def _phase6_line_mutants(line):
+    """Fixed operator table; never adapted to the model's proposed properties."""
+    if (len(line) > 300 or line.lstrip().startswith(("//", "*", "/*", "#")) or
+            "//" in line or '"' in line and 'require(' not in line):
+        return []
+    indent = line[:len(line) - len(line.lstrip())]
+    trimmed = line.strip()
+    options = []
+    if re.fullmatch(r"[A-Za-z_]\w*(?:\[[^\]\n]+\]|\.[A-Za-z_]\w*)*\s*(?:\+=|-=)\s*[^;]+;", trimmed):
+        options.append(("skip-state-update", indent + ";"))
+        options.append(("reverse-accounting-sign",
+                        line.replace("+=", "-=", 1) if "+=" in line
+                        else line.replace("-=", "+=", 1)))
+    if "block.timestamp" in trimmed and re.search(r"\b(?:if|require)\s*\(", trimmed):
+        if ">=" in line:
+            options.append(("tighten-time-boundary", line.replace(">=", ">", 1)))
+        elif "<=" in line:
+            options.append(("tighten-time-boundary", line.replace("<=", "<", 1)))
+    if re.search(r"\brequire\s*\(\s*msg\.sender\s*==", trimmed):
+        options.append(("flip-sender-auth", line.replace("msg.sender ==", "msg.sender !=", 1)))
+    if (re.fullmatch(r"require\s*\([^;\n]+\);", trimmed) and
+            "block.timestamp" not in trimmed):
+        options.append(("skip-require-guard", indent + ";"))
+    if "Math.Rounding.Up" in trimmed:
+        options.append(("reverse-rounding", line.replace(
+            "Math.Rounding.Up", "Math.Rounding.Down", 1)))
+    return [(kind, value) for kind, value in options
+            if value != line and "\n" not in value]
+
+
+def prepare_mutants(repo, paths, out, max_mutants=48):
+    """Precommit fixed source mutations independently of any generated property."""
+    if type(max_mutants) is not int or not 1 <= max_mutants <= MAX_MUTANTS:
+        raise ValueError("mutant limit must be 1..96")
+    root, commit = _phase6_git(repo)
+    if not isinstance(paths, list) or not 1 <= len(paths) <= MAX_MUTATION_FILES:
+        raise ValueError("provide 1..200 explicit Solidity source paths")
+    if len(set(paths)) != len(paths):
+        raise ValueError("duplicate source paths")
+    mutants = []
+    checksums = {}
+    for name in sorted(paths):
+        path = _phase6_source(root, name, {".sol"})
+        tracked = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", name],
+            text=True, capture_output=True, timeout=6, check=False)
+        if tracked.returncode:
+            raise ValueError("mutation targets must be committed at the pinned revision")
+        source = path.read_bytes()
+        try:
+            lines = source.decode("utf-8").splitlines(keepends=True)
+        except UnicodeDecodeError as exc:
+            raise ValueError("Solidity source is not UTF-8") from exc
+        checksums[name] = hashlib.sha256(source).hexdigest()
+        for index, raw in enumerate(lines, 1):
+            text = raw.rstrip("\r\n")
+            ending = raw[len(text):]
+            for kind, replacement in _phase6_line_mutants(text):
+                if len(mutants) >= max_mutants:
+                    break
+                mutant = {"path": name, "line": index, "operator": kind,
+                          "source_sha256": checksums[name],
+                          "before_sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+                          "after_line": replacement + ending,
+                          "before_line": raw,
+                          "equivalence": "UNDETERMINED",
+                          "native_compilation": "NOT_RUN"}
+                mutant["id"] = "mut-" + _phase6_digest(
+                    [commit, name, index, kind, raw, mutant["after_line"]])[:20]
+                mutants.append(mutant)
+            if len(mutants) >= max_mutants:
+                break
+        if len(mutants) >= max_mutants:
+            break
+    if not mutants:
+        raise ValueError("no deterministic operators matched the selected source")
+    result = {"schema_version": 1, "mode": "sealed-mutant-precommit",
+              "source_revision": commit, "source_checksums": checksums,
+              "operator_set": "fixed-v1-before-properties",
+              "max_mutants": max_mutants, "mutants": mutants,
+              "model_calls": 0, "native_runs": 0,
+              "properties_visible_during_mutation": False,
+              "created_utc": datetime.now(timezone.utc).isoformat(),
+              "warning": ("Sealed private catalog: do not share with the property-writing "
+                          "agent. Mutants are not compiled, reached or semantically assessed.") }
+    result["catalog_sha256"] = _phase6_digest(
+        {k: v for k, v in result.items() if k != "catalog_sha256"})
+    _phase6_write(out, result)
+    return result
+
+
+def prepare_intent_task(repo, sealed_mutants, intent_paths, out):
+    """Create a separate *mutant-blind* task for a model using docs as intent."""
+    root, commit = _phase6_git(repo)
+    catalog = _phase6_read(sealed_mutants)
+    if (catalog.get("mode") != "sealed-mutant-precommit" or
+            catalog.get("source_revision") != commit):
+        raise ValueError("sealed catalog must predate and pin the source revision")
+    expected = _phase6_digest({k: v for k, v in catalog.items()
+                               if k != "catalog_sha256"})
+    if catalog.get("catalog_sha256") != expected:
+        raise ValueError("mutation precommit integrity mismatch")
+    if Path(out).resolve().parent == Path(sealed_mutants).resolve().parent:
+        raise ValueError("blind task and sealed mutants require separate directories")
+    if not isinstance(intent_paths, list) or not 1 <= len(intent_paths) <= 12:
+        raise ValueError("1..12 independently readable intent references required")
+    evidence = []
+    for name in sorted(set(intent_paths)):
+        file = _phase6_source(root, name, {".md", ".txt", ".rst"})
+        lines = file.read_text(encoding="utf-8").splitlines()
+        if len(lines) > 3000:
+            raise ValueError("oversized intent document")
+        digest = hashlib.sha256(file.read_bytes()).hexdigest()
+        for number, line in enumerate(lines, 1):
+            phrase = line.strip()
+            if len(phrase) < 24 or len(phrase) > 250:
+                continue
+            if not re.search(r"\b(must|shall|should|never|always|invariant|"
+                             r"conserv|total|withdraw|deposit|balance|"
+                             r"obligat|reserve|authorization|permission)\b",
+                             phrase, re.I):
+                continue
+            if re.search(r"(password|private.?key|secret|api.?key|bearer|token\s*=)",
+                         phrase, re.I):
+                continue
+            evidence.append({"id": "ref-%04d" % (len(evidence) + 1),
+                             "source_path": name, "source_sha256": digest,
+                             "line": number, "quote": phrase})
+            if len(evidence) >= 80:
+                break
+        if len(evidence) >= 80:
+            break
+    if not evidence:
+        raise ValueError("no usable independent intent statements found")
+    task = {
+        "schema_version": 1, "mode": "independent-intent-property-task",
+        "source_revision": commit, "evidence": evidence,
+        "instructions": [
+            "You are a property proposer, NOT a mutation generator.",
+            "Mutant/source patches and evaluation results are deliberately hidden.",
+            "Propose concrete state properties grounded in quoted independent intent.",
+            "Do not assert that a business invariant is true solely because code does it.",
+            "Use confirmed_requirement only when a human independently approves the cited rule.",
+            "Output JSON properties with name, text, kind=getter_compare, left_getter,"
+            " right_getter, op, evidence_id, tier, reviewer_approved, assumptions.",
+            "For missing getters/ambiguous intended behavior mark hypothesis, not confirmed.",
+            "Never fabricate or request secrets, live transactions, or production permissions."
+        ],
+        "mutants_in_bundle": False, "model_calls": 0,
+        "note": ("Only curated documentation quotations and exact source hashes "
+                 "are in this bundle; operator must inspect for residual secrets. "
+                 "The sealed mutant catalog is not included.") }
+    _phase6_write(out, task)
+    return task
+
+
+def validate_property_proposals(task, proposals, out):
+    """Fail closed: only human-approved, source-cited typed properties become executable."""
+    bundle = _phase6_read(task)
+    payload = _phase6_read(proposals)
+    if (bundle.get("mode") != "independent-intent-property-task" or
+            payload.get("schema_version") != 1 or
+            payload.get("source_revision") != bundle.get("source_revision")):
+        raise ValueError("proposal and independent intent task revision mismatch")
+    references = {r["id"]: r for r in bundle["evidence"]}
+    properties = payload.get("properties")
+    if not isinstance(properties, list) or not 1 <= len(properties) <= 40:
+        raise ValueError("1..40 model-proposed properties required")
+    eligible, pending, seen = [], [], set()
+    for row in properties:
+        if not isinstance(row, dict) or set(row) != {
+                "name", "text", "kind", "left_getter", "right_getter",
+                "op", "evidence_id", "tier", "reviewer_approved", "assumptions"}:
+            raise ValueError("property proposal schema is exact")
+        name = row["name"]
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,40}", name):
+            raise ValueError("invalid property name")
+        if name in seen:
+            raise ValueError("duplicate property")
+        seen.add(name)
+        if (row["kind"] != "getter_compare" or
+                row["op"] not in ("eq", "le", "ge") or
+                not all(isinstance(row[k], str) and IDENT.fullmatch(row[k])
+                        for k in ("left_getter", "right_getter"))):
+            raise ValueError("only named public view uint256 getter comparisons supported")
+        if not isinstance(row["text"], str) or not 12 <= len(row["text"]) <= 500:
+            raise ValueError("bounded property explanation required")
+        if row["tier"] not in PROPERTY_TIERS or type(row["reviewer_approved"]) is not bool:
+            raise ValueError("provenance tier and explicit review boolean required")
+        if row["evidence_id"] not in references:
+            raise ValueError("property must cite an actual independently supplied statement")
+        if (not isinstance(row["assumptions"], list) or len(row["assumptions"]) > 8 or
+                any(not isinstance(v, str) or not 1 <= len(v) <= 180
+                    for v in row["assumptions"])):
+            raise ValueError("bounded assumptions list required")
+        info = dict(row, evidence=references[row["evidence_id"]])
+        if row["tier"] == "confirmed_requirement" and row["reviewer_approved"]:
+            eligible.append(info)
+        else:
+            pending.append(info)
+    report = {
+        "schema_version": 1, "mode": "reviewed-intent-properties",
+        "source_revision": bundle["source_revision"],
+        "approved_rules": eligible, "needs_review": pending,
+        "mutation_details_visible": False,
+        "native_runs": 0,
+        "warning": ("Approval is operator asserted, not independently authenticated. "
+                    "Before native use verify external requirement, getter semantics "
+                    "and business exceptions. Do not infer security from passing tests.")
+    }
+    _phase6_write(out, report)
+    return report
+
+
+def _phase6_auto_properties(items, entries, contract):
+    """Compile only explicitly confirmed intent into Solidity typed getter comparisons."""
+    by_name = {e["name"]: e for e in entries if isinstance(e, dict)
+               and e.get("type") == "function" and
+               e.get("stateMutability") in ("view", "pure") and
+               e.get("inputs") == [] and
+               [x.get("type") for x in e.get("outputs", [])] == ["uint256"]}
+    output = []
+    for rule in items:
+        if (rule.get("tier") != "confirmed_requirement" or
+                rule.get("reviewer_approved") is not True or
+                not isinstance(rule.get("evidence"), dict) or
+                not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,40}", rule.get("name", ""))):
+            raise ValueError("automated property lacks confirmed cited reviewer approval")
+        if rule["left_getter"] not in by_name or rule["right_getter"] not in by_name:
+            raise ValueError("approved property refers to an absent/non-uint256 view getter")
+        lhs, rhs = rule["left_getter"], rule["right_getter"]
+        op = {"eq": "assertEq", "le": "assertLe", "ge": "assertGe"}[rule["op"]]
+        name = rule["name"]
+        output += [
+            "    /// External intent: %s" % _sol_string(rule["text"]),
+            "    function invariant_%s() public view {" % name,
+            '        (bool okA, bytes memory rawA) = target.staticcall(abi.encodeWithSignature("%s()"));' % lhs,
+            '        (bool okB, bytes memory rawB) = target.staticcall(abi.encodeWithSignature("%s()"));' % rhs,
+            '        require(okA && okB && rawA.length == 32 && rawB.length == 32, "property getter failed");',
+            "        uint256 a = abi.decode(rawA, (uint256));",
+            "        uint256 b = abi.decode(rawB, (uint256));",
+            '        %s(a, b, "documented getter invariant");' % op,
+            "    }", ""
+        ]
+    return output
+
+
+
+def _phase6_cli(argv):
+    parser = argparse.ArgumentParser(description="Blind intent-invariant and deterministic mutation preparation")
+    sub = parser.add_subparsers(dest="action", required=True)
+    mutant = sub.add_parser("prepare-mutants", help="precommit deterministic, sealed mutants")
+    mutant.add_argument("--repo", required=True)
+    mutant.add_argument("--source", action="append", required=True,
+                        help="Solidity file relative to pinned checkout")
+    mutant.add_argument("--limit", type=int, default=48)
+    mutant.add_argument("--out", required=True)
+    task = sub.add_parser("prepare-intent", help="separate model task, excluding mutants")
+    task.add_argument("--repo", required=True)
+    task.add_argument("--sealed-mutants", required=True)
+    task.add_argument("--intent-source", action="append", required=True)
+    task.add_argument("--out", required=True)
+    review = sub.add_parser("validate-properties", help="review typed source-cited model proposals")
+    review.add_argument("--intent-task", required=True)
+    review.add_argument("--proposals", required=True)
+    review.add_argument("--out", required=True)
+    args = parser.parse_args(argv)
+    try:
+        if args.action == "prepare-mutants":
+            result = prepare_mutants(args.repo, args.source, args.out, args.limit)
+            summary = {"catalog": args.out, "mutants": len(result["mutants"]),
+                       "source_revision": result["source_revision"],
+                       "private_mutants": True}
+        elif args.action == "prepare-intent":
+            result = prepare_intent_task(
+                args.repo, args.sealed_mutants, args.intent_source, args.out)
+            summary = {"task": args.out, "citations": len(result["evidence"]),
+                       "mutants_exposed": False}
+        else:
+            result = validate_property_proposals(
+                args.intent_task, args.proposals, args.out)
+            summary = {"reviewed": args.out, "approved": len(result["approved_rules"]),
+                       "pending": len(result["needs_review"])}
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
+    print(json.dumps(summary))
+    return 0
+
+
 def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in ("prepare-mutants", "prepare-intent", "validate-properties"):
+        return _phase6_cli(args)
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--artifact", action="append", default=[],
@@ -561,6 +957,8 @@ def main(argv=None):
     p.add_argument("--contract", action="append", help="only these contracts; repeatable")
     p.add_argument("--actors", type=int, default=3)
     p.add_argument("--model", help="<run>/model.md; `INVARIANT:` lines become property stubs")
+    p.add_argument("--reviewed-properties",
+                   help="operator-approved external-intent getter properties, pinned to --repo")
     p.add_argument("--out-dir", required=True, help="private directory outside the checkout")
     p.add_argument("--repo", help="target checkout, so --out-dir can be refused inside it")
     p.add_argument("--framework", choices=("foundry", "medusa"), default="foundry")
@@ -581,9 +979,11 @@ def main(argv=None):
             if not (a.target_address and a.fork_block and a.rpc_env):
                 raise ValueError("target-address, fork-block and rpc-env must be supplied together")
             fork = {"address": a.target_address, "block": a.fork_block, "rpc_env": a.rpc_env}
+        approved = _phase6_read(a.reviewed_properties) if a.reviewed_properties else None
         plan = generate(sources, a.out_dir, a.contract, a.actors, props, a.framework, a.repo,
                         preset=a.property_preset, fork=fork,
-                        confirm_direct_custody=a.confirm_direct_custody)
+                        confirm_direct_custody=a.confirm_direct_custody,
+                        approved_properties=approved)
     except (OSError, ValueError) as exc:
         p.error(str(exc))
     print(json.dumps({"out_dir": str(Path(a.out_dir).resolve()),

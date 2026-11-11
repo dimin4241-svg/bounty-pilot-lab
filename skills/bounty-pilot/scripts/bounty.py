@@ -12038,8 +12038,10 @@ HELPER_COMMANDS = {
                                            'verifier counts at one block (read-only RPC)'),
     'rounding-map': ('rounding_map', 'map rounding direction, the value it feeds and how cheaply '
                                      'it repeats'),
-    'harness-gen': ('harness_gen', 'write a deliberately failing stateful invariant harness '
-                                   'skeleton from ABIs'),
+    'harness-gen': ('harness_gen', 'generate pinned stateful harness and blind intent invariants / mutations'),
+    'experimenter': ('experimenter', 'plan native experiments, score source mutations and model-only counterfactuals'),
+    'sandbox-run': ('sandbox_run', 'run approved Docker local PoCs or bounded offline mutation campaigns'),
+    'scenario-fuzz': ('scenario_fuzz', 'model-only state exploration and exact witness step differences'),
     'init-race': ('init_race', 'find deploy/initialize splits and initializable '
                                'implementations'),
     'legacy-sweep': ('legacy_sweep', 'list deprecated addresses from repository history, with '

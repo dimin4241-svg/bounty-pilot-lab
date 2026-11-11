@@ -126,6 +126,23 @@ flows, read `references/ecosystem-attack-chains.md` and use
 a deployed attack chain or measured business impact; require an exact
 reachable trace and paired independent controls.
 
+### Deterministic mutant-blind invariant experiments (Phase 6)
+
+Read `references/mutation-intent-phase6.md`. Precommit mutations
+from a clean pinned checkout using `harness-gen prepare-mutants`
+**before** presenting `harness-gen prepare-intent` to a fresh agent.
+Do not give the property author mutant patches, signatures,
+operators or results. Independently source/review requirements;
+only confirmed supported uint256 getter rules compile automatically.
+Run native Forge mutations only with explicit operator consent in
+network-disabled pinned Docker on a disposable checkout, via
+`sandbox-run mutation-campaign`; never run on a public target.
+Score via `experimenter mutation-score` only when the changed
+line was reached, effect actually diverged, and controls passed.
+A possible equivalent mutant or missing coverage is inconclusive.
+Use `scenario-fuzz` plus `experimenter counterfactual` for
+**model-only** step localization; native patch proof remains separate.
+
 ### D. Measuring whether the lab actually finds bugs
 
 Use `references/benchmark-protocol.md`,
