@@ -49,3 +49,14 @@ from matching route names alone; use `web-root-cause-dedup`.
 For URL/cookie parser questions, compare synthetic controlled inputs
 first and never automate production desync probes from this lens.
 See `references/web-invariants-phase3.md`.
+
+## Verified local native adapters
+
+Use the Phase 4 `web-native-toolchain` for vetted native
+CodeQL queries (no JS/TS build), a bounded locally owned
+Schemathesis OpenAPI service, isolated Playwright local
+browser contexts or a manually acquired/pinned HTTP Garden
+observation import. A dry-run is always the default.
+External OS network isolation remains a separate requirement.
+Summaries are review leads; never count them as confirmed
+security findings. See `references/web-native-phase4.md`.

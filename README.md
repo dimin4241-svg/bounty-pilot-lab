@@ -18,6 +18,25 @@
 
 ---
 
+## Local Web Native Toolchains — phase 4
+
+The `web-native-toolchain` helper now gates **locally installed**
+CodeQL JS/TS dataflow, Schemathesis stateful API tests and Playwright
+isolated-browser checks, plus pinned HTTP Garden observation imports.
+Every real run requires an owned fixture, a reviewable plan and
+`--execute`; the default is dry-run. Tools are **not OS network
+sandboxed** by the wrapper; use an externally network-restricted
+Mac/container. Production Standoff/BI.ZONE scanning is not enabled.
+
+`web-benchmark-regression` executes 40 synthetic positive/negative
+detector case pairs (80 observations) with four *actual local engines*.
+These are **not independent historical bugs** or AI rediscoveries.
+`web-benchmark-readiness` blocks claims based on too-small historical
+case corpora, missing unaffected controls or missing independent
+review evidence.
+
+[Phase 4 guide](skills/bounty-pilot/references/web-native-phase4.md).
+
 ## Experimental Web Invariant Lab — phase 3
 
 Six additional offline-first controls improve Standoff/BI.ZONE-oriented Web/API

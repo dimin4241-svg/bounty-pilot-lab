@@ -142,3 +142,18 @@ target domain, DNS, redirect, authorization header or external actor
 can be supplied. Passing the local effect oracle still does not prove
 that a real program would behave the same way.
 See `references/web-invariants-phase3.md`.
+
+## Native Web toolchains (Phase 4)
+
+`web-native-toolchain` can use operator-installed CodeQL,
+Schemathesis and Playwright on an owned local test application,
+or import saved HTTP Garden parser observations. Do not run
+these tools on a live program merely because an offline
+`web-program-policy` preflight passes. The program rules,
+authorization and exact current scope must be separately
+established. Prioritize candidate/control differences with
+`web-root-cause-dedup`; CodeQL SARIF and browser differences
+remain hypotheses. For evaluation, distinguish
+`web-benchmark-regression`'s synthetic controls from
+the independently reviewer-scored `web-bench-ab`.
+See `references/web-native-phase4.md`.
