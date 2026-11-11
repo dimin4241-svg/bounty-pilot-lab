@@ -7,7 +7,6 @@ model-written claim alone can never satisfy the effect gate. Observations are
 operator supplied, not independently verified; zero production claims.
 """
 import argparse
-import hashlib
 import json
 import os
 import re

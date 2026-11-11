@@ -8,7 +8,6 @@ actions are denied. No network requests are made.
 """
 import argparse
 import datetime as dt
-import hashlib
 import json
 import os
 import re
