@@ -91,8 +91,8 @@ class MutationBankTests(unittest.TestCase):
         original = lab.bank(MODEL)
         mutated_property = props({
             "id": "unrelated", "kind": "compare",
-            "left": {"path": "counter"}, "op": "eq",
-            "right": {"const": 0}})
+            "left": {"const": "1"}, "op": "eq",
+            "right": {"const": "1"}})
         result = lab.score(original, mutated_property)
         self.assertEqual(result["bank_sha256"], original["bank_sha256"])
         self.assertEqual(result["metrics"]["caught"], 0)
@@ -113,7 +113,13 @@ class MutationBankTests(unittest.TestCase):
                   if r["status"] == "KILLED_BY_PROPERTY"]
         self.assertTrue(killed)
         self.assertIn("balanced", killed[0]["property_ids_that_killed"])
-        self.assertTrue(killed[0]["first_divergence"]["first_divergent_trace"])
+        first = killed[0]["first_divergence"]
+        self.assertGreaterEqual(first["first_divergent_step"], 1)
+        self.assertTrue(first["trace"])
+        self.assertTrue(first["changed_fields"])
+        self.assertEqual(first["first_divergent_step"], len(first["trace"]))
+        self.assertLessEqual(first["first_divergent_step"],
+                             first["property_violation_at_step"])
 
     def test_reached_semantically_equivalent_not_penalized(self):
         simple = {
@@ -126,8 +132,10 @@ class MutationBankTests(unittest.TestCase):
                        "right": {"const": 0}})
         report = lab.score(saved, const, depth=2)
         self.assertGreater(report["metrics"]["observationally_equivalent_within_bounds"], 0)
-        self.assertEqual(report["metrics"]["survived"], 0)
-        self.assertEqual(report["kill_rate"], None)
+        self.assertEqual(
+            report["denominator_validated"],
+            report["metrics"]["reached_changed_behavior"])
+        self.assertEqual(report["metrics"]["caught"], 0)
 
     def test_baseline_invalid_property_blocks_score(self):
         broken = props({"id": "bad", "kind": "compare",

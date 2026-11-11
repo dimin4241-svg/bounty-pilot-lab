@@ -352,9 +352,9 @@ def source_backed_properties(spec):
     """
     import importlib.util
     script = SCRIPTS / "mutation_lab.py"
-    loader = importlib.util.spec_from_file_location("bp_harness_property_schema", script)
-    module = importlib.util.module_from_spec(loader)
-    loader.exec_module(module)
+    spec = importlib.util.spec_from_file_location("bp_harness_property_schema", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     module._properties(spec)
     found = []
     for row in spec["rules"]:

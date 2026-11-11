@@ -135,7 +135,7 @@ def _mutations(model):
 
 
 def bank(model, max_mutants=40):
-    fuzz = _validate_model(model)
+    _validate_model(model)
     if type(max_mutants) is not int or not 1 <= max_mutants <= 60:
         raise ValueError("max_mutants must be 1..60")
     candidates = _mutations(model)
@@ -354,6 +354,29 @@ def _replay(model, trace, fuzz):
     return state
 
 
+def _first_divergence(original_model, mutant_model, trace, fuzz):
+    """Earliest changed executed step; no raw balances, accounts or secrets."""
+    for i in range(1, len(trace) + 1):
+        prefix = trace[:i]
+        actual = _replay(original_model, prefix, fuzz)
+        changed = _replay(mutant_model, prefix, fuzz)
+        if actual != changed:
+            before = _replay(original_model, prefix[:-1], fuzz)
+            actor_step = prefix[-1]
+            return {
+                "first_divergent_step": i,
+                "action": actor_step[0],
+                "actor": actor_step[1],
+                "original_before_sha256": _sha(before) if before is not None else None,
+                "original_after_sha256": _sha(actual) if actual is not None else None,
+                "mutant_after_sha256": _sha(changed) if changed is not None else None,
+                "changed_fields": _fields_diff(actual, changed),
+                "trace": [{"action": name, "actor": actor}
+                          for name, actor in prefix]
+            }
+    return None
+
+
 def _baseline_walk(model, fuzz, depth, max_states):
     possible = fuzz.actions_for(model)
     queue = deque([(copy.deepcopy(model["state"]), [])])
@@ -432,6 +455,13 @@ def score(bank_data, property_spec, depth=4, max_states=300):
                        t[0].startswith(base_action_name.replace("{actor}", ""))
                        for t in trace):
                 continue
+            # A guard itself is evaluated by an attempted call, even if
+            # it rejects the action. A changed write is NOT reached when
+            # the original guarded action never executes. Do not label
+            # its surviving property weak merely because that branch
+            # was not reachable in the bounded test.
+            if mutant["section"] == "effects" and baseline is None:
+                continue
             reached = True
             changed = _replay(m, trace, fuzz)
             if baseline == changed:
@@ -439,25 +469,19 @@ def score(bank_data, property_spec, depth=4, max_states=300):
             divergence = True
             if changed is None:
                 if witness is None:
-                    witness = {"first_divergent_trace": [
-                        {"action": name, "actor": actor} for name, actor in trace],
-                        "changed_fields": ["action_enabled_or_reverted"]}
+                    witness = _first_divergence(source, m, trace, fuzz)
                 continue
             result = checker.evaluate(rule_set, changed)
             failed = [r["id"] for r in result["results"] if r["status"] == "fail"]
             if failed:
                 caught = True
                 detectors = sorted(set(detectors + failed))
-                witness = {"first_divergent_trace": [
-                    {"action": name, "actor": actor} for name, actor in trace],
-                    "changed_fields": _fields_diff(baseline, changed),
-                    "mutant_state_sha256": _sha(changed)}
+                witness = _first_divergence(source, m, trace, fuzz)
+                if witness is not None:
+                    witness["property_violation_at_step"] = len(trace)
                 break
             if witness is None:
-                witness = {"first_divergent_trace": [
-                    {"action": name, "actor": actor} for name, actor in trace],
-                    "changed_fields": _fields_diff(baseline, changed),
-                    "mutant_state_sha256": _sha(changed)}
+                witness = _first_divergence(source, m, trace, fuzz)
         status = ("NOT_REACHED" if not reached else
                   "OBSERVATIONALLY_EQUIVALENT_WITHIN_BOUNDS" if not divergence else
                   "KILLED_BY_PROPERTY" if caught else
