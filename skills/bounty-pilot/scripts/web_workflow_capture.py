@@ -17,7 +17,7 @@ import re
 import sys
 from collections import defaultdict
 from pathlib import Path
-from urllib.parse import urlsplit, unquote
+from urllib.parse import urlsplit
 
 MAX_INPUT = 3_000_000
 MAX_EVENTS = 200

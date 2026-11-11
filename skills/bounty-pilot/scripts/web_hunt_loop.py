@@ -259,8 +259,8 @@ def _budget(spec):
     if (type(per) not in (int, float) or not math.isfinite(per)
             or not 0 < per <= 10):
         raise ValueError("planned per-job USD must be 0..10 and finite")
-    if type(total) not in (int, float) or not math.isfinite(total)
-            or not 0 <= total <= 100:
+    if (type(total) not in (int, float) or not math.isfinite(total)
+            or not 0 <= total <= 100):
         raise ValueError("planned total USD must be 0..100")
     return {"max_review_jobs": count, "max_usd_per_job": round(per, 6),
             "max_usd_total": round(total, 6)}
