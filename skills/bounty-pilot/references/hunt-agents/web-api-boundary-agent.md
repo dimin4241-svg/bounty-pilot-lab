@@ -130,3 +130,15 @@ alone is never proof. Use `web-root-cause-dedup` before expensive
 model re-analysis, preserving separate invariants at the same
 handler until a reviewer establishes the same root cause.
 Reference `references/web-invariants-phase3.md`.
+
+## Optional native business-state reproduction
+
+For a wholly researcher-owned Web fixture, `web-effect-fixture-replay`
+can drive bounded actual HTTP GET/POST interactions on literal
+`127.0.0.1`, collect only named pre/post scalar state and call the
+existing controlled effect oracle. Use `--execute` only after checking
+the private plan and disjoint candidate/control fixture routes. No
+target domain, DNS, redirect, authorization header or external actor
+can be supplied. Passing the local effect oracle still does not prove
+that a real program would behave the same way.
+See `references/web-invariants-phase3.md`.

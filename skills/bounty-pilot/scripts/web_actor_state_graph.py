@@ -145,6 +145,22 @@ def analyze(doc):
     for e in events:
         rid, actor, kind = e["resource"], e["actor"], e["type"]
         r = resources[rid]
+        if kind != "action":
+            admin_allowed = (actor == r["owner"] or (
+                actors[actor]["tenant"] == r["tenant"] and
+                (actor, rid, "update") in grants))
+            if not admin_allowed:
+                # A logged command does not prove that the service
+                # accepted a grant, revoke, or transfer. Do not mutate
+                # expected policy from an unauthorized command.
+                uncertain.append({"event_id": e["id"],
+                                  "reason": "CONTROL_PLANE_AUTHORITY_UNVERIFIED"})
+                continue
+            if (kind == "transfer" and
+                    actors[e["new_owner"]]["tenant"] != r["tenant"]):
+                uncertain.append({"event_id": e["id"],
+                                  "reason": "CROSS_TENANT_TRANSFER_UNVERIFIED"})
+                continue
         if kind == "action":
             action = e["action"]
             is_owner = r["owner"] == actor

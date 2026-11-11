@@ -171,6 +171,50 @@ objects, and explicitly **sandbox** payments/refunds. Only saved scalar
 state is read. No purchases, money transfers, web calls or wallet signatures
 are produced.
 
+### Optional real loopback effect capture
+
+Run `web-effect-fixture-replay` only against a **researcher-owned local
+fixture**, never against a Standoff/BI.ZONE site or an arbitrary forwarded
+proxy. The command rejects DNS names, redirects, arbitrary headers,
+non-loopback addresses, shared test routes and external URLs. Its normal
+mode is a plan validation dry run; `--execute` is required to make any
+local GET/empty-POST/GET requests.
+
+An example fixture plan, assuming a local service you control already
+implements isolated `/r0` and `/r1` candidate and negative-control routes:
+
+```json
+{
+  "schema_version": 1,
+  "ownership_attestation": "I_CONTROL_THIS_LOCAL_FIXTURE",
+  "origin": "http://127.0.0.1:8080",
+  "case_id": "subscription-owned",
+  "resource_kind": "subscription",
+  "business_effect": "plan_activated",
+  "predicate": {"field": "plan_level", "relation": "increased", "value": null},
+  "rounds": [
+    {"candidate": {"state_path": "/r0/c/state", "action_path": "/r0/c/action"},
+     "negative_control": {"state_path": "/r0/n/state", "action_path": "/r0/n/action"}},
+    {"candidate": {"state_path": "/r1/c/state", "action_path": "/r1/c/action"},
+     "negative_control": {"state_path": "/r1/n/state", "action_path": "/r1/n/action"}}
+  ]
+}
+```
+
+```sh
+python3 "$BP" web-effect-fixture-replay \
+  --plan /private/owned-fixture-plan.json --out /private/local-effects.json
+python3 "$BP" web-effect-fixture-replay \
+  --plan /private/owned-fixture-plan.json --out /private/local-effects.json --execute
+```
+
+The fixture server must return a JSON object containing the one declared
+scalar field at each `state_path`. Each `action_path` receives an empty
+JSON object via POST. No credentials or cookies are sent or saved. The
+output includes the actual pre/post fixture observations and the same
+offline oracle review as `web-effect-oracle`. Unique route paths and
+evidence digests permit independent rounds, but do not prove provider
+authentication, customer authorizations or real deployment behavior.
 ## 4. Browser/third-party trust graph
 
 Command: `bounty.py web-browser-trust`
@@ -293,9 +337,10 @@ evaluation work. Do not call the test suite a discovery benchmark.
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_web_phase3.py' -v
+python3 -m unittest discover -s tests -p 'test_web_effect_fixture_replay.py' -v
 ```
 
 No synthetic unit result can establish real exploitability, program
-eligibility or bounty payout. All six helpers use Python 3.9+ and mostly
+eligibility or bounty payout. All seven helpers use Python 3.9+ and mostly
 stdlib; the parser lab also requires Node.js. All output files are
 create-only and permissioned for private local analysis.

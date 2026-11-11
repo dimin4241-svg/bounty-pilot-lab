@@ -239,6 +239,15 @@ class ActorGraphTests(unittest.TestCase):
         self.assertEqual(len(res["leads"]), 1)
         self.assertTrue(res["transition_facts"][1]["expected_allow"])
 
+    def test_unverified_grant_cannot_silently_change_expected_permissions(self):
+        events = [
+            grant_event(1, "grant", user="guest", subject="guest"),
+            action_event(2, "guest", "invoice1", True)]
+        result = actor.analyze(actor_doc(events))
+        self.assertEqual(len(result["leads"]), 1)
+        self.assertEqual(result["unknowns"][0]["reason"],
+                         "CONTROL_PLANE_AUTHORITY_UNVERIFIED")
+
     def test_reject_duplicate_or_out_of_order_events(self):
         d = actor_doc([action_event(2, "guest", "invoice1"),
                        action_event(1, "guest", "invoice1")])

@@ -28,6 +28,11 @@ research: `web-program-policy` (strict program scope and permitted actions),
 `web-parser-lab` (real local Python-vs-Node URL normalization differences), and
 `web-root-cause-dedup` (strict clustering and cheap review prioritization).
 
+A seventh command, `web-effect-fixture-replay`, executes an explicitly
+opted-in GET/empty-POST/GET sequence against owned literal
+`127.0.0.1` only. It produces pre/post snapshots and reuses the
+same repeated-effect oracle; no real program traffic, secrets or cookies.
+
 These modules do not authorize production testing or prove vulnerabilities.
 See the [phase 3 guide](skills/bounty-pilot/references/web-invariants-phase3.md).
 
