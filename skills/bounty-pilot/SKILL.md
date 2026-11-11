@@ -747,3 +747,37 @@ measurement, use `web-bench-ab` to prepare paired historical tasks and
 compare independently reviewed, sealed arms with matching budgets.
 These engines never establish production exploitability or payout likelihood.
 See `references/web-semantic-phase2.md` for required scope and evidence gates.
+
+## Web/API Phase 3 — scope first, effects before report
+
+For Standoff 365, BI.ZONE, or another named web program, independently
+review current official scope and use `web-program-policy` as an offline
+fail-closed plan preflight. It is NOT an authorization provider and
+never executes requests. Existing `web-ts-flow`, `web-route-ast`,
+and `web-invariants` supply only static review candidates.
+Use `web-actor-state-graph` for explicit actor/owner/tenant/grant
+state histories and `web-browser-trust` for user-content → URL/cookie/
+third-party/credential trust boundaries. Where controlled local data
+exists, `web-effect-oracle` requires repeated concrete business-state
+effects and matched negative controls, not HTTP 200 or speculative
+model claims. `web-parser-lab` compares two real URL implementations
+only on synthetic local strings; it is NOT HTTP smuggling testing.
+Before expensive model calls, `web-root-cause-dedup` conservatively
+groups strict identical mechanisms while keeping differently scoped
+invariants separate. Reuse `web-bench-ab` for paired evaluation, but
+never claim uplift without independently reviewed holdout outcomes.
+See `references/web-invariants-phase3.md`.
+
+## Phase 3 owned fixture execution (optional)
+
+The `web-effect-fixture-replay` module is an explicit opt-in executor
+limited to the literal `http://127.0.0.1:PORT` origin and owned,
+disjoint local fixture routes. It collects two to five pre/POST/post
+candidate/control rounds and feeds the resulting scalar state facts to
+`web-effect-oracle`. Only one explicitly named state field is saved.
+The helper does not allow redirects, DNS, third-party hosts, cookies,
+credentials, arbitrary headers or production scopes; default is dry-run.
+It does **not** establish deployed exploitability, only reproducibility
+of an operator-controlled test application. Use it instead of model
+inference when a disposable local Web fixture is available.
+See `references/web-invariants-phase3.md`.

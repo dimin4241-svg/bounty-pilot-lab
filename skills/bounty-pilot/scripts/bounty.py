@@ -12016,6 +12016,13 @@ HELPER_COMMANDS = {
     'web-ts-flow': ('web_ts_flow', 'offline pinned TypeScript cross-file argument-to-sink syntax leads'),
     'web-http-boundary': ('web_http_boundary', 'compare saved owned-lab HTTP parser observations'),
     'web-bench-ab': ('web_bench_ab', 'paired sealed historical Web benchmark preparation/comparison'),
+    'web-program-policy': ('web_program_policy', 'offline fail-closed program scope and action preflight'),
+    'web-actor-state-graph': ('web_actor_state_graph', 'offline actors, ownership, grants and revocation state'),
+    'web-effect-oracle': ('web_effect_oracle', 'controlled, repeated local business-effect observations'),
+    'web-effect-fixture-replay': ('web_effect_fixture_replay', 'explicit opt-in 127.0.0.1 business effect replay'),
+    'web-browser-trust': ('web_browser_trust_graph', 'offline browser, cookie, URL and third-party trust paths'),
+    'web-parser-lab': ('web_parser_lab', 'local Node/Python URL parser differential on synthetic hosts'),
+    'web-root-cause-dedup': ('web_root_cause_dedup', 'conservative root-cause clustering and review ranking'),
     'web-identity-flow': ('web_identity_flow', 'offline session, signed-intent and tenant traces'),
     'web-nday-review': ('web_nday_regression', 'offline Python route guard changes across pinned snapshots'),
     'nday-scan': ('nday_scan', 'list upstream security fixes newer than the pinned version '

@@ -115,3 +115,30 @@ control. Never send HTTP desync payloads to a production service using this
 lens. Track hypotheses in the existing novelty/dup-map before report drafting.
 To measure actual discovery improvements, use `web-bench-ab` and independent
 scoring; the built-in public sample is insufficient to claim uplift.
+
+## Phase 3 investigator gate
+
+Start with the current official program rules and an operator-reviewed
+`web-program-policy` plan. A green offline preflight never grants
+authorization. Build an `web-actor-state-graph` only from explicit
+tenant, ownership, grant and ordered revoke observations; unknown
+effects do not establish a bypass. To verify business-logic impact,
+require independently saved candidate/control pre/post observations
+on an owned local fixture and run `web-effect-oracle`. It requires
+two to five repetitions and a matching negative control; HTTP 200
+alone is never proof. Use `web-root-cause-dedup` before expensive
+model re-analysis, preserving separate invariants at the same
+handler until a reviewer establishes the same root cause.
+Reference `references/web-invariants-phase3.md`.
+
+## Optional native business-state reproduction
+
+For a wholly researcher-owned Web fixture, `web-effect-fixture-replay`
+can drive bounded actual HTTP GET/POST interactions on literal
+`127.0.0.1`, collect only named pre/post scalar state and call the
+existing controlled effect oracle. Use `--execute` only after checking
+the private plan and disjoint candidate/control fixture routes. No
+target domain, DNS, redirect, authorization header or external actor
+can be supplied. Passing the local effect oracle still does not prove
+that a real program would behave the same way.
+See `references/web-invariants-phase3.md`.
