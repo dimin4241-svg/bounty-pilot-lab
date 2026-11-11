@@ -781,3 +781,22 @@ It does **not** establish deployed exploitability, only reproducibility
 of an operator-controlled test application. Use it instead of model
 inference when a disposable local Web fixture is available.
 See `references/web-invariants-phase3.md`.
+
+## Phase 4 — owned Web native integrations and performance honesty
+
+Use `web-native-toolchain` only for local, operator-owned fixtures
+and separately vetted executable toolchains. It validates CodeQL's
+pinned JS/TS checkout and local query, a self-contained OpenAPI
+schema and literal loopback Schemathesis origin, or separate
+Playwright browser contexts bound to an exact loopback origin.
+HTTP Garden is a **pinned saved-observation import**, not
+automatic Docker probe execution. The default dry-run is never
+a network request; `--execute` requires verified local inputs
+and external network isolation. Raw native tool output is not
+a report or proof of exploitable behavior.
+Run `web-benchmark-regression` for 40 parameterized synthetic
+candidate/control case pairs and `web-benchmark-readiness`
+to gate a future 30–50 *real* source-pinned, independently
+reviewed historical Web A/B study. The shipped public Web
+history catalog has only 3 cases and cannot support an uplift
+claim. See `references/web-native-phase4.md`.

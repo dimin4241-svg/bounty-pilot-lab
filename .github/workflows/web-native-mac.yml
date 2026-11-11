@@ -1,0 +1,67 @@
+name: Web native offline Mac research regression (manual only)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/web-native-mac.yml'
+      - 'skills/bounty-pilot/scripts/web_native_toolchain.py'
+      - 'skills/bounty-pilot/scripts/web_playwright_local.cjs'
+      - 'skills/bounty-pilot/scripts/web_benchmark_regression.py'
+      - 'skills/bounty-pilot/scripts/web_benchmark_readiness.py'
+      - 'tests/test_web_native_toolchain.py'
+      - 'tests/test_web_benchmark_readiness.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-native-mac-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac-native-synthetic:
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify local tools; do not install or run against external targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          node --version
+          git --version
+          for exe in codeql st docker; do
+            if command -v "$exe" >/dev/null 2>&1; then
+              echo "$exe: installed"
+            else
+              echo "$exe: not installed (native execution not attempted)"
+            fi
+          done
+      - name: Run local-only Web integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_web_native_toolchain.py' -v
+          python3 -m unittest discover -s tests -p 'test_web_benchmark_readiness.py' -v
+      - name: Run 40 pairs / 80 snapshots of real local deterministic analyzers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 skills/bounty-pilot/scripts/bounty.py web-benchmark-regression \
+            --out "$RUNNER_TEMP/web-regression-40.json"
+          python3 - "$RUNNER_TEMP/web-regression-40.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              data = json.load(stream)
+          assert data["case_pairs"] == 40 and data["snapshots"] == 80
+          assert data["passed_pairs"] == 40 and data["all_passed"]
+          assert data["real_model_runs"] == 0
+          assert data["public_uplift_claim_allowed"] is False
+          print("OFFLINE SYNTHETIC SUCCESS: 40 paired cases, 80 snapshots.")
+          print("No real model or third-party production target was accessed.")
+          PY

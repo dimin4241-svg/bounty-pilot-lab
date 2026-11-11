@@ -96,3 +96,14 @@ Node/Python discrepancy as an HTTP request smuggling exploit.
 Independent Playwright verification belongs on a disposable owned
 test application with external network blocked. See
 `references/web-invariants-phase3.md`.
+
+## Native browser evidence
+
+When a disposable owned browser fixture is available, the
+`web-native-toolchain` Playwright adapter captures only
+a single numeric `data-bp-scalar` per isolated context and
+blocks requests to non-loopback origins. This is useful for
+testing an authorization/business-effect hypothesis with
+independent role fixtures; it is not proof that real role
+identities were established, nor an XSS exploit.
+See `references/web-native-phase4.md`.
