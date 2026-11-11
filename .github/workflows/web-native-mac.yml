@@ -1,6 +1,16 @@
 name: Web native offline Mac research regression (manual only)
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/web-native-mac.yml'
+      - 'skills/bounty-pilot/scripts/web_native_toolchain.py'
+      - 'skills/bounty-pilot/scripts/web_playwright_local.cjs'
+      - 'skills/bounty-pilot/scripts/web_benchmark_regression.py'
+      - 'skills/bounty-pilot/scripts/web_benchmark_readiness.py'
+      - 'tests/test_web_native_toolchain.py'
+      - 'tests/test_web_benchmark_readiness.py'
   workflow_dispatch:
 
 permissions:

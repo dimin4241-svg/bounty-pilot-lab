@@ -107,6 +107,16 @@ class HistoricalReadinessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mod.assess(catalog, reviews)
 
+    def test_reused_evidence_digest_blocks_even_asserted_reviews(self):
+        catalog = synthetic_catalog(30)
+        reviews = evaluator(catalog)
+        reviews["cases"][1]["reproduced_patched_sha256"] = (
+            reviews["cases"][0]["reproduced_patched_sha256"])
+        result = mod.assess(catalog, reviews)
+        self.assertIn("EVIDENCE_DIGEST_REUSED_ACROSS_DISTINCT_CASES",
+                      result["blocking_reasons"])
+        self.assertFalse(result["public_uplift_claim_allowed"])
+
     def test_private_immutable_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "result.json"

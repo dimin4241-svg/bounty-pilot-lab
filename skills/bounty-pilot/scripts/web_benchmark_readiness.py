@@ -106,8 +106,17 @@ def assess(catalog, reviews):
     if set(reviewed) - expected:
         raise ValueError("evidence for unknown catalog case")
     good = set()
+    evidence_digests = set()
+    repeated_evidence = False
     for c in cases:
         row = reviewed.get(c["id"])
+        if row:
+            for field in ("reproduced_vulnerable_sha256", "reproduced_patched_sha256"):
+                proof = row[field]
+                if proof:
+                    if proof in evidence_digests:
+                        repeated_evidence = True
+                    evidence_digests.add(proof)
         if row and row["revision_chain_checked"] and row["distinct_negative_control"] and (
                 row["independent_review_asserted"] and
                 row["reproduced_vulnerable_sha256"] and
@@ -125,6 +134,8 @@ def assess(catalog, reviews):
         reasons.append("INSUFFICIENT_MECHANISM_DIVERSITY")
     if len(good) != len(cases):
         reasons.append("MISSING_SEPARATELY_REVIEWED_VULNERABLE_AND_PATCHED_CONTROLS")
+    if repeated_evidence:
+        reasons.append("EVIDENCE_DIGEST_REUSED_ACROSS_DISTINCT_CASES")
     if any(
         ("synthetic" in c["id"].lower() or
          "placeholder" in c["source_revisions"].lower() or

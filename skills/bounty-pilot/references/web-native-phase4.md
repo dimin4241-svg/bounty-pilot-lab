@@ -203,8 +203,9 @@ false-positive controls. Native Node is required for the URL cases.
 
 The regression also runs in CI against fixed synthetic fixtures, but
 real research/tool runs belong on the operator-controlled Mac runner.
-The optional `web-native-mac.yml` workflow is manual-only and uses
-`[self-hosted, macOS]`; it never runs production target scans.
+The optional `web-native-mac.yml` workflow uses `[self-hosted, macOS]`
+and runs on a Phase-4-only `main` push or manual dispatch; it never
+runs production target scans.
 
 ## 7. Real historical A/B benchmark readiness
 
