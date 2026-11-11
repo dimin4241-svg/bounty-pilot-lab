@@ -32,6 +32,8 @@ in a private run directory **outside** the repository and this skill.
   independent negative control and adversarial review.
 - Never invent commands, test output, deployed configuration, root cause,
   a novelty claim, severity, bounty payout or vulnerability proof.
+- Credentials in bundled source are redacted. Review every agent bundle
+  before it reaches a model; a heuristic redactor cannot guarantee privacy.
 - **Independent-agent sessions** must not share another agent's answer.
   Agents may read only their assigned vetted bundle.
 - Budget default: 3 bounded hunt passes. A *planned* USD review budget
@@ -63,6 +65,11 @@ private report. For source-first prioritization use
 Pick a specific lens before running agents: authorization, accounting,
 state machine, sequencing, fees, oracle boundary or deployed config.
 Check the exact pinned revision and existing public audit findings.
+Search official issue trackers and previously audited reports even when the
+report was **published elsewhere**; see `references/intake.md`.
+Record `severity_denominator` and `ceiling_payout_usd` when ranking
+target economics. A low denominator is **not a veto** on a verified bug.
+Read `references/targets.md` for the correct uncertainty bounds.
 Use `agent_dispatch.py` only when independent bounded readings are
 needed; the dispatcher **plans** before it runs any model.
 
@@ -110,6 +117,14 @@ Choose a reference by the actual hypothesis, not by tool count:
 - Agent bundles and independent reviewer roles:
   `references/agent-dispatch.md`,
   `references/full-workflow-legacy.md` (Stage 3–6).
+
+### Mixed-stack ecosystem attack chains
+
+For multi-repository, relayer, bridge, frontend/backend or cloud-to-contract
+flows, read `references/ecosystem-attack-chains.md` and use
+`templates/attack-chain-review.md`. A lexical or source-only review cannot establish
+a deployed attack chain or measured business impact; require an exact
+reachable trace and paired independent controls.
 
 ### D. Measuring whether the lab actually finds bugs
 
