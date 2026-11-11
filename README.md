@@ -18,6 +18,24 @@
 
 ---
 
+## Phase 6 — independent intent-based properties and deterministic mutants
+
+`harness-gen` now supports blind source-only
+`mutation-plan`, documentation-only `intent-bundle`, explicitly
+reviewed `--intent-proposals` with runnable, narrowly validated
+Foundry getter assertions, and `mutation-stage` restricted to an
+operator-marked disposable checkout. `mutation-score` distinguishes
+compile failures, unreached mutants, reached survivors, and reported
+detections **without calling any test result a real vulnerability**.
+
+`scenario_fuzz` records the first model-observed invariant divergence
+and bounded changed-field names; `experimenter causal-review`
+checks operator-supplied repeated original/patched local traces
+and negative controls. No automatic AI calls, production exploit
+runs or guaranteed mutation-equivalence proof are claimed.
+
+[Phase 6: intent, blind mutations, native review workflow](skills/bounty-pilot/references/intent-mutation-phase6.md).
+
 ## Integrated Web Hunt Loop — phase 5
 
 Bounty Pilot now has an integrated **offline-first, owned-fixture

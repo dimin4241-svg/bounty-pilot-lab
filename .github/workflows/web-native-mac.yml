@@ -20,6 +20,11 @@ on:
       - 'skills/bounty-pilot/scripts/web_dispatch_prepare.py'
       - 'skills/bounty-pilot/scripts/web_evidence_packet.py'
       - 'tests/test_web_hunt_loop.py'
+      - 'skills/bounty-pilot/scripts/harness_gen.py'
+      - 'skills/bounty-pilot/scripts/scenario_fuzz.py'
+      - 'skills/bounty-pilot/scripts/experimenter.py'
+      - 'tests/test_intent_mutation_phase6.py'
+      - 'skills/bounty-pilot/references/intent-mutation-phase6.md'
   workflow_dispatch:
 
 permissions:
@@ -59,6 +64,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_web_ts_flow.py' -v
           python3 -m unittest discover -s tests -p 'test_web_benchmark_readiness.py' -v
           python3 -m unittest discover -s tests -p 'test_web_hunt_loop.py' -v
+          python3 -m unittest discover -s tests -p 'test_intent_mutation_phase6.py' -v
       - name: Run 40 pairs / 80 snapshots of real local deterministic analyzers
         shell: bash
         run: |

@@ -126,6 +126,27 @@ flows, read `references/ecosystem-attack-chains.md` and use
 a deployed attack chain or measured business impact; require an exact
 reachable trace and paired independent controls.
 
+### Source-first invariant mining and mutation sensitivity (Phase 6)
+
+Read `references/intent-mutation-phase6.md` for the strictly separated
+process: first generate fixed deterministic Solidity mutants from pinned
+source, then give an **independent property writer only documentation**,
+never the mutant catalog, patches or hidden historical bug truth.
+`harness-gen intent-bundle` prepares a private prompt, it does not
+run a model; `harness-gen --intent-proposals` validates reviewer-
+approved cited getter relations and emits narrow runnable Foundry
+assertions. Do not mistake review assertions for protocol truth.
+`harness-gen mutation-stage` modifies only a separately marked
+pristine disposable checkout. Use existing `sandbox-run` for native
+experiments on that checkout, never GitHub-hosted production scans.
+`harness-gen mutation-score` separates unreached, noncompiling,
+detected, survived and claimed equivalent mutants; the observation
+receipts are operator supplied. `scenario_fuzz` reports the first
+observed broken model state, not proven source-level cause.
+`experimenter causal-review` compares repeated local original/patch
+receipts and negative controls; never claims deployed exploitability
+or patch safety.
+
 ### D. Measuring whether the lab actually finds bugs
 
 Use `references/benchmark-protocol.md`,
