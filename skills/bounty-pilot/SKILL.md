@@ -126,6 +126,29 @@ flows, read `references/ecosystem-attack-chains.md` and use
 a deployed attack chain or measured business impact; require an exact
 reachable trace and paired independent controls.
 
+### E. Independent property intent and mutation adequacy (Phase 6)
+
+Read `references/intent-mutation-phase6.md`. Before writing
+properties, a separate operator creates a property-blind sealed
+`mutation-lab bank` with deterministic state-model mutation
+operators. Keep the bank in a private 0600 directory inaccessible to
+the **separate** property author. Run `mutation-lab author-brief`
+using ONLY externally grounded requirements, and inspect source
+provenance (confirmed requirement, industry assumption, hypothesis).
+The independent author must not inspect mutants or patched code.
+`harness-gen --property-spec` carries proposed properties and
+provenance into deliberately failing native Solidity stubs; it does
+NOT implement them. `mutation-lab score` tests actual bounded model
+transitions and distinguishes unreached, observationally equivalent,
+caught and uncaught changes. Mutation hits are not native exploits,
+and a missing mutant kill is not automatically a weak invariant.
+A separate explicit `sandbox-run --plan --forge-harness <Name>Invariants`
+runs an operator-approved native Foundry harness inside a trusted
+pinned no-network Docker and records per-handler revert/call summaries
+when present. Missing or high-revert counters mean coverage UNKNOWN/
+LOW, never success. Existing `sandbox-run --mutation-bank --property-spec` executes this
+data-only evaluator in a pinned offline non-root Docker image.
+
 ### D. Measuring whether the lab actually finds bugs
 
 Use `references/benchmark-protocol.md`,

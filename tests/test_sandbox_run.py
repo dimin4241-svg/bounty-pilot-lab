@@ -31,6 +31,74 @@ class SandboxWrapperTests(unittest.TestCase):
         params.update(changes)
         return sandbox.build_command(**params)
 
+    def test_native_foundry_harness_is_opt_in_readonly_and_offline(self):
+        plan = self.plan
+        plan.write_text('{"schema_version":1,"contracts":[{"name":"Vault"}],"functions_included":[{"contract":"Vault","signature":"deposit(uint256)"}]}')
+        cmd = sandbox.build_foundry_command(
+            self.repo, plan, self.out, IMAGE, "VaultInvariants",
+            uid=1001, gid=1001)
+        self.assertIn("--network=none", cmd)
+        self.assertIn("--pull=never", cmd)
+        self.assertIn("--read-only", cmd)
+        self.assertIn("--inside-forge", cmd)
+        self.assertIn("VaultInvariants", cmd)
+        self.assertTrue(any(",dst=/target,readonly" in arg for arg in cmd))
+        self.assertTrue(any(arg == "--env=FOUNDRY_OUT=/tmp/out" for arg in cmd))
+        self.assertTrue(any(arg == "--env=FOUNDRY_CACHE_PATH=/tmp/cache" for arg in cmd))
+
+    def test_native_foundry_rejects_arbitrary_harness_names(self):
+        for invalid in ("Vault", "../../VaultInvariants",
+                        "VaultInvariants; touch /tmp/pwned"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    sandbox.build_foundry_command(
+                        self.repo, self.plan, self.out,
+                        IMAGE, invalid, uid=1001, gid=1001)
+
+    def test_handler_counter_parser_marks_mostly_reverts_as_unexplored(self):
+        text = "deposit(uint256) 100 94\\nwithdraw(uint256) 50 1\\n"
+        # File contents generated in a local fixture, no forge process.
+        result = sandbox.handler_coverage_from_log(
+            text.replace("\\n", "\n"), ["deposit(uint256)", "withdraw(uint256)"])
+        self.assertEqual(result["total_calls"], 150)
+        self.assertEqual(result["total_reverts"], 95)
+        self.assertFalse(result["coverage_verified"])
+        self.assertIn("deposit(uint256)", result["zero_or_high_revert_handlers"])
+
+    def test_handler_counter_parser_fails_closed_on_missing_or_invalid_logs(self):
+        result = sandbox.handler_coverage_from_log(
+            "unknown output", ["deposit(uint256)"])
+        self.assertFalse(result["all_handler_counts_available"])
+        self.assertFalse(result["coverage_verified"])
+        with self.assertRaises(ValueError):
+            sandbox.handler_coverage_from_log(
+                "deposit(uint256) 2 3", ["deposit(uint256)"])
+
+    def test_mutation_scoring_uses_same_offline_isolation_without_target_mount(self):
+        rules = self.logs / "rules.json"
+        rules.write_text('{"rules":[]}')
+        command = sandbox.build_mutation_command(
+            self.repo, self.plan, rules, self.out, IMAGE,
+            uid=1001, gid=1001)
+        self.assertIn("--network=none", command)
+        self.assertIn("--read-only", command)
+        self.assertIn("--pull=never", command)
+        self.assertIn("score", command)
+        self.assertIn("/input/rules.json", command)
+        self.assertIn("/pilot/mutation_lab.py", command)
+        self.assertNotIn("/pilot/scenario_runner.py", command)
+        self.assertFalse(any(",dst=/target" in arg for arg in command))
+        self.assertTrue(any(",dst=/input/rules.json,readonly" in arg
+                            for arg in command))
+
+    def test_mutation_property_spec_cannot_be_target_source(self):
+        inside = self.repo / "rules.json"
+        inside.write_text("{}")
+        with self.assertRaises(ValueError):
+            sandbox.build_mutation_command(
+                self.repo, self.plan, inside, self.out, IMAGE,
+                uid=1001, gid=1001)
+
     def test_isolated_command_mounts_only_required_paths(self):
         command = self.build()
         for flag in ("--network=none", "--cap-drop=ALL", "--security-opt=no-new-privileges",

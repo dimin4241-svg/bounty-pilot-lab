@@ -90,6 +90,33 @@ class HarnessGen(unittest.TestCase):
         deposit = [f for f in plan['functions_included'] if f['handler'] == 'call_deposit'][0]
         self.assertEqual(deposit['selector'], '0x6e553f65')
 
+    def test_source_backed_property_is_still_failing_stub_with_provenance(self):
+        specification = {
+            "schema_version": 1, "author_role": "separate_property_author",
+            "bank_visible_to_author": False, "rules": [{
+                "id": "total_balanced",
+                "invariant": {"id": "total_balanced", "kind": "compare",
+                              "left": {"path": "assets"}, "op": "eq",
+                              "right": {"path": "liabilities"}},
+                "provenance": {
+                    "tier": "confirmed_requirement",
+                    "source_kind": "protocol_specification",
+                    "source_ref": "external_spec",
+                    "source_sha256": "b" * 64,
+                    "supporting_excerpt": "The contract must maintain matching assets and liabilities.",
+                    "reviewer_confirmed": True}}]}
+        from_script = harness.source_backed_properties(specification)
+        result = harness.generate(
+            [str(self.artifact)], self.out, properties=from_script,
+            repo=self.repo, property_spec=specification)
+        self.assertEqual(result["property_provenance"][0]["id"], "total_balanced")
+        self.assertFalse(result["mutation_bank_read"])
+        self.assertEqual(result["property_author_independence"],
+                         "OPERATOR_ASSERTED_NOT_VERIFIED")
+        text = (self.out / "VaultInvariants.t.sol").read_text()
+        self.assertIn("invariant_total_balanced", text)
+        self.assertIn('assertTrue(false, "TODO:', text)
+
     def test_two_invariant_lines_become_two_failing_stubs(self):
         self.generate()
         text = (self.out / 'VaultInvariants.t.sol').read_text(encoding='utf-8')
