@@ -179,6 +179,58 @@ review which model is selected, its provider-specific cost caps,
 their source files and whether any secret-bearing artifacts enter
 the agent context. The hunt loop does **not** dispatch models.
 
+## Optional bridge to the existing Codex/Claude agent dispatcher
+
+This bridge is the missing handoff from a Web candidate review queue to
+the existing Bounty Pilot `agent_dispatch` machinery. First create
+a **new private Bounty Pilot run** outside your local source checkout,
+pinned to the same Git commit as the Web campaign:
+
+```sh
+python3 "$BP" init --repo /absolute/local/owned-source \
+  --out /private/bounty-run/dispatch-run
+```
+
+Use the existing **unexecuted** campaign output from Step 4, with at
+least one candidate and an explicit budget covering **two replicas**
+per candidate. The bridge prepares immutable Markdown bundles and
+calls `agent_dispatch.plan(..., mode="independent-blind")`. It does
+not launch or authenticate a model:
+
+```sh
+python3 "$BP" web-dispatch-prepare \
+  --campaign /private/bounty-run/campaign-dry.json \
+  --run /private/bounty-run/dispatch-run \
+  --replicas 2 \
+  --include-source-excerpts
+```
+
+The local run's current HEAD must exactly match the campaign revision.
+A Bounty run with an existing bundle manifest or dispatch plan is
+rejected, instead of overwritten. Each candidate bundle contains its
+source file, code anchor or pseudonymous route key, invariant and
+required proof controls. No raw HAR/token/cookie/PII enters the bundle.
+At most 24 independent jobs are prepared, with two or three separate
+readings of each candidate. The optional `--include-source-excerpts`
+flag permits the bridge to read at most 13 nearby source lines at each
+pinned code anchor from a regular local file. It masks entire lines
+that resemble credentials, passwords, tokens or keys and limits their
+length. The default omits source code; **without excerpts an agent
+can only assess the hypothesis metadata, not actual source code**.
+A heuristic source redactor is not guaranteed to catch all sensitive
+information. Inspect every generated bundle before executing any
+agent job. The existing agent prompt forbids reading files outside
+the supplied bundle.
+
+Run actual model jobs only by independently choosing and explicitly
+calling the existing `agent-dispatch run-job` command for each queued
+job. Verify the available provider, model, cost controls and token
+permissions first. For Claude, specify its native
+`--max-budget-usd` per job. That limit is **not supported equally
+by every provider**, so an offline planning ceiling is NOT a hard
+billing cap. No actual model invocations, verification or payouts
+are performed by `web-dispatch-prepare`.
+
 ## Step 5 — optional actual local proof
 
 Only if the operator controls a disposable local fixture with

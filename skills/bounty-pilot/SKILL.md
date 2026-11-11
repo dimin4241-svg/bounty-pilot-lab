@@ -825,3 +825,17 @@ submit** without actual deployed authorization, exploit effect,
 scope and novelty review. Do not pass secret-bearing HARs, comparison
 keys, real customer state or unaudited external domains to models.
 See `references/web-hunt-loop-phase5.md`.
+
+## Phase 5 optional Codex/Claude dispatch bridge
+
+`web-dispatch-prepare` takes a preflight-passed
+`web-hunt-loop` result and a fresh source-pinned private
+Bounty Pilot run already created by `init`. It adds strict
+per-candidate bundles and uses existing `agent_dispatch.plan`
+with two or three fresh independent readings per candidate,
+subject to a total planning USD ceiling across **all replicas**.
+No model starts until the operator separately invokes
+`agent-dispatch run-job` with the provider's actual safety
+and billing configuration. Never claim planned spend is an
+enforced cap, or the source review a PoC. See
+`references/web-hunt-loop-phase5.md`.

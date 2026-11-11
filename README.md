@@ -34,6 +34,10 @@ root-cause deduplication, same-revision reviewed suppression and a bounded
 **planned** model-review budget. Only explicit
 `--execute-owned-fixture` triggers actual GET/empty-POST/GET
 candidate/negative-control checks on literal `127.0.0.1`.
+`web-dispatch-prepare` now converts the bounded review queue into
+real **prepared** independent-blind `agent_dispatch` jobs within an
+already initialized, source-pinned private Bounty run. It never starts
+a model and checks the combined replica budget before writing bundles.
 `web-evidence-packet` joins a proposed finding to those controlled
 observations and a separate reviewer statement, but never considers it
 a verified production vulnerability or auto-submittable bug.

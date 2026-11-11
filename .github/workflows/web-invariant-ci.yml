@@ -57,6 +57,7 @@ jobs:
           python3 -m py_compile skills/bounty-pilot/scripts/web_benchmark_readiness.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_workflow_capture.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_hunt_loop.py
+          python3 -m py_compile skills/bounty-pilot/scripts/web_dispatch_prepare.py
           python3 -m py_compile skills/bounty-pilot/scripts/web_evidence_packet.py
           node --check skills/bounty-pilot/scripts/web_playwright_local.cjs
           python3 -m py_compile skills/bounty-pilot/scripts/web_browser_trust_graph.py
@@ -101,6 +102,7 @@ jobs:
           python3 skills/bounty-pilot/scripts/bounty.py web-benchmark-readiness --help
           python3 skills/bounty-pilot/scripts/bounty.py web-workflow-capture --help
           python3 skills/bounty-pilot/scripts/bounty.py web-hunt-loop --help
+          python3 skills/bounty-pilot/scripts/bounty.py web-dispatch-prepare --help
           python3 skills/bounty-pilot/scripts/bounty.py web-evidence-packet --help
           python3 skills/bounty-pilot/scripts/bounty.py web-browser-trust --help
           python3 skills/bounty-pilot/scripts/bounty.py web-parser-lab --help

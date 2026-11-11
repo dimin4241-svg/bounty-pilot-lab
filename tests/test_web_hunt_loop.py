@@ -3,6 +3,7 @@ import copy
 import datetime as dt
 import importlib.util
 import json
+import subprocess
 import os
 import tempfile
 import threading
@@ -23,6 +24,7 @@ def import_script(name):
 capture = import_script("web_workflow_capture")
 hunt = import_script("web_hunt_loop")
 packet = import_script("web_evidence_packet")
+bridge = import_script("web_dispatch_prepare")
 NOW = dt.datetime(2026, 11, 11, 8, 0, tzinfo=dt.timezone.utc)
 KEY = "e" * 64
 HOST = "http://127.0.0.1:8423"
@@ -382,6 +384,118 @@ class ActualOwnedFixtureReplayTests(unittest.TestCase):
         result = packet.review(campaign, review)
         self.assertEqual(result["status"], "INCOMPLETE_INDEPENDENT_REVIEW")
         self.assertFalse(result["ready_to_submit"])
+
+
+class DispatchBridgeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.repo = root / "owned-repo"
+        self.repo.mkdir()
+        (self.repo / "source.py").write_text(
+            "def owner_view(account):\n    return account.private_value\n")
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "service.ts").write_text(
+            "function review(req) {\n"
+            "  const apiKey = 'SECRET_SHOULD_BE_MASKED';\n"
+            "  return prisma.findUnique(req.id);\n"
+            "}\n")
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "add", "."],
+                       check=True)
+        subprocess.run(["git", "-C", str(self.repo),
+                        "-c", "user.name=Owned Fixture",
+                        "-c", "user.email=owned@fixture.invalid",
+                        "commit", "-qm", "owned fixture"], check=True)
+        self.revision = subprocess.check_output(
+            ["git", "-C", str(self.repo), "rev-parse", "HEAD"]
+        ).decode().strip()
+        self.run = root / "private-run"
+        bounty = import_script("bounty")
+        bounty.initialize(self.repo, self.run)
+        m = manifest()
+        m["source_revision"] = self.revision
+        self.campaign = hunt.execute(m, now=NOW)
+
+    def test_real_agent_dispatch_manifest_and_two_isolated_jobs_without_model_calls(self):
+        prepared = bridge.prepare(self.campaign, self.run, replicas=2)
+        self.assertEqual(prepared["status"],
+                         "INDEPENDENT_JOBS_PLANNED_NOT_EXECUTED")
+        self.assertEqual(prepared["dispatch_job_count"], 2)
+        self.assertEqual(prepared["actual_spend_usd"], 0)
+        self.assertEqual(prepared["provider_sessions_started"], 0)
+        dispatch = json.loads(
+            (self.run / "agents" / "dispatch.json").read_text())
+        self.assertEqual(len(dispatch["jobs"]), 2)
+        for row in dispatch["jobs"].values():
+            self.assertEqual(row["status"], "queued")
+            self.assertEqual(row["source_commit"], self.revision)
+            self.assertEqual(row["latest_result"], None)
+        bundling = json.loads(
+            (self.run / "bundles" / "manifest.json").read_text())
+        self.assertEqual(len(bundling["dispatches"][0]["bundles"]), 1)
+        bundle = self.run / bundling["dispatches"][0]["bundles"][0]["bundle"]
+        text = bundle.read_text()
+        self.assertIn(self.campaign["review_jobs"][0]["candidate_id"], text)
+        self.assertIn(self.revision, text)
+        self.assertIn("captured-http", text)
+        self.assertNotIn("PRIVATE_SECRET", text)
+        self.assertEqual(bundle.stat().st_mode & 0o777, 0o600)
+
+    def test_replica_budget_is_enforced_before_creating_bundles(self):
+        campaign = copy.deepcopy(self.campaign)
+        campaign["budget"]["max_usd_total"] = 0.20
+        with self.assertRaisesRegex(ValueError, "budget"):
+            bridge.prepare(campaign, self.run, replicas=2)
+        self.assertFalse((self.run / "bundles" / "manifest.json").exists())
+
+    def test_unchanged_pinned_git_revision_required(self):
+        campaign = copy.deepcopy(self.campaign)
+        campaign["source_revision"] = "0" * 40
+        with self.assertRaisesRegex(ValueError, "revision"):
+            bridge.prepare(campaign, self.run, replicas=2)
+
+    def test_bridge_never_overwrites_existing_dispatch(self):
+        bridge.prepare(self.campaign, self.run)
+        with self.assertRaises(ValueError):
+            bridge.prepare(self.campaign, self.run)
+
+    def test_explicit_source_snippet_opt_in_redacts_secret_like_line(self):
+        m = manifest(mark_owner_only=False)
+        m["source_revision"] = self.revision
+        m["static_analysis"] = {
+            "schema_version": 1, "mode": "web-ts-cross-file-flow",
+            "network_requests": 0, "confirmed_vulnerabilities": 0,
+            "flows": [{
+                "id": "local-flow",
+                "classification": "UNVERIFIED_STATIC_ARGUMENT_FLOW",
+                "entry": {"file": "src/routes.ts", "method": "GET",
+                          "path": "/api/v1/items"},
+                "sink": {"file": "src/service.ts", "call": "prisma.findUnique",
+                         "line": 3}
+            }]
+        }
+        campaign = hunt.execute(m, now=NOW)
+        bridge.prepare(campaign, self.run, include_source_excerpts=True)
+        manifest_path = self.run / "bundles" / "manifest.json"
+        bundle_ref = json.loads(manifest_path.read_text())[
+            "dispatches"][0]["bundles"][0]["bundle"]
+        content = (self.run / bundle_ref).read_text()
+        self.assertIn("prisma.findUnique", content)
+        self.assertIn("[REDACTED_SECRET_LIKE_LINE]", content)
+        self.assertNotIn("SECRET_SHOULD_BE_MASKED", content)
+        self.assertIn("Pinned source SHA-256:", content)
+
+    def test_empty_or_blocked_review_queue_cannot_dispatch(self):
+        campaign = copy.deepcopy(self.campaign)
+        campaign["review_jobs"] = []
+        with self.assertRaises(ValueError):
+            bridge.prepare(campaign, self.run)
+        campaign = copy.deepcopy(self.campaign)
+        campaign["program_policy"]["checks"][0]["allowed_by_saved_preflight"] = False
+        with self.assertRaises(ValueError):
+            bridge.prepare(campaign, self.run)
 
 
 if __name__ == "__main__":

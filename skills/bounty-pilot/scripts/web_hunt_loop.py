@@ -341,10 +341,17 @@ def execute(doc, run_owned_fixture=False, now=None):
     capacity = min(budget["max_review_jobs"], int(
         (budget["max_usd_total"] + 1e-9) / budget["max_usd_per_job"]))
     jobs = []
+    by_id = {c["id"]: c for c in unreviewed}
     for group in grouped["groups"][:capacity]:
+        chosen = by_id[group["preferred_review_id"]]
         jobs.append({
             "job_id": "review-" + group["group_id"],
             "candidate_id": group["preferred_review_id"],
+            "source_file": chosen["source_file"],
+            "code_anchor": chosen["code_anchor"],
+            "invariant_id": chosen["invariant_id"],
+            "trust_boundary_id": chosen["trust_boundary_id"],
+            "claimed_effect_id": chosen["claimed_effect_id"],
             "planned_max_usd": budget["max_usd_per_job"],
             "reason": "INDEPENDENT_HUMAN_OR_MODEL_REVIEW_NEEDED",
             "required_checks": [
