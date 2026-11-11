@@ -90,6 +90,42 @@ class TSGraphTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 flow._collect(root, ["../other"])
 
+    def test_parent_alias_simulating_macos_var_is_not_source_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            real = base / "private-storage"
+            root_real = real / "repo"
+            (root_real / "src").mkdir(parents=True)
+            (root_real / "src" / "normal.ts").write_text("export const value = 1;\n")
+            top_alias = base / "var-alias"
+            top_alias.symlink_to(real, target_is_directory=True)
+            root_alias = top_alias / "repo"
+            # The root itself isn't a symlink, only one of its ancestors.
+            self.assertFalse(root_alias.is_symlink())
+            found, omitted, size = flow._collect(root_alias, ["src"])
+            self.assertEqual([x["path"] for x in found], ["src/normal.ts"])
+            self.assertEqual(omitted["symlinked"], 0)
+            self.assertGreater(size, 0)
+            root_resolved = flow._root(root_alias)
+            found_again, _, _ = flow._collect(root_resolved, ["src"])
+            self.assertEqual([x["path"] for x in found_again], ["src/normal.ts"])
+
+    def test_parent_alias_preserves_in_repo_symlink_file_exclusion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            real = base / "private-storage"
+            root_real = real / "repo"
+            (root_real / "src").mkdir(parents=True)
+            (root_real / "src" / "normal.ts").write_text("export const n = 1;\n")
+            external = base / "out.ts"
+            external.write_text("outside")
+            (root_real / "src" / "link.ts").symlink_to(external)
+            top_alias = base / "var-alias"
+            top_alias.symlink_to(real, target_is_directory=True)
+            found, omitted, _ = flow._collect(top_alias / "repo", ["src"])
+            self.assertEqual([x["path"] for x in found], ["src/normal.ts"])
+            self.assertEqual(omitted["symlinked"], 1)
+
     def test_source_budget_not_silently_truncated(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

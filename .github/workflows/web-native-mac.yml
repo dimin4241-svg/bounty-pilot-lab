@@ -10,6 +10,10 @@ on:
       - 'skills/bounty-pilot/scripts/web_benchmark_regression.py'
       - 'skills/bounty-pilot/scripts/web_benchmark_readiness.py'
       - 'tests/test_web_native_toolchain.py'
+      - 'skills/bounty-pilot/scripts/web_ts_flow.py'
+      - 'tests/test_web_ts_flow.py'
+      - 'skills/bounty-pilot/SKILL.md'
+      - 'skills/bounty-pilot/references/full-workflow-legacy.md'
       - 'tests/test_web_benchmark_readiness.py'
       - 'skills/bounty-pilot/scripts/web_workflow_capture.py'
       - 'skills/bounty-pilot/scripts/web_hunt_loop.py'
@@ -52,6 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_web_native_toolchain.py' -v
+          python3 -m unittest discover -s tests -p 'test_web_ts_flow.py' -v
           python3 -m unittest discover -s tests -p 'test_web_benchmark_readiness.py' -v
           python3 -m unittest discover -s tests -p 'test_web_hunt_loop.py' -v
       - name: Run 40 pairs / 80 snapshots of real local deterministic analyzers

@@ -11,6 +11,9 @@ on:
       - 'tests/test_web_identity_nday.py'
       - 'tests/test_web_ts_ast.py'
       - 'tests/test_web_ts_flow.py'
+      - 'tests/test_web_skill_router.py'
+      - 'skills/bounty-pilot/SKILL.md'
+      - 'skills/bounty-pilot/references/full-workflow-legacy.md'
       - 'tests/test_web_http_boundary.py'
       - 'tests/test_web_bench_ab.py'
       - 'tests/test_web_phase3.py'
@@ -71,6 +74,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_web_identity_nday.py' -v
           python3 -m unittest discover -s tests -p 'test_web_ts_ast.py' -v
           python3 -m unittest discover -s tests -p 'test_web_ts_flow.py' -v
+          python3 -m unittest discover -s tests -p 'test_web_skill_router.py' -v
           python3 -m unittest discover -s tests -p 'test_web_http_boundary.py' -v
           python3 -m unittest discover -s tests -p 'test_web_bench_ab.py' -v
           python3 -m unittest discover -s tests -p 'test_web_phase3.py' -v

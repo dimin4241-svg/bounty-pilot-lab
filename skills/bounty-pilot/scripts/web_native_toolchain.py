@@ -75,15 +75,28 @@ def _file(path, *, suffix=None, root=None, max_bytes=MAX_INPUT):
             p.stat().st_size > max_bytes or (suffix and p.suffix not in suffix)):
         raise ValueError("absolute bounded non-symlink file required")
     resolved = p.resolve(strict=True)
-    if root and (resolved == root or root not in resolved.parents):
-        raise ValueError("file must be contained within owned fixture directory")
-    # Prevent dereferencing files from a symlinked intermediate directory.
     if root:
-        for ancestor in p.parents:
-            if ancestor == root:
-                break
-            if ancestor.is_symlink():
-                raise ValueError("symlink directory is forbidden")
+        # The fixture root is canonical but the caller's absolute path can
+        # pass through an OS-level alias such as macOS /var -> /private/var.
+        # Compare *resolved* ancestry for containment, while checking symlink
+        # directories only *after* entering the owned root. Reject symlink
+        # hops introduced inside that root, even when they point back inside.
+        canonical_root = Path(root).resolve(strict=True)
+        if resolved == canonical_root or canonical_root not in resolved.parents:
+            raise ValueError("file must be contained within owned fixture directory")
+        within_root = False
+        for ancestor in reversed(p.parents):
+            canonical_ancestor = ancestor.resolve(strict=True)
+            if canonical_ancestor == canonical_root:
+                if within_root and ancestor.is_symlink():
+                    raise ValueError("symlink directory is forbidden")
+                within_root = True
+            elif within_root:
+                if (ancestor.is_symlink() or
+                        canonical_root not in canonical_ancestor.parents):
+                    raise ValueError("symlink directory is forbidden")
+        if not within_root:
+            raise ValueError("file path does not traverse owned fixture root")
     return resolved
 
 
