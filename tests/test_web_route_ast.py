@@ -38,6 +38,8 @@ def mixed(id: str):
             self.assertTrue(any(x["method"] == "PATCH" for x in output["routes"]))
             self.assertTrue(any("check_permission" in x["guard_name_cues"] for x in output["routes"]))
             self.assertEqual(output["files_scanned"], 1)
+            doc_route = next(x for x in output["routes"] if x["handler"] == "service.py:doc")
+            self.assertGreaterEqual(doc_route["end_line"], doc_route["line"])
 
     def test_does_not_execute_source_code(self):
         with tempfile.TemporaryDirectory() as tmp:

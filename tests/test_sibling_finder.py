@@ -195,7 +195,9 @@ def read_order_export(order_id, actor):
         alias = Path(self.tmp.name) / 'alias.json'
         alias.symlink_to(out)
         self.assertEqual(sf.main(['--repo', str(self.repo), '--out', str(alias)]), 2)
-        self.assertEqual(alias.resolve(), out)
+        # Compare resolved-to-resolved: on macOS the tmp dir itself is a symlink
+        # (/var -> /private/var), so an unresolved `out` never equals a resolved path.
+        self.assertEqual(alias.resolve(), out.resolve())
 
     def test_requires_clean_pinned_source(self):
         write(self.repo, 'src/A.sol', 'function a() public { x = 1; }\n')

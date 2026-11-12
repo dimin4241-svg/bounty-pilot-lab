@@ -12053,6 +12053,8 @@ HELPER_COMMANDS = {
                                          'flagging a pair where only one side has an access-check cue'),
     'business-schema-bind': ('business_schema_bind', 'lexical source-anchor leads for web-business-lab '
                                                       'rules on the real target checkout'),
+    'business-route-bind': ('business_route_bind', 'joins web-route-ast routes with business-schema-bind '
+                                                    'leads into route-anchored web-business-lab rule leads'),
 }
 
 

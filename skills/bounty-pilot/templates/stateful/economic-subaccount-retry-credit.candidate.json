@@ -1,0 +1,24 @@
+{
+  "state": {
+    "trading": 100,
+    "savings": 0,
+    "transfer_applied": 0
+  },
+  "invariants": [
+    {"id": "no-value-created-or-destroyed", "kind": "conservation",
+     "terms": [{"value": {"path": "trading"}}, {"value": {"path": "savings"}}],
+     "expected": {"const": "100"},
+     "basis": "documented: a transfer between a user's own subaccounts must move value, never create or destroy it"}
+  ],
+  "actors": ["worker"],
+  "actions": [
+    {"name": "apply_transfer", "actor": "worker",
+     "guards": [{"path": "transfer_applied", "op": "eq", "value": 0}],
+     "effects": [{"op": "sub", "path": "trading", "value": 30},
+                {"op": "add", "path": "savings", "value": 30},
+                {"op": "set", "path": "transfer_applied", "value": 1}]},
+    {"name": "retry_apply_transfer", "actor": "worker",
+     "guards": [{"path": "transfer_applied", "op": "eq", "value": 1}],
+     "effects": [{"op": "add", "path": "savings", "value": 30}]}
+  ]
+}

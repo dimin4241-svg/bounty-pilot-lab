@@ -121,6 +121,7 @@ def inspect_repo(repo):
                 routes.append({
                     "method": method, "path": route,
                     "handler": rel + ":" + fn.name, "file": rel, "line": fn.lineno,
+                    "end_line": getattr(fn, "end_lineno", None) or fn.lineno,
                     "route_line": d.lineno,
                     "guard_name_cues": _guard_cues(fn, d), "call_names": calls,
                     "provenance": "PYTHON_AST_STATIC_CUES"})

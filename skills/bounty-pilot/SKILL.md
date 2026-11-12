@@ -88,13 +88,17 @@ offline invariant planning, paired-trace review, an owned synthetic
 SQLite example or a source-anchored handoff to web-root-cause-dedup. Its
 14 rules include `cross-actor-disclosure` (pure-read IDOR/BOLA, no mutation
 needed); `business-schema-bind` leads a `source_anchor` lexically instead
-of from scratch. For independently authorized owned HTTP fixtures, web-business-local-replay
+of from scratch, and `business-route-bind` anchors that same lead to the
+Python route whose handler actually contains it, with its own guard cues.
+For independently authorized owned HTTP fixtures, web-business-local-replay
 supports strictly loopback-only candidate/control action sequences with
 redacted state observations; it never reaches a third-party host. This is not a live login or payment runner; it does not
 authenticate receipts or establish production impact.
 When only a **sequence** of actions is wrong, not any single one, search
 it the way `references/web-sequence-models.md` applies `scenario_fuzz.py`
-(domain-agnostic, not Solidity-specific) to Web ATO/payment examples.
+(domain-agnostic, not Solidity-specific) to Web ATO/payment examples, or
+`references/economic-conservation-sequences.md` applies it with
+`invariant_check.py`'s `conservation` kind to a subaccount retry-credit.
 
 For **owned loopback fixtures**:
 - `web-workflow-capture` imports already saved owner/outsider HAR

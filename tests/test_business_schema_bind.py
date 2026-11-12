@@ -53,6 +53,19 @@ class BusinessSchemaBindTests(unittest.TestCase):
             self.assertIn(rule, bind_mod.RULE_KEYWORDS)
             self.assertTrue(bind_mod.RULE_KEYWORDS[rule])
 
+    def test_family_is_loaded_from_the_real_sibling_module_not_a_stale_fallback(self):
+        # Regression: a bare `from web_business_lab import RULES` silently falls back
+        # to the None-valued dict whenever this file is loaded by path from a cwd
+        # other than scripts/ (every real caller: bounty.py's dispatcher and this
+        # test suite), which would make every report's "family" field quietly None.
+        self.assertEqual(bind_mod.RULES['account-owner'][0], 'identity')
+        self.assertEqual(bind_mod.RULES['unpaid-credit'][0], 'payment')
+        self.assertEqual(bind_mod.RULES['cross-actor-disclosure'][0], 'disclosure')
+        write(self.repo, 'app/a.py', 'x = 1\n')
+        self.commit()
+        report = bind_mod.bind(str(self.repo), rules=['account-owner'])
+        self.assertEqual(report['rules'][0]['family'], 'identity')
+
     def test_hit_and_miss_classification(self):
         write(self.repo, 'app/models.py',
              'def revoke_session(user):\n    user.session_active = False\n')
