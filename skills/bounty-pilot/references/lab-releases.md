@@ -12,7 +12,8 @@ mechanized by `web-ts-flow`, which seeds every function - not only route
 handlers, since a browser-side component is normally never called from a
 server route - with a fixed DOM-source identifier set and traces it to those
 sinks as `DOM_XSS_CANDIDATE_FLOW`, with any sanitizer call name in the chain
-surfaced as a cue, never a clearance. A request parameter reaching
+surfaced as a cue, never a clearance. Navigation and cookie-write flows use
+separate non-XSS classifications. A request parameter reaching
 `eval`/`new Function` is reported separately as
 `SYNTACTIC_REQUEST_ARGUMENT_TO_CODE_EVALUATION` (server-side code injection,
 not DOM XSS). `url-scheme-guard-check` parses candidate URLs with real urllib
