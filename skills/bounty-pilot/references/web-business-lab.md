@@ -180,9 +180,72 @@ in-memory app and run the same 13 against a corrected app. They are paired
 synthetic bug/fix patterns, NOT 13 discovered or independently proven
 production vulnerabilities.
 
+## Opt-in native multi-step HTTP replay (owned loopback only)
+
+The new web-business-local-replay helper can execute reviewed POST actions
+against an **already running, researcher-owned test application** on exact
+http://127.0.0.1:PORT. It is not a target scanner and MUST NOT be forwarded
+or exposed to a third-party production host.
+
+~~~sh
+python3 "$BP" web-business-local-replay \
+  --plan /private/loopback-business-plan.json \
+  --out /private/validated.json
+
+# Only after separately confirming a disposable local test server and fake actors.
+python3 "$BP" web-business-local-replay \
+  --plan /private/loopback-business-plan.json \
+  --out /private/actual-local-trace.json --execute
+
+python3 "$BP" web-business-lab analyze \
+  --input /private/actual-local-trace.json \
+  --out /private/local-invariants.json
+~~~
+
+Plan requirements: schema_version 1, attestation
+"I_CONTROL_THIS_LOCAL_FIXTURE", source_revision with 40 hex characters,
+origin as canonical http://127.0.0.1:PORT, test_actors as two to four distinct
+names referencing unique BP_LOCAL_... bearer environment variables, and 1..8
+cases. Each case has id, rule, invariant_basis, and 2..5 rounds of
+candidate/control objects with **unique and isolated state paths**.
+
+Each role/round has a state_path, state_actor and 1..6 ordered steps.
+Each step has path, actor, subject, kind, payload, payment_event_ref
+and refund_event_ref (nullable). Only bounded, non-secret JSON scalars are
+accepted in the payload; no password, card data, cookies or OAuth secrets.
+For credit/refund steps, the submitted fixture event reference must match
+the observed reference. The local state endpoint returns JSON with
+numeric fields such as available_cents, credential_version, refunded_cents,
+and a boolean entitlement_active. Local POST actions return a JSON object
+containing facts with explicitly named boolean fields.
+
+Example single step inside an operator-provided candidate section:
+
+~~~json
+{
+  "path": "/r1/c/credit",
+  "actor": "outsider",
+  "subject": "owner",
+  "kind": "credit",
+  "payload": {"operation": "credit",
+              "payment_event_ref": "fake-psp-event-1"},
+  "payment_event_ref": "fake-psp-event-1",
+  "refund_event_ref": null
+}
+~~~
+
+This is NOT a complete plan: add a matching control from the same starting
+state, plus a second independent candidate/control round, per the schema in
+tests/test_web_business_local_replay.py. The helper captures state before and
+after each POST, computes local transcript digests, and produces the exact
+observation schema accepted by web-business-lab analyze. It sends no browser,
+DNS, proxy, redirect or real payment requests and does not persist actor
+tokens. Local facts and source/permission assertions still require native
+independent review.
+
 ## Known limitations
 
-No full live ATO browser runner, real JWT/OAuth cryptography, PSP adapter
+No full live ATO browser runner, real JWT/OAuth cryptography, real PSP adapter
 or signed webhook verification, real async/race execution, third-party
 payment interaction, production mutations, external account access, or
 native proof authentication is implemented here. The tool does not know
