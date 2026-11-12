@@ -18,6 +18,19 @@
 
 ---
 
+## 0.59.0 — route anchors and conservation sequences
+
+New `business-route-bind` joins the route/handler graph with `business-schema-bind`'s
+lexical leads, so a lead is anchored to a specific route with that route's own
+guard cues, not a bare line match. New
+[conservation-sequence guide](skills/bounty-pilot/references/economic-conservation-sequences.md)
+combines `scenario_fuzz` with `invariant_check`'s existing conservation rule
+to find a two-subaccount retry-credit sequence that no single action
+shows alone. This is a synthetic conservation failure, not a reproduction
+of the distinct Balancer, Cetus, or Arcus root causes. Also fixed a real bug from 0.58.0:
+`business-schema-bind`'s `family` field was silently always `None` in actual
+use due to a fragile cross-import.
+
 ## 0.58.0 — access and money blind spots: disclosure, sequences, siblings, anchors
 
 web-business-lab's 13 rules become 14 with `cross-actor-disclosure`, the

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.59.0 — route anchors and conservation sequences
+
+- New `business-route-bind` (`business_route_bind.py`): joins `web-route-ast`'s
+  route/handler/call-name graph with `business-schema-bind`'s lexical rule
+  leads, by handler function. A lead is now anchored to a specific route and
+  carries that route's own apparent guard cues, instead of a bare file:line
+  match with no route context. Neither input tool is duplicated: `web_route_ast.py`
+  gained one small additive field (`end_line`, from the AST it already builds)
+  so the join can tell whether a hit falls inside a given handler's body;
+  `business_schema_bind.py`'s own lexical scan is reused unchanged.
+- New `references/economic-conservation-sequences.md` with a paired,
+  test-locked `scenario_fuzz` model: the engine's bounded BFS combined with
+  `invariant_check.py`'s existing `conservation` rule kind, for the first
+  time, finds a two-subaccount retry-credit sequence (the Balancer V2/Cetus/
+  Arcus Perps shape: a reflected balance grows across accounts without
+  matching assets) that no single action or static snapshot check shows.
+- Fixed a real bug in 0.58.0's `business_schema_bind.py`: its cross-import of
+  `web_business_lab.RULES` used a bare `from web_business_lab import RULES`,
+  which silently falls back to a stale, family-less placeholder dict whenever
+  the module is loaded by file path from a cwd other than scripts/ — true of
+  every real caller, including bounty.py's own dispatcher and the test suite.
+  Every report's `family` field was quietly `None` in actual use. Now loaded
+  by path explicitly, with a regression test locking in the real value.
+
 ## 0.58.0 — access/money blind spots: disclosure, sequences, siblings, anchors
 
 - `web-business-lab` gains a 14th rule, `cross-actor-disclosure`: the pure-read

@@ -28,17 +28,22 @@ MAX_FILE = 200_000
 MAX_HITS_PER_TERM = 8
 MAX_HITS_PER_RULE = 25
 
-try:
-    from web_business_lab import RULES
-except ImportError:
-    # Standalone invocation from the Bounty Pilot dynamic CLI loader.
-    RULES = {
-        x: None for x in (
-            "account-owner", "mfa-gate", "session-revocation", "reset-one-use",
-            "oauth-binding", "email-verification", "unpaid-credit", "event-replay",
-            "webhook-binding", "refund-replay", "subscription-entitlement",
-            "cancellation-stale", "cross-tenant-credit", "cross-actor-disclosure")
-    }
+def _load_sibling(name):
+    """Load a script from this same directory regardless of the caller's cwd or
+    sys.path. A bare `from X import Y` here silently falls back on any import
+    error, including the common case of this file being loaded by path (as
+    bounty.py's dispatcher and the test suite both do) from a different cwd."""
+    import importlib.util
+    path = Path(__file__).resolve().with_name(name + ".py")
+    spec = importlib.util.spec_from_file_location("bp_business_schema_bind_" + name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Fail closed if the sibling analyzer is unavailable or broken; silently
+# substituting family=None masks an actual integration failure.
+RULES = _load_sibling("web_business_lab").RULES
 
 # One researcher-curated term list per rule; every term is lexical only, never a
 # claim that matching code exists, enforces the rule or compiles.

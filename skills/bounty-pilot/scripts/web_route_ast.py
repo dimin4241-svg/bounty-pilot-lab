@@ -38,12 +38,28 @@ def _strings(node):
     return None
 
 
-def _paths(repo):
+def _paths(repo, allowed_files=None):
     root = Path(repo).resolve()
     if not root.is_dir() or root.is_symlink():
         raise ValueError("repo must be a real local source directory")
+    if allowed_files is None:
+        candidates = root.rglob("*.py")
+    else:
+        # An explicitly pinned caller can supply tracked, in-scope files.
+        # Do not traverse unrelated files or untracked sources first.
+        if len(allowed_files) > 30000:
+            raise ValueError("allowed file inventory exceeds safety cap")
+        candidates = []
+        for relative in allowed_files:
+            if not isinstance(relative, str) or "\\" in relative or "\x00" in relative:
+                raise ValueError("invalid allowed file path")
+            part = Path(relative)
+            if part.is_absolute() or ".." in part.parts or not part.parts:
+                raise ValueError("allowed file path must stay inside checkout")
+            if part.suffix == ".py":
+                candidates.append(root / part)
     entries = []
-    for path in root.rglob("*.py"):
+    for path in candidates:
         if any(p in SKIP for p in path.relative_to(root).parts):
             continue
         if path.is_symlink() or any(p.is_symlink() for p in path.parents if p != root):
@@ -91,8 +107,8 @@ def _guard_cues(fn, deco):
     return sorted({n for n in names if n and GUARD_HINT.search(n)})[:30]
 
 
-def inspect_repo(repo):
-    root, files = _paths(repo)
+def inspect_repo(repo, allowed_files=None):
+    root, files = _paths(repo, allowed_files)
     routes = []
     errors = []
     scanned = 0
@@ -121,6 +137,7 @@ def inspect_repo(repo):
                 routes.append({
                     "method": method, "path": route,
                     "handler": rel + ":" + fn.name, "file": rel, "line": fn.lineno,
+                    "end_line": getattr(fn, "end_lineno", None) or fn.lineno,
                     "route_line": d.lineno,
                     "guard_name_cues": _guard_cues(fn, d), "call_names": calls,
                     "provenance": "PYTHON_AST_STATIC_CUES"})

@@ -4,6 +4,23 @@ The release-by-release guidance for the optional lab tools, moved out of `SKILL.
 workflow reads first. `SKILL.md` keeps an index; read the section for a tool before running it.
 Every rule here still applies: nothing below is weaker for living in a reference file.
 
+### Experimental Lab 0.59.0 — route anchors and conservation sequences
+
+`business-route-bind` joins `web-route-ast`'s route/handler/call-name graph
+with `business-schema-bind`'s lexical leads, by handler function: a lead now
+names the route and its own guard cues, not just a bare line match. Neither
+input tool is duplicated; `web-route-ast` gained one additive `end_line`
+field so the join can tell whether a hit actually falls inside a given
+handler's body. Read `references/economic-conservation-sequences.md`: a
+paired, test-locked `scenario_fuzz` model combines the engine's bounded BFS
+with `invariant_check.py`'s existing `conservation` rule kind for the first
+time, finding a two-subaccount retry-credit sequence (the Balancer/Cetus/
+Arcus shape) that no single action or static snapshot check shows alone.
+Also fixed: `business-schema-bind`'s cross-import of `web_business_lab.RULES`
+silently fell back to a stale, family-less dict whenever loaded by path from
+a cwd other than scripts/ — true of every real caller, including bounty.py's
+own dispatcher — so every report's `family` field was quietly `None`.
+
 ### Experimental Lab 0.58.0 — access/money blind spots
 
 Read `references/web-business-lab.md`: a 14th rule, `cross-actor-disclosure`,
