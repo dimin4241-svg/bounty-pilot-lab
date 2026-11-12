@@ -41,6 +41,17 @@ def mixed(id: str):
             doc_route = next(x for x in output["routes"] if x["handler"] == "service.py:doc")
             self.assertGreaterEqual(doc_route["end_line"], doc_route["line"])
 
+    def test_exact_file_allowlist_excludes_untracked_and_rejects_traversal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "allowed.py").write_text(
+                "@app.get('/allowed')\ndef allowed(): return True\n")
+            (Path(tmp) / "untracked.py").write_text(
+                "@app.get('/untracked')\ndef untracked(): return True\n")
+            report = mod.inspect_repo(tmp, allowed_files={"allowed.py"})
+            self.assertEqual([row["path"] for row in report["routes"]], ["/allowed"])
+            with self.assertRaisesRegex(ValueError, "inside checkout"):
+                mod.inspect_repo(tmp, allowed_files={"../outside.py"})
+
     def test_does_not_execute_source_code(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "code.py"
