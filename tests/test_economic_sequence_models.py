@@ -36,6 +36,9 @@ class EconomicSequenceModelTests(unittest.TestCase):
     def test_subaccount_retry_credit_pair(self):
         candidate = read('economic-subaccount-retry-credit.candidate.json')
         control = read('economic-subaccount-retry-credit.control.json')
+        # The negative control must start from the *same* entire state, not
+        # quietly benefit from an extra state field only present in the fix.
+        self.assertEqual(candidate["state"], control["state"])
         bad = fuzz.explore(candidate, depth=4)
         good = fuzz.explore(control, depth=4)
         self.assertEqual(bad['status'], 'model-counterexample')
