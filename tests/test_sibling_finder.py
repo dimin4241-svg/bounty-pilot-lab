@@ -164,6 +164,56 @@ def read_order_export(order_id, actor):
         for lead in report['leads']:
             self.assertNotIn('Untracked.sol', (lead['a']['path'], lead['b']['path']))
 
+    def test_large_bucket_is_bounded_before_generating_pairs(self):
+        # Previously this allocated ~8 million tuples before taking a small slice.
+        # The bounded generator must compare only the first 60 functions.
+        functions = [{
+            "path": "src/%04d.sol" % i, "name": "f%d" % i, "line": 1,
+            "tokens": ["ID", "(", "ID", ")", "{", "ID", "=", "ID", ";", "}"],
+            "cues": set(), "body_sha256": "a" * 64,
+        } for i in range(4000)]
+        leads, truncated, bucket_caps, comparisons = sf.find_siblings(functions, 1.0)
+        self.assertEqual(comparisons, 60 * 59 // 2)
+        self.assertGreater(bucket_caps, 0)
+        self.assertTrue(truncated)
+        self.assertEqual(len(leads), sf.MAX_LEADS)
+
+    def test_oversized_function_skipped_and_reported(self):
+        long_body = "function big() public { " + ("x = y; " * 600) + "}"
+        write(self.repo, 'src/Large.sol', long_body + "\n")
+        self.commit()
+        report = sf.run(str(self.repo))
+        self.assertEqual(report["functions_scanned"], 0)
+        self.assertEqual(report["overlong_functions_skipped"], 1)
+
+    def test_private_output_and_symlink_are_fail_closed(self):
+        write(self.repo, 'src/A.sol', 'function a() public onlyOwner { x = 1; }\n')
+        self.commit()
+        out = Path(self.tmp.name) / 'private.json'
+        self.assertEqual(sf.main(['--repo', str(self.repo), '--out', str(out)]), 0)
+        self.assertEqual(out.stat().st_mode & 0o777, 0o600)
+        alias = Path(self.tmp.name) / 'alias.json'
+        alias.symlink_to(out)
+        self.assertEqual(sf.main(['--repo', str(self.repo), '--out', str(alias)]), 2)
+        self.assertEqual(alias.resolve(), out)
+
+    def test_requires_clean_pinned_source(self):
+        write(self.repo, 'src/A.sol', 'function a() public { x = 1; }\n')
+        self.commit()
+        report = sf.run(str(self.repo))
+        actual = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(report['source_revision'], actual)
+        write(self.repo, 'src/A.sol', 'function a() public { x = 2; }\n')
+        with self.assertRaisesRegex(ValueError, 'modified'):
+            sf.run(str(self.repo))
+
+    def test_scope_traversal_rejected(self):
+        write(self.repo, 'src/A.sol', 'function a() public { x = 1; }\n')
+        self.commit()
+        with self.assertRaisesRegex(ValueError, 'traversal'):
+            sf.run(str(self.repo), scope=['../src'])
+
     def test_min_ratio_is_bounded(self):
         write(self.repo, 'src/A.sol', 'function a() public {}\n')
         self.commit()
