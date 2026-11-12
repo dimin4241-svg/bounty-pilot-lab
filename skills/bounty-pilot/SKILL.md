@@ -81,8 +81,8 @@ Read `references/web-hunt-loop-phase5.md` and
 For **account takeover, identity lifecycle, balances, payments, refunds,
 subscriptions and multi-step business logic**, read
 references/web-business-lab.md. Run web-business-lab plan/analyze/demo for
-offline invariant planning, paired-trace review or an owned synthetic
-SQLite example. This is not a live login or payment runner; it does not
+offline invariant planning, paired-trace review, an owned synthetic
+SQLite example or a source-anchored handoff to web-root-cause-dedup. This is not a live login or payment runner; it does not
 authenticate receipts or establish production impact.
 
 For **owned loopback fixtures**:
