@@ -43,6 +43,33 @@ class BusinessLabTests(unittest.TestCase):
         self.assertTrue(all(row["classification"] == "NO_OBSERVED_VIOLATION"
                             for row in report["cases"]))
 
+    def test_fake_psp_signature_finality_and_ledger_are_independent(self):
+        app = fixture.LocalApp(defective=False)
+        try:
+            initial = app.snapshot()
+            app.credit("pending-1", confirmed=False)
+            self.assertEqual(app.snapshot(), initial)
+            app.credit("tampered-1", confirmed=True, bound=False)
+            self.assertEqual(app.snapshot(), initial)
+            app.credit("paid-1", confirmed=True)
+            self.assertEqual(app.snapshot()["available_cents"], 10500)
+            self.assertEqual(app.snapshot()["ledger_credited_cents"], 500)
+            app.credit("paid-1", confirmed=True)
+            self.assertEqual(app.snapshot()["available_cents"], 10500)
+            self.assertEqual(app.snapshot()["ledger_credited_cents"], 500)
+            self.assertFalse(app.psp.callback("tampered-1",
+                                            tampered=True)["signature_valid"])
+        finally:
+            app.close()
+        buggy = fixture.LocalApp(defective=True)
+        try:
+            facts = buggy.credit("unpaid-1", confirmed=False)
+            self.assertIs(facts["psp_confirmed"], False)
+            self.assertEqual(buggy.snapshot()["ledger_credited_cents"], 500)
+        finally:
+            buggy.close()
+
+
     def test_scenarios_are_deterministic_and_use_actual_database_snapshots(self):
         a = fixture.generate(defective=True)
         b = fixture.generate(defective=True)
