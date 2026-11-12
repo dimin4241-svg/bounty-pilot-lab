@@ -8,10 +8,11 @@ reference or fixture ever actually exercised `conservation` through a
 multi-step sequence search; `tests/test_stateful.py`'s own conservation
 example only checks one static snapshot.
 
-This matters because the real-world lesson from Balancer V2, Cetus and
-Arcus-class incidents is the same shape every time: an operation passes every
-individual check, but the *sequence* lets the sum of what the system now
-*reflects* across accounts/ledgers diverge from what was actually deposited.
+This example tests a conservation failure shared in broad economic impact
+with incidents involving rounding, overflow and account ledger inconsistencies.
+Those incidents have different technical root causes; this synthetic retry-credit
+model is **not** a reproduction of Balancer, Cetus or Arcus. It isolates only
+the idempotency and accounting consistency failure.
 A single-snapshot check can confirm a conservation violation once you already
 have the bad snapshot; it cannot *find* the sequence that produces one.
 
@@ -63,9 +64,9 @@ state, not a proven source-level cause (`intent-mutation-phase6.md`).
    place to look for which direction a given protocol is supposed to round.
 3. Model at least two subaccounts, markets or ledgers, and at least one
    action whose guard is the *only* thing standing between "idempotent" and
-   "replayable" — that gap is where every incident in this class actually
-   lived (Balancer's repeated-operation rounding drift, Arcus's subaccount
-   transfer accounting, Cetus's dependency-level overflow check).
+   "replayable" — this is one possible failure mode in replayable financial workflows.
+   Rounding drift and dependency-level overflow require different native
+   models; do not infer them from this retry-credit fixture.
 4. Confirm depth-1 alone finds nothing, the same way the ATO and payment
    examples in `web-sequence-models.md` do — a single action tripping the
    invariant means the model is wrong, not that the sequence claim is real.
