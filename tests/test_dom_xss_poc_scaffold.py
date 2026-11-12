@@ -29,6 +29,7 @@ class DomXssPocScaffoldTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 out = Path(tmp) / 'scaffold'
                 result = scaffold_mod.scaffold(sink, 'file.tsx:Comp:12', str(out))
+                self.assertEqual(out.stat().st_mode & 0o777, 0o700)
                 self.assertEqual(result['sink'], sink)
                 self.assertFalse(result['executed_in_a_browser_by_this_tool'])
                 for name in ('candidate.html', 'control.html', 'README.md'):
