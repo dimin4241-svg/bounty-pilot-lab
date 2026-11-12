@@ -12055,6 +12055,10 @@ HELPER_COMMANDS = {
                                                       'rules on the real target checkout'),
     'business-route-bind': ('business_route_bind', 'joins web-route-ast routes with business-schema-bind '
                                                     'leads into route-anchored web-business-lab rule leads'),
+    'url-scheme-guard-check': ('url_scheme_guard_check', 'real urllib + WHATWG URL parse of '
+                                                          'candidate URLs for the javascript:// hostname-check bypass shape'),
+    'dom-xss-poc-scaffold': ('dom_xss_poc_scaffold', 'local static candidate/control HTML pair '
+                                                      'demonstrating a DOM sink execution mechanism'),
 }
 
 

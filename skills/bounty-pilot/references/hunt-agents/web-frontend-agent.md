@@ -37,6 +37,18 @@ from a missing function name. More detail:
    `eval`, `new Function`, string `setTimeout`, `location`/`href` assignment, `window.open`,
    `postMessage` handlers with no origin check, and any markdown or HTML renderer (check whether its
    sanitizer is overridden — a library default in the bundle is not an override; read the call sites).
+   When saved source is available, `bounty.py web-ts-flow` now traces these DOM sinks the same way it
+   already traces backend ones: it seeds every function with a fixed DOM-source identifier set
+   (`location`, `document.referrer`, `localStorage`, `sessionStorage`, `document.cookie`) and reports
+   `DOM_XSS_CANDIDATE_FLOW` leads with any sanitizer call name seen in the chain as a cue — never a
+   clearance. Untrusted navigation and cookie writes get distinct non-XSS classes,
+   `UNTRUSTED_NAVIGATION_CANDIDATE_FLOW` and `UNTRUSTED_COOKIE_WRITE_CANDIDATE_FLOW`.
+   It is still a syntactic, flow-insensitive leads list, not a taint proof; read the call
+   chain yourself. `eval`/`new Function` fed by a backend request parameter instead is reported
+   separately, as `SYNTACTIC_REQUEST_ARGUMENT_TO_CODE_EVALUATION` (server-side code injection, not DOM
+   XSS). To demonstrate a sink mechanism locally, `bounty.py dom-xss-poc-scaffold --sink <kind>
+   --anchor <lead>` writes a static candidate/control HTML pair to open yourself, offline, in a
+   disposable profile — it has not been run in a browser by the generator, only by you.
 4. **Then the wallet sinks, which are the ones that pay.** `sendTransaction`, `writeContract`,
    `signTypedData`, `eth_sendTransaction`, `approve`, `permit`. The question that settles most dApp
    hunts in one grep: **does any URL query parameter, hash fragment or stored value set a transaction
@@ -52,8 +64,11 @@ from a missing function name. More detail:
    the classic dApp link-guard bug, and `new URL()` is where you settle it. `javascript://host/%0a…`
    parses with `protocol = "javascript:"` and `hostname = "host"`, so a check on hostname alone passes
    it; a bare `javascript:alert(1)` has an empty hostname and is blocked. A guard comparing only the
-   last two labels also trusts every subdomain. Build the little table of inputs versus verdicts — it
-   costs one local script and it is evidence.
+   last two labels also trusts every subdomain. Build the little table of inputs versus verdicts —
+   `bounty.py url-scheme-guard-check --input candidates.json` does exactly that, parsing each candidate
+   with both `urllib` and real Node WHATWG `URL` and flagging a dangerous protocol that still carries a
+   hostname; it never claims the target's own guard is bypassed, only reports what each URL actually
+   parses to in both models so you can compare it against the guard code yourself.
 7. **Treat remote config as an untrusted input and then check who owns it.** dApps pull token lists,
    banner and ads config, partner links, hook or market registries. Trace each to a sink. But be strict
    about the attacker model: if every such origin is the project's own infrastructure, there is no

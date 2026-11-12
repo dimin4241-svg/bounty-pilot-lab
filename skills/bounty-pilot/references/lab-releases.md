@@ -4,6 +4,25 @@ The release-by-release guidance for the optional lab tools, moved out of `SKILL.
 workflow reads first. `SKILL.md` keeps an index; read the section for a tool before running it.
 Every rule here still applies: nothing below is weaker for living in a reference file.
 
+### Experimental Lab 0.60.0 — DOM-XSS tracing, scheme-guard check, proof scaffold
+
+Read `references/hunt-agents/web-frontend-agent.md`: its sink inventory step
+(innerHTML, dangerouslySetInnerHTML, document.write, eval, new Function) is now
+mechanized by `web-ts-flow`, which seeds every function - not only route
+handlers, since a browser-side component is normally never called from a
+server route - with a fixed DOM-source identifier set and traces it to those
+sinks as `DOM_XSS_CANDIDATE_FLOW`, with any sanitizer call name in the chain
+surfaced as a cue, never a clearance. Navigation and cookie-write flows use
+separate non-XSS classifications. A request parameter reaching
+`eval`/`new Function` is reported separately as
+`SYNTACTIC_REQUEST_ARGUMENT_TO_CODE_EVALUATION` (server-side code injection,
+not DOM XSS). `url-scheme-guard-check` parses candidate URLs with real urllib
+and Node WHATWG `URL` for the `javascript://host/%0a...` hostname-check bypass
+shape the doc's URL-guard step already describes. `dom-xss-poc-scaffold`
+writes a local static candidate/control HTML pair demonstrating a sink's
+execution mechanism, for the researcher to open themselves offline; it is not
+executed by the generator, which has no browser available to it.
+
 ### Experimental Lab 0.59.0 — route anchors and conservation sequences
 
 `business-route-bind` joins `web-route-ast`'s route/handler/call-name graph

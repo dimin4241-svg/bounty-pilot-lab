@@ -42,6 +42,23 @@ def index_fixture(inject=True):
     ]}
 
 
+def dom_index_fixture(sourced=True, sanitized=False):
+    q_from = ["URLSearchParams", "get", "location", "search"] if sourced else ["props"]
+    calls = [{"callee": "dangerouslySetInnerHTML", "line": 4, "args": [["q"]]}]
+    if sanitized:
+        calls.insert(0, {"callee": "DOMPurify.sanitize", "line": 3, "args": [["q"]]})
+    return {"schema_version": 1, "files": [
+        {"path": "web/Banner.tsx", "imports": [], "routes": [], "parse_diagnostics": 0,
+         "functions": [{"name": "Banner", "line": 2, "params": [], "exported": True,
+                        "aliases": [{"name": "q", "from": q_from}], "calls": calls}]},
+        {"path": "web/Safe.tsx", "imports": [], "routes": [], "parse_diagnostics": 0,
+         "functions": [{"name": "Safe", "line": 10, "params": ["el", "trusted"],
+                        "exported": True, "aliases": [],
+                        "calls": [{"callee": "el.innerHTML", "line": 11,
+                                  "args": [["trusted"]]}]}]},
+    ]}
+
+
 class TSGraphTests(unittest.TestCase):
     def test_cross_file_import_alias_and_argument_to_sink(self):
         out = flow.analyze_index(index_fixture(), "0" * 64, 300, {})
@@ -58,6 +75,89 @@ class TSGraphTests(unittest.TestCase):
     def test_literal_instead_of_input_has_no_flow(self):
         out = flow.analyze_index(index_fixture(False), "0" * 64, 300, {})
         self.assertEqual(out["flows"], [])
+
+    def test_dom_source_reaching_dangerously_set_inner_html_is_flagged(self):
+        out = flow.analyze_index(dom_index_fixture(), "0" * 64, 300, {})
+        dom = [f for f in out["flows"] if f["kind"] == "DOM_XSS_CANDIDATE_FLOW"]
+        self.assertEqual(len(dom), 1)
+        self.assertEqual(dom[0]["sink"]["call"], "dangerouslySetInnerHTML")
+        self.assertEqual(dom[0]["sink"]["function"], "Banner")
+        self.assertEqual(dom[0]["sanitizer_name_cues"], [])
+
+    def test_unrelated_parameter_into_inner_html_is_not_flagged(self):
+        # `Safe.tsx` writes `el.innerHTML = trusted`, where `trusted` is an ordinary
+        # parameter unrelated to any DOM source identifier - must never be flagged.
+        out = flow.analyze_index(dom_index_fixture(sourced=False), "0" * 64, 300, {})
+        self.assertEqual([f for f in out["flows"] if f["kind"] == "DOM_XSS_CANDIDATE_FLOW"], [])
+
+    def test_sanitizer_call_in_chain_is_recorded_as_a_cue_not_a_clearance(self):
+        out = flow.analyze_index(dom_index_fixture(sanitized=True), "0" * 64, 300, {})
+        dom = [f for f in out["flows"] if f["kind"] == "DOM_XSS_CANDIDATE_FLOW"]
+        self.assertEqual(len(dom), 1)
+        self.assertEqual(dom[0]["sanitizer_name_cues"], ["DOMPurify.sanitize"])
+        self.assertEqual(dom[0]["classification"], "UNVERIFIED_STATIC_ARGUMENT_FLOW")
+
+    def test_cross_file_sanitizer_cue_is_propagated_without_marking_safe(self):
+        index = {"schema_version": 1, "files": [
+            {"path": "web/App.ts", "imports": [
+                {"specifier": "./render", "names": [
+                    {"local": "renderUnsafe", "exported": "renderUnsafe"}]}],
+             "routes": [], "parse_diagnostics": 0,
+             "functions": [{"name": "App", "line": 1, "params": [], "exported": True,
+                            "aliases": [{"name": "value",
+                                         "from": ["location", "search"]}],
+                            "calls": [{"callee": "DOMPurify.sanitize", "line": 3,
+                                       "args": [["value"]]},
+                                      {"callee": "renderUnsafe", "line": 4,
+                                       "args": [["value"]]}]}]},
+            {"path": "web/render.ts", "imports": [], "routes": [],
+             "parse_diagnostics": 0,
+             "functions": [{"name": "renderUnsafe", "line": 1, "params": ["html"],
+                            "exported": True, "aliases": [],
+                            "calls": [{"callee": "node.innerHTML", "line": 2,
+                                       "args": [["html"]]}]}]}]}
+        report = flow.analyze_index(index, "0" * 64, 100, {})
+        dom = [row for row in report["flows"]
+               if row["kind"] == "DOM_XSS_CANDIDATE_FLOW"]
+        self.assertEqual(len(dom), 1)
+        self.assertTrue(dom[0]["cross_file"])
+        self.assertIn("DOMPurify.sanitize", dom[0]["sanitizer_name_cues"])
+        self.assertEqual(dom[0]["classification"], "UNVERIFIED_STATIC_ARGUMENT_FLOW")
+
+    def test_navigation_and_cookie_writes_are_not_mislabeled_as_xss(self):
+        index = {"schema_version": 1, "files": [{
+            "path": "web/Links.ts", "imports": [], "routes": [], "parse_diagnostics": 0,
+            "functions": [{"name": "render", "line": 1, "params": [], "exported": True,
+                           "aliases": [{"name": "untrusted", "from": ["location", "search"]}],
+                           "calls": [
+                               {"callee": "location.href", "line": 3,
+                                "args": [["untrusted"]]},
+                               {"callee": "document.cookie", "line": 4,
+                                "args": [["untrusted"]]},
+                               {"callee": "document.write", "line": 5,
+                                "args": [["untrusted"]]}]}]}]}
+        report = flow.analyze_index(index, "0" * 64, 100, {})
+        kinds = {row["sink"]["call"]: row["kind"] for row in report["flows"]}
+        self.assertEqual(kinds["location.href"], "UNTRUSTED_NAVIGATION_CANDIDATE_FLOW")
+        self.assertEqual(kinds["document.cookie"], "UNTRUSTED_COOKIE_WRITE_CANDIDATE_FLOW")
+        self.assertEqual(kinds["document.write"], "DOM_XSS_CANDIDATE_FLOW")
+        self.assertEqual(report["confirmed_vulnerabilities"], 0)
+
+    def test_request_argument_into_eval_is_its_own_classification(self):
+        fixture = index_fixture()
+        fixture["files"][1]["functions"][0]["calls"] = [
+            {"callee": "runUserCode", "line": 10, "args": [["req", "params", "id"]]}]
+        fixture["files"].append({
+            "path": "api/run.ts", "imports": [], "routes": [], "parse_diagnostics": 0,
+            "functions": [{"name": "runUserCode", "line": 1, "params": ["code"],
+                           "exported": True, "aliases": [],
+                           "calls": [{"callee": "Function", "line": 2, "args": [["code"]]}]}]})
+        fixture["files"][1]["imports"].append(
+            {"specifier": "./run", "names": [{"local": "runUserCode", "exported": "runUserCode"}]})
+        out = flow.analyze_index(fixture, "0" * 64, 300, {})
+        kinds = {f["kind"] for f in out["flows"]}
+        self.assertIn("SYNTACTIC_REQUEST_ARGUMENT_TO_CODE_EVALUATION", kinds)
+        self.assertNotIn("DOM_XSS_CANDIDATE_FLOW", kinds)
 
     def test_unresolved_handler_never_converted_to_a_finding(self):
         fixture = index_fixture()
@@ -178,6 +278,49 @@ export async function findInvoice(id: string) {
             self.assertEqual(len(result["flows"]), 1)
             self.assertEqual(result["flows"][0]["sink"]["call"], "db.invoice.findUnique")
             self.assertTrue(result["flows"][0]["cross_file"])
+
+    @unittest.skipUnless(os.getenv("BP_TYPESCRIPT_PARSER"),
+                         "optional pinned local TypeScript compiler unavailable")
+    def test_real_typescript_parser_dom_xss_fixture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            web = root / "web"
+            web.mkdir()
+            (web / "Banner.tsx").write_text('''
+function Banner() {
+  const q = new URLSearchParams(location.search).get("msg");
+  return <div dangerouslySetInnerHTML={{__html: q}} />;
+}
+function Widget(el: any) {
+  const h = location.hash;
+  el.innerHTML = h;
+}
+function Safe(el: any, trusted: string) {
+  el.innerHTML = trusted;
+}
+function evalLike(code: string) {
+  const f = new Function(code);
+  return f();
+}
+''')
+            (web / "Busy.tsx").write_text(
+                "function Busy(el: any) {\n  const obj: any = {};\n" +
+                "".join("  obj.field%d = %d;\n" % (i, i) for i in range(180)) +
+                "  const msg = location.hash;\n  el.innerHTML = msg;\n}\n")
+            parser = Path(os.environ["BP_TYPESCRIPT_PARSER"])
+            sha = hashlib.sha256(parser.read_bytes()).hexdigest()
+            result = flow.inspect(root, parser, sha)
+            self.assertEqual(result["parse_problems"], [])
+            dom = {f["sink"]["function"]: f for f in result["flows"]
+                  if f["kind"] == "DOM_XSS_CANDIDATE_FLOW"}
+            self.assertEqual(set(dom), {"Banner", "Widget", "Busy"})
+            self.assertEqual(dom["Banner"]["sink"]["call"], "dangerouslySetInnerHTML")
+            self.assertEqual(dom["Widget"]["sink"]["call"], "el.innerHTML")
+            self.assertEqual(dom["Busy"]["sink"]["call"], "el.innerHTML")
+            self.assertNotIn("Safe", {f["sink"]["function"] for f in result["flows"]})
+            # evalLike's `code` is an ordinary parameter, not a DOM source and not reached
+            # from any route in this fixture, so `new Function(code)` is correctly silent here.
+            self.assertNotIn("evalLike", {f["sink"]["function"] for f in result["flows"]})
 
     def test_child_parser_receives_fixed_tool_path_and_no_credentials(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -37,6 +37,45 @@ SINK = re.compile(
 SINK_ROOT = re.compile(r"^(db|prisma|repository|repo|store|stripe|billing|payment|queue)\.", re.I)
 SOURCE_PARAMS = frozenset(("req", "request", "context", "ctx", "event", "payload", "input", "body"))
 
+# DOM sinks. innerHTML/outerHTML/dangerouslySetInnerHTML are distinctive property names in their
+# own right (an object literally named `.innerHTML` is almost never anything else), so they match
+# regardless of what the receiver expression is - a DOM element is referenced through an arbitrary
+# local variable name, unlike the backend ORM calls above that are rooted at a known object name.
+DOM_SINK_PROPERTY = re.compile(r"(^|\.)(?:innerHTML|outerHTML|dangerouslySetInnerHTML)$")
+DOM_SINK_GLOBAL = re.compile(r"^(?:eval|Function|window\.eval|window\.Function)$")
+# Redirects/navigation and cookie writes are NOT themselves proof of XSS.
+# Keep these distinct from HTML/script-evaluation sinks to avoid mislabelling
+# an open redirect or cookie manipulation lead as script execution.
+DOM_HTML_WRITE = re.compile(r"^(?:document|window\.document)\.(?:write|writeln)$")
+DOM_NAVIGATION = re.compile(
+    r"^(?:window\.open|(?:window\.)?location\.(?:href|assign|replace))$")
+DOM_COOKIE_WRITE = re.compile(r"^(?:document|window\.document)\.cookie$")
+# A cue, never a proof: a sanitizer call present in the chain does not establish it is applied to
+# this exact value, configured safely, or not itself bypassed; its absence does not establish an
+# unsanitized sink either - sanitization can happen in a wrapper component this scan never visits.
+SANITIZER = re.compile(r"(sanitiz|purify|dompurify|escape|striptags|strip_tags)", re.I)
+# Flow-insensitive: these identifiers are treated as attacker-influenceable wherever they appear in
+# any function's call arguments or variable initializers, the same bag-of-identifiers model the
+# existing alias/argument taint tracking already uses. A local variable or parameter that happens
+# to share one of these names is indistinguishable from the real DOM API and will false-positive;
+# that is the same trade-off SOURCE_PARAMS already makes for backend request parameter names.
+DOM_SOURCE_IDENT = frozenset(("location", "referrer", "localStorage", "sessionStorage", "cookie"))
+MAX_DOM_ENTRY_STEPS = 4000
+
+
+def _dom_sink_kind(name):
+    if not isinstance(name, str) or len(name) > 150:
+        return None
+    if DOM_SINK_PROPERTY.search(name):
+        return "DOM_XSS_CANDIDATE_FLOW"
+    if DOM_SINK_GLOBAL.fullmatch(name) or DOM_HTML_WRITE.fullmatch(name):
+        return "DOM_XSS_CANDIDATE_FLOW"
+    if DOM_NAVIGATION.fullmatch(name):
+        return "UNTRUSTED_NAVIGATION_CANDIDATE_FLOW"
+    if DOM_COOKIE_WRITE.fullmatch(name):
+        return "UNTRUSTED_COOKIE_WRITE_CANDIDATE_FLOW"
+    return None
+
 
 def _digest(obj):
     return hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":"),
@@ -199,44 +238,35 @@ def analyze_index(index, parser_sha, source_bytes, omitted):
 
     flows, unresolved = [], []
     seen_flows = set()
-    for route in routes:
-        entry = resolve(route["file"], route["handler"])
-        if entry is None:
-            unresolved.append({"file": route["file"], "line": route["line"],
-                               "reason": "HANDLER_UNRESOLVED"})
-            continue
-        definition = symbols[entry]
-        starting = frozenset(i for i, name in enumerate(definition.get("params", []))
-                             if name in SOURCE_PARAMS)
-        if not starting:
-            continue
-        initial_guard = list(route["middleware_cues"])
-        queue = deque([(entry, starting, [], initial_guard)])
+    budget = {"steps": 0, "dom_steps": 0}
+
+    def _trace(entry, starting_names, initial_guards, origin, sink_kind_of, step_key, step_cap):
+        queue = deque([(entry, frozenset(starting_names), [], initial_guards, [])])
         seen = set()
-        steps = 0
-        while queue and steps < MAX_STEPS and len(flows) < MAX_LEADS:
-            key, tainted_positions, chain, guards = queue.popleft()
-            state = (key, tuple(sorted(tainted_positions)))
+        while queue and budget[step_key] < step_cap and len(flows) < MAX_LEADS:
+            key, taints, chain, guards, seen_sanitizers = queue.popleft()
+            state = (key, tuple(sorted(taints)))
             if state in seen or len(chain) >= MAX_HOPS:
                 continue
             seen.add(state)
-            steps += 1
+            budget[step_key] += 1
             definition = symbols[key]
-            params = definition.get("params", [])
-            taints = {params[i] for i in tainted_positions if (
-                type(i) is int and 0 <= i < len(params) and params[i])}
+            taints = set(taints)
             for _ in range(4):
                 for alias in definition.get("aliases", [])[:100]:
                     if (isinstance(alias.get("name"), str) and
                             any(x in taints for x in alias.get("from", []))):
                         taints.add(alias["name"])
             local_guards = set(guards)
+            sanitizer_cues = set(seen_sanitizers)
             for c in definition.get("calls", [])[:150]:
                 name = c.get("callee")
                 if not isinstance(name, str) or len(name) > 150:
                     continue
                 if GUARD.search(name):
                     local_guards.add(name[:100])
+                if SANITIZER.search(name):
+                    sanitizer_cues.add(name[:100])
                 arg_flags = [
                     any(identifier in taints for identifier in identifiers)
                     if isinstance(identifiers, list) else False
@@ -246,34 +276,82 @@ def analyze_index(index, parser_sha, source_bytes, omitted):
                 hop = {"file": key[0], "function": key[1],
                        "callee": name, "line": c.get("line")}
                 callee = resolve(key[0], name)
-                if callee:
+                sink_kind = sink_kind_of(name)
+                if callee and not sink_kind:
                     target_params = symbols[callee].get("params", [])
-                    next_positions = frozenset(i for i, tainted in enumerate(arg_flags)
-                                              if tainted and i < len(target_params))
-                    if next_positions:
-                        queue.append((callee, next_positions,
-                                      chain + [hop], sorted(local_guards)[:40]))
-                elif SINK.search(name) and (SINK_ROOT.search(name) or "." not in name):
-                    fingerprint = (route["file"], route["line"], key[0], key[1], name)
+                    next_names = {target_params[i] for i, tainted in enumerate(arg_flags)
+                                 if tainted and i < len(target_params) and target_params[i]}
+                    if next_names:
+                        queue.append((callee, frozenset(next_names),
+                                      chain + [hop], sorted(local_guards)[:40],
+                                      sorted(sanitizer_cues)[:40]))
+                elif sink_kind:
+                    fingerprint = (origin["fingerprint"], key[0], key[1], name)
                     if fingerprint in seen_flows:
                         continue
                     seen_flows.add(fingerprint)
                     evidence = chain + [hop]
                     flows.append({
                         "id": _digest(fingerprint)[:18],
-                        "kind": "SYNTACTIC_REQUEST_ARGUMENT_TO_SENSITIVE_CALL",
-                        "entry": {"file": route["file"], "line": route["line"],
-                                  "method": route["method"], "path": route["path"]},
+                        "kind": sink_kind,
+                        "entry": origin["entry"],
                         "sink": {"file": key[0], "function": key[1], "call": name,
                                  "line": c.get("line")},
                         "call_chain": evidence,
                         "cross_file": len({x["file"] for x in evidence}) > 1,
                         "guard_name_cues": sorted(local_guards)[:40],
+                        "sanitizer_name_cues": sorted(sanitizer_cues)[:40],
                         "classification": "UNVERIFIED_STATIC_ARGUMENT_FLOW",
-                        "review": ("Manually trace runtime input, sanitizers, middleware, "
-                                   "authorization and actual side effect; syntax alone "
-                                   "cannot prove a vulnerability.")
+                        "review": origin["review"]
                     })
+
+    def _backend_sink(name):
+        if SINK.search(name) and (SINK_ROOT.search(name) or "." not in name):
+            return "SYNTACTIC_REQUEST_ARGUMENT_TO_SENSITIVE_CALL"
+        # eval/new Function fed by a request parameter is server-side code injection, not DOM
+        # XSS, but the same bare-global sink shape; worth the same one-line check here so a
+        # request argument reaching eval is not silently uncovered by either pass.
+        if DOM_SINK_GLOBAL.fullmatch(name):
+            return "SYNTACTIC_REQUEST_ARGUMENT_TO_CODE_EVALUATION"
+        return None
+
+    for route in routes:
+        entry = resolve(route["file"], route["handler"])
+        if entry is None:
+            unresolved.append({"file": route["file"], "line": route["line"],
+                               "reason": "HANDLER_UNRESOLVED"})
+            continue
+        definition = symbols[entry]
+        starting = frozenset(name for name in definition.get("params", []) if name in SOURCE_PARAMS)
+        if not starting:
+            continue
+        origin = {"fingerprint": (route["file"], route["line"]),
+                  "entry": {"file": route["file"], "line": route["line"],
+                           "method": route["method"], "path": route["path"]},
+                  "review": ("Manually trace runtime input, sanitizers, middleware, "
+                            "authorization and actual side effect; syntax alone "
+                            "cannot prove a vulnerability.")}
+        _trace(entry, starting, list(route["middleware_cues"]), origin, _backend_sink,
+              "steps", MAX_STEPS)
+
+    # Second, independent pass: a DOM-source identifier (location, document.referrer,
+    # localStorage, sessionStorage, document.cookie) reaching a DOM sink. Unlike the backend
+    # pass above, this does not start from a route handler - a React/Vue component or any other
+    # browser-side function is normally never called from a server route at all, so every
+    # function is its own entry point, seeded with the fixed DOM-source identifier set rather
+    # than a resolved parameter name. The same flow-insensitive alias/argument taint mechanics
+    # as the backend pass apply unchanged; only the seed and the sink pattern differ.
+    for key in sorted(symbols):
+        origin = {"fingerprint": ("DOM_SOURCE", key[0], key[1]),
+                  "entry": {"file": key[0], "function": key[1], "line": symbols[key].get("line")},
+                  "review": ("Manually confirm the source is actually reachable from an "
+                            "attacker-controlled browser context, that no sanitizer is applied "
+                            "between source and sink, and the eligible dApp impact class "
+                            "(signing/redirect) before reporting; syntax alone proves nothing.")}
+        _trace(key, DOM_SOURCE_IDENT, [], origin, _dom_sink_kind, "dom_steps", MAX_DOM_ENTRY_STEPS)
+        if len(flows) >= MAX_LEADS:
+            break
+
     flows.sort(key=lambda x: (-int(x["cross_file"]), x["id"]))
     return {
         "schema_version": 1, "mode": "web-ts-cross-file-flow",
@@ -289,7 +367,15 @@ def analyze_index(index, parser_sha, source_bytes, omitted):
                         "propagation only. Aliasing is flow-insensitive. No type checker, "
                         "cross-function return taint, class dispatch, imported namespaces, "
                         "full middleware inheritance or runtime guard verification. "
-                        "Guard-name cues never establish presence/absence of authorization.")
+                        "Guard-name cues never establish presence/absence of authorization. "
+                        "Navigation and cookie-write flows are separate from DOM XSS: a "
+                        "tainted redirect or cookie assignment is not proof of script execution. "
+                        "DOM-source passes seed every function with a fixed identifier "
+                        "set (location, referrer, localStorage, sessionStorage, cookie); a "
+                        "local variable or parameter sharing one of those names, not the real "
+                        "DOM API, will false-positive the same way SOURCE_PARAMS already can "
+                        "for backend flows. A sanitizer_name_cues entry is a call name seen "
+                        "in the chain, never proof it runs on this value or is configured safely.")
     }
 
 

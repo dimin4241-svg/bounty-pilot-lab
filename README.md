@@ -18,6 +18,18 @@
 
 ---
 
+## 0.60.0 — DOM-XSS tracing, scheme-guard check and a local proof scaffold
+
+`web-ts-flow` now traces DOM sinks (`innerHTML`, `dangerouslySetInnerHTML`,
+`document.write`, `eval`, `new Function`) the same way it already traced
+backend ones, seeding every function - not only route handlers - with a fixed
+DOM-source identifier set and surfacing any sanitizer call seen in the chain
+as a cue. New `url-scheme-guard-check` parses candidate URLs with real urllib
+and Node WHATWG URL for the `javascript://host/%0a...` hostname-check bypass
+shape. New `dom-xss-poc-scaffold` writes a local, static candidate/control
+HTML pair demonstrating a sink's execution mechanism for you to open yourself
+offline - not executed by the generator, which has no browser available to it.
+
 ## 0.59.0 — route anchors and conservation sequences
 
 New `business-route-bind` joins the route/handler graph with `business-schema-bind`'s
