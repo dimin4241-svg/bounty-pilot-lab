@@ -95,6 +95,7 @@ class LocalApp:
                 "session_active", "available_cents", "refunded_cents",
                 "entitlement_active")
         state = dict(zip(keys, row))
+        state["entitlement_active"] = bool(state["entitlement_active"])
         state["ledger_credited_cents"] = self.db.execute(
             "SELECT COALESCE(SUM(amount_cents),0) FROM balance_ledger "
             "WHERE account='alice'").fetchone()[0]
