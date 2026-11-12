@@ -2,7 +2,8 @@
   "state": {
     "trading": 100,
     "savings": 0,
-    "transfer_applied": 0
+    "transfer_applied": 0,
+    "idempotency_marked": 0
   },
   "invariants": [
     {"id": "no-value-created-or-destroyed", "kind": "conservation",
