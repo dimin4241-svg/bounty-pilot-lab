@@ -248,6 +248,5 @@ def generate(*, defective=True, rules=None):
 
 
 if __name__ == "__main__":
-    import sys
     print(json.dumps({"scenario_count": len(generate()["cases"]),
                       "notice": "synthetic SQLite only; no external requests"}))
