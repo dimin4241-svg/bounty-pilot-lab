@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.57.0 — offline Web account and payment business-integrity lab
+
+- New CLI: web-business-lab plan/analyze/demo; 13 documented, conservative
+  identity, payment, refund, subscription and cross-tenant invariants.
+- Two-to-five candidate/control observations per rule, matched initial state,
+  distinct receipt digests, provenance of documented/inferred policy,
+  no missing-fact-to-violation conversions, no target network access.
+- Disposable SQLite vulnerable/fixed scenarios for all 13 rules, paired unit
+  tests and deterministic synthetic benchmark. No claims of real bug bounty
+  discovery, authorization, payment settlement or report readiness.
+- Integrated into bounty.py helper routing and Web/API skill guidance.
+  See references/web-business-lab.md for source/evidence handoff and limitations.
+
+
 ## 0.56.1 — conservative reality-gate evidence
 
 - `reality_gate.py` no longer treats arbitrary HTTP 200 bodies, plain text, HTML
