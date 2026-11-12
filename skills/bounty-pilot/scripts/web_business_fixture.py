@@ -5,6 +5,7 @@ Synthetic sample apps only. No HTTP, wallet, gateway, real user or real funds.
 A deliberately defective mode and corrected mode use the same initial DB.
 """
 import hashlib
+import hmac
 import json
 import sqlite3
 
@@ -27,9 +28,43 @@ def _digest(obj):
     return hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+class FakePSP:
+    """Researcher-owned fake provider, with separate authoritative status and HMAC."""
+    KEY = b"owned-fixture-test-key-not-for-real-payments"
+
+    def __init__(self):
+        self.events = {}
+
+    @staticmethod
+    def _body(ref, amount, currency, merchant):
+        return json.dumps({"event": ref, "amount_cents": amount, "currency": currency,
+                           "merchant": merchant}, sort_keys=True,
+                          separators=(",", ":")).encode()
+
+    def create(self, ref, *, paid):
+        if ref not in self.events:
+            self.events[ref] = {"paid": bool(paid), "amount_cents": 500,
+                                "currency": "USD", "merchant": "owned-store"}
+
+    def callback(self, ref, *, tampered):
+        status = self.events[ref]
+        amount = 999 if tampered else status["amount_cents"]
+        expected = hmac.new(self.KEY, self._body(ref, status["amount_cents"],
+                           status["currency"], status["merchant"]),
+                            hashlib.sha256).hexdigest()
+        supplied = expected  # Provider signature over the real payment.
+        signed_data = self._body(ref, amount, status["currency"], status["merchant"])
+        signature_valid = hmac.compare_digest(
+            supplied, hmac.new(self.KEY, signed_data, hashlib.sha256).hexdigest())
+        return {"paid": status["paid"], "signature_valid": signature_valid,
+                "order_bound": not tampered, "amount_bound": not tampered,
+                "currency_bound": True, "merchant_bound": True}
+
+
 class LocalApp:
     def __init__(self, defective):
         self.defective = defective
+        self.psp = FakePSP()
         self.db = sqlite3.connect(":memory:")
         self.db.execute(
             "CREATE TABLE account (id TEXT PRIMARY KEY, credential_version INTEGER, "
@@ -39,6 +74,8 @@ class LocalApp:
             "INSERT INTO account VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [("alice", 1, 1, 1, 1, 10000, 0, 0),
              ("bob", 1, 1, 1, 1, 10000, 0, 0)])
+        self.db.execute("CREATE TABLE balance_ledger (seq INTEGER PRIMARY KEY, "
+                        "account TEXT, event_ref TEXT, amount_cents INTEGER)")
         self.db.execute("CREATE TABLE payment_events (id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE refund_events (id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE reset_tokens (id TEXT PRIMARY KEY, used INTEGER)")
@@ -57,7 +94,11 @@ class LocalApp:
         keys = ("credential_version", "email_version", "session_count",
                 "session_active", "available_cents", "refunded_cents",
                 "entitlement_active")
-        return dict(zip(keys, row))
+        state = dict(zip(keys, row))
+        state["ledger_credited_cents"] = self.db.execute(
+            "SELECT COALESCE(SUM(amount_cents),0) FROM balance_ledger "
+            "WHERE account='alice'").fetchone()[0]
+        return state
 
     def _bump(self, field, amount=1):
         if field not in {"credential_version", "email_version", "session_count",
@@ -112,14 +153,26 @@ class LocalApp:
 
     def credit(self, ref, *, confirmed=True, bound=True, authorized=True,
                cross_tenant=False):
+        self.psp.create(ref, paid=confirmed)
+        receipt = self.psp.callback(ref, tampered=not bound)
         duplicate = self._seen("payment_events", ref)
-        accepted = (confirmed and bound and authorized and not duplicate)
+        accepted = (receipt["paid"] and receipt["signature_valid"] and
+                    receipt["order_bound"] and receipt["amount_bound"] and
+                    receipt["currency_bound"] and receipt["merchant_bound"] and
+                    authorized and not duplicate)
         if accepted or self.defective:
             self._bump("available_cents", 500)
-        return {"psp_confirmed": confirmed, "non_payment_credit_allowed": False,
-                "signature_valid": bound, "order_bound": bound,
-                "amount_bound": bound, "currency_bound": bound,
-                "merchant_bound": bound, "actor_authorized": authorized,
+            self.db.execute("INSERT INTO balance_ledger (account,event_ref,amount_cents)"
+                            " VALUES ('alice',?,500)", (ref,))
+            self.db.commit()
+        return {"psp_confirmed": receipt["paid"],
+                "non_payment_credit_allowed": False,
+                "signature_valid": receipt["signature_valid"],
+                "order_bound": receipt["order_bound"],
+                "amount_bound": receipt["amount_bound"],
+                "currency_bound": receipt["currency_bound"],
+                "merchant_bound": receipt["merchant_bound"],
+                "actor_authorized": authorized,
                 "cross_tenant": cross_tenant}
 
     def refund(self, ref):
