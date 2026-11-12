@@ -25,8 +25,9 @@ lexical leads, so a lead is anchored to a specific route with that route's own
 guard cues, not a bare line match. New
 [conservation-sequence guide](skills/bounty-pilot/references/economic-conservation-sequences.md)
 combines `scenario_fuzz` with `invariant_check`'s existing conservation rule
-to find a two-subaccount retry-credit sequence (the Balancer/Cetus/Arcus
-shape) that no single action shows alone. Also fixed a real bug from 0.58.0:
+to find a two-subaccount retry-credit sequence that no single action
+shows alone. This is a synthetic conservation failure, not a reproduction
+of the distinct Balancer, Cetus, or Arcus root causes. Also fixed a real bug from 0.58.0:
 `business-schema-bind`'s `family` field was silently always `None` in actual
 use due to a fragile cross-import.
 
