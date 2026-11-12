@@ -4,6 +4,18 @@ The release-by-release guidance for the optional lab tools, moved out of `SKILL.
 workflow reads first. `SKILL.md` keeps an index; read the section for a tool before running it.
 Every rule here still applies: nothing below is weaker for living in a reference file.
 
+### Experimental Lab 0.57.0 — Web account and payment integrity
+
+Read references/web-business-lab.md for the offline CLI and synthetic SQLite
+benchmarks. web-business-lab plan/analyze/demo covers thirteen session/ATO,
+payment, refund, subscription and cross-tenant state invariants. It requires
+two-to-five paired candidate/control runs on matching declared initial state
+and records unknown facts as unknown. The synthetic demo executes only
+researcher-owned SQLite and never handles real funds or users. Observations
+and digests supplied by the researcher remain unverified. No live website
+probes, model execution, independent historical holdouts or payout improvement
+are provided.
+
 ### Experimental Lab 0.56.1 — conservative reality-gate evidence
 
 Read `references/reality-gate.md` before aiming a run at a programme whose published components
