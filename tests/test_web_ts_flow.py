@@ -97,6 +97,25 @@ class TSGraphTests(unittest.TestCase):
         self.assertEqual(dom[0]["sanitizer_name_cues"], ["DOMPurify.sanitize"])
         self.assertEqual(dom[0]["classification"], "UNVERIFIED_STATIC_ARGUMENT_FLOW")
 
+    def test_navigation_and_cookie_writes_are_not_mislabeled_as_xss(self):
+        index = {"schema_version": 1, "files": [{
+            "path": "web/Links.ts", "imports": [], "routes": [], "parse_diagnostics": 0,
+            "functions": [{"name": "render", "line": 1, "params": [], "exported": True,
+                           "aliases": [{"name": "untrusted", "from": ["location", "search"]}],
+                           "calls": [
+                               {"callee": "location.href", "line": 3,
+                                "args": [["untrusted"]]},
+                               {"callee": "document.cookie", "line": 4,
+                                "args": [["untrusted"]]},
+                               {"callee": "document.write", "line": 5,
+                                "args": [["untrusted"]]}]}]}]}
+        report = flow.analyze_index(index, "0" * 64, 100, {})
+        kinds = {row["sink"]["call"]: row["kind"] for row in report["flows"]}
+        self.assertEqual(kinds["location.href"], "UNTRUSTED_NAVIGATION_CANDIDATE_FLOW")
+        self.assertEqual(kinds["document.cookie"], "UNTRUSTED_COOKIE_WRITE_CANDIDATE_FLOW")
+        self.assertEqual(kinds["document.write"], "DOM_XSS_CANDIDATE_FLOW")
+        self.assertEqual(report["confirmed_vulnerabilities"], 0)
+
     def test_request_argument_into_eval_is_its_own_classification(self):
         fixture = index_fixture()
         fixture["files"][1]["functions"][0]["calls"] = [
@@ -257,15 +276,20 @@ function evalLike(code: string) {
   return f();
 }
 ''')
+            (web / "Busy.tsx").write_text(
+                "function Busy(el: any) {\n  const obj: any = {};\n" +
+                "".join("  obj.field%d = %d;\n" % (i, i) for i in range(180)) +
+                "  const msg = location.hash;\n  el.innerHTML = msg;\n}\n")
             parser = Path(os.environ["BP_TYPESCRIPT_PARSER"])
             sha = hashlib.sha256(parser.read_bytes()).hexdigest()
             result = flow.inspect(root, parser, sha)
             self.assertEqual(result["parse_problems"], [])
             dom = {f["sink"]["function"]: f for f in result["flows"]
                   if f["kind"] == "DOM_XSS_CANDIDATE_FLOW"}
-            self.assertEqual(set(dom), {"Banner", "Widget"})
+            self.assertEqual(set(dom), {"Banner", "Widget", "Busy"})
             self.assertEqual(dom["Banner"]["sink"]["call"], "dangerouslySetInnerHTML")
             self.assertEqual(dom["Widget"]["sink"]["call"], "el.innerHTML")
+            self.assertEqual(dom["Busy"]["sink"]["call"], "el.innerHTML")
             self.assertNotIn("Safe", {f["sink"]["function"] for f in result["flows"]})
             # evalLike's `code` is an ordinary parameter, not a DOM source and not reached
             # from any route in this fixture, so `new Function(code)` is correctly silent here.
