@@ -26,8 +26,9 @@ SAFE_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 README = """# DOM-sink execution scaffold: {sink}
 
 Generated for the lead at {anchor}. This demonstrates a MECHANISM, not your
-finding: it proves that `{sink}` executes unsanitized input in any browser,
-not that your application's specific code path actually reaches it with
+finding: it illustrates how `{sink}` may execute unsanitized input in a
+local browser context that permits inline scripts/event handlers, not that
+your application's specific code path actually reaches it with
 attacker-controlled data. You still have to show that separately.
 
 ## Run it
@@ -49,7 +50,8 @@ attacker-controlled data. You still have to show that separately.
 
 Not an execution of your target. Not a claim this specific application is
 vulnerable. Not verified against a real browser by the tool that generated it -
-only standard, long-documented DOM/HTML parsing behavior.
+only standard DOM/HTML parsing behavior. Browser policies such as CSP
+may block inline execution; this local scaffold does not model target CSP.
 """
 
 
@@ -124,7 +126,7 @@ def scaffold(sink, anchor, out_dir):
     out = Path(out_dir)
     if out.exists():
         raise ValueError("refusing to write into an existing directory")
-    out.mkdir(parents=True)
+    out.mkdir(mode=0o700, parents=True)
     candidate, control = _pair(sink)
     _write(out / "candidate.html", candidate)
     _write(out / "control.html", control)
