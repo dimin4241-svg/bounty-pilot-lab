@@ -6,6 +6,7 @@ payment or real credentials. Emits sanitized pre/post effects for offline review
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -102,6 +103,14 @@ def _validate_step(step, actors):
         raise ValueError("observed refund ref must match submitted fake refund ref")
 
 
+def _business_rules():
+    module_path = Path(__file__).with_name("web_business_lab.py")
+    spec = importlib.util.spec_from_file_location("bp_local_business_rules", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.RULES
+
+
 def validate(doc):
     if not isinstance(doc, dict) or doc.get("schema_version") != 1 or (
             doc.get("attestation") != "I_CONTROL_THIS_LOCAL_FIXTURE"):
@@ -129,6 +138,7 @@ def validate(doc):
     if not isinstance(cases, list) or not 1 <= len(cases) <= 8:
         raise ValueError("1..8 cases required")
     ids, paths = set(), set()
+    supported_rules = _business_rules()
     for case in cases:
         if not isinstance(case, dict) or set(case) != {
                 "id", "rule", "invariant_basis", "rounds"}:
@@ -139,9 +149,8 @@ def validate(doc):
         ids.add(ident)
         if case["invariant_basis"] not in ("documented", "reviewer-inferred"):
             raise ValueError("invariant policy provenance required")
-        # Late bounded import; does not run the target and only reads local module.
-        from web_business_lab import RULES
-        if case["rule"] not in RULES:
+        # Exact local rule catalog; no target module or external package loaded.
+        if case["rule"] not in supported_rules:
             raise ValueError("unsupported invariant rule")
         rounds = case["rounds"]
         if not isinstance(rounds, list) or not 2 <= len(rounds) <= 5:
