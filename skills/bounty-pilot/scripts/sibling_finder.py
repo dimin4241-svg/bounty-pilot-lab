@@ -20,11 +20,13 @@ reporting a mismatch as a vulnerability. Never executes target code.
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 from collections import defaultdict
 from difflib import SequenceMatcher
+from itertools import combinations, product
 from pathlib import Path
 
 GIT_OPTS = ("--no-optional-locks", "-c", "core.fsmonitor=false",
@@ -33,6 +35,7 @@ EXCLUDED = {"node_modules", "vendor", "dist", "build", "target", ".git", "test",
 MAX_FILE = 400_000
 MAX_FUNCTIONS = 4000
 MAX_FUNCTION_LINES = 400
+MAX_FUNCTION_TOKENS = 1500  # keep SequenceMatcher bounded on pathological functions
 MAX_BUCKET = 60
 MAX_COMPARISONS = 40_000
 MAX_LEADS = 200
@@ -66,6 +69,40 @@ def _repo(value):
     if not (root / ".git").exists():
         raise ValueError("a local git checkout is required")
     return root
+
+
+def _scope_prefix(value):
+    if not isinstance(value, str) or not value or len(value) > 240:
+        raise ValueError("scope must be a short relative checkout path")
+    p = Path(value)
+    if (p.is_absolute() or ".." in p.parts or "\\" in value or
+            "\x00" in value or p.as_posix() == "."):
+        raise ValueError("path traversal or unsupported relative scope")
+    return p.as_posix().rstrip("/")
+
+
+def _revision(root):
+    commit = subprocess.run(["git", *GIT_OPTS, "-C", str(root), "rev-parse", "--verify",
+                             "HEAD^{commit}"], text=True, capture_output=True,
+                            check=True, timeout=20).stdout.strip()
+    changed = subprocess.run(["git", *GIT_OPTS, "-C", str(root), "status",
+                              "--porcelain", "--untracked-files=no"],
+                             text=True, capture_output=True, check=True, timeout=20)
+    if changed.stdout:
+        raise ValueError("tracked checkout is modified; use a clean pinned source checkout")
+    return commit
+
+
+def _write_private(path, text):
+    target = Path(path)
+    if target.exists() or target.is_symlink():
+        raise ValueError("refusing to overwrite an existing output file")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(target, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(text)
 
 
 def _tracked(root):
@@ -179,6 +216,7 @@ def _shape_and_cues(body, own_name):
 def collect(root, scope_prefixes=None):
     tracked = _tracked(root)
     functions = []
+    tokens_skipped = 0
     for name in sorted(tracked):
         if _in_excluded(name):
             continue
@@ -194,15 +232,18 @@ def collect(root, scope_prefixes=None):
                     else _extract_brace_functions(name, lines))
         for fn_name, line, body in extracted:
             if len(functions) >= MAX_FUNCTIONS:
-                return functions, True
+                return functions, True, tokens_skipped
             tokens, cues = _shape_and_cues(body, fn_name)
+            if len(tokens) > MAX_FUNCTION_TOKENS:
+                tokens_skipped += 1
+                continue
             if len(tokens) < 6:
                 continue
             functions.append({"path": name, "name": fn_name, "line": line,
                               "tokens": tokens, "cues": cues,
                               "body_sha256": hashlib.sha256(
                                   "\n".join(body).encode("utf-8", "replace")).hexdigest()})
-    return functions, False
+    return functions, False, tokens_skipped
 
 
 def find_siblings(functions, min_ratio=DEFAULT_MIN_RATIO):
@@ -216,14 +257,15 @@ def find_siblings(functions, min_ratio=DEFAULT_MIN_RATIO):
         members = buckets[key]
         for neighbor_key in (key, key + 1):
             neighbors = buckets.get(neighbor_key, [])
-            if neighbor_key == key:
-                pairs = [(members[a], members[b]) for a in range(len(members))
-                        for b in range(a + 1, len(members))]
-            else:
-                pairs = [(a, b) for a in members for b in neighbors]
-            if len(pairs) > MAX_BUCKET * MAX_BUCKET:
+            if not neighbors:
+                continue
+            # Slice *before* generating pairs: an overfull bucket used to allocate
+            # millions of tuples before slicing, defeating its memory bound.
+            if len(members) > MAX_BUCKET or len(neighbors) > MAX_BUCKET:
                 truncated_buckets += 1
-                pairs = pairs[:MAX_BUCKET * MAX_BUCKET]
+            left, right = members[:MAX_BUCKET], neighbors[:MAX_BUCKET]
+            pairs = (combinations(left, 2) if neighbor_key == key
+                     else product(left, right))
             for a, b in pairs:
                 if comparisons >= MAX_COMPARISONS:
                     break
@@ -262,12 +304,16 @@ def run(repository, min_ratio=DEFAULT_MIN_RATIO, scope=None):
     if not isinstance(min_ratio, (int, float)) or not 0.5 <= min_ratio <= 1.0:
         raise ValueError("min_ratio must be 0.5..1.0")
     root = _repo(repository)
-    functions, truncated_functions = collect(root, scope)
+    revision = _revision(root)
+    prefixes = [_scope_prefix(x) for x in scope] if scope else None
+    functions, truncated_functions, tokens_skipped = collect(root, prefixes)
     leads, truncated_leads, truncated_buckets, comparisons = find_siblings(functions, min_ratio)
     return {
         "schema_version": 1, "classification": "STRUCTURAL_SIBLING_LEADS",
+        "source_revision": revision,
         "functions_scanned": len(functions),
         "function_cap_reached": truncated_functions,
+        "overlong_functions_skipped": tokens_skipped,
         "comparisons_made": comparisons,
         "bucket_caps_reached": truncated_buckets,
         "min_ratio": min_ratio,
@@ -294,9 +340,7 @@ def main(argv=None):
         text = json.dumps(result, indent=2, ensure_ascii=False)
         if args.out:
             out = Path(args.out)
-            if out.exists():
-                raise ValueError("refusing to overwrite an existing output file")
-            out.write_text(text, encoding="utf-8")
+            _write_private(out, text)
         else:
             print(text)
         return 0
