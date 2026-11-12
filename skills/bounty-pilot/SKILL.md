@@ -78,6 +78,16 @@ needed; the dispatcher **plans** before it runs any model.
 Read `references/web-hunt-loop-phase5.md` and
 `references/web-invariants-phase3.md`.
 
+For **account takeover, identity lifecycle, balances, payments, refunds,
+subscriptions and multi-step business logic**, read
+references/web-business-lab.md. Run web-business-lab plan/analyze/demo for
+offline invariant planning, paired-trace review, an owned synthetic
+SQLite example or a source-anchored handoff to web-root-cause-dedup.
+For independently authorized owned HTTP fixtures, web-business-local-replay
+supports strictly loopback-only candidate/control action sequences with
+redacted state observations; it never reaches a third-party host. This is not a live login or payment runner; it does not
+authenticate receipts or establish production impact.
+
 For **owned loopback fixtures**:
 - `web-workflow-capture` imports already saved owner/outsider HAR
   (literal 127.0.0.1, same operator-held private HMAC key). It

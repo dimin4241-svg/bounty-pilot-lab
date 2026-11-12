@@ -18,6 +18,18 @@
 
 ---
 
+## 0.57.0 — offline account takeover and payment-integrity research
+
+New web-business-lab plan/analyze/demo routes review 13 authorization,
+session, OAuth, balance, webhook, refund and subscription invariants using
+repeated candidate/negative-control state observations. A disposable
+SQLite demo exercises defective and fixed implementations. An explicit
+web-business-local-replay helper can capture paired multi-step tests on literal
+127.0.0.1 owned apps, with no external host contact. No live external
+requests, account access, real payments, verified exploits or bounty
+discovery claims are involved. See the
+[Web Business Lab guide](skills/bounty-pilot/references/web-business-lab.md).
+
 ## Phase 6 — independent intent-based properties and deterministic mutants
 
 `harness-gen` now supports blind source-only
