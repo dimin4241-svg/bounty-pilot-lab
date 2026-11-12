@@ -42,12 +42,14 @@ SOURCE_PARAMS = frozenset(("req", "request", "context", "ctx", "event", "payload
 # regardless of what the receiver expression is - a DOM element is referenced through an arbitrary
 # local variable name, unlike the backend ORM calls above that are rooted at a known object name.
 DOM_SINK_PROPERTY = re.compile(r"(^|\.)(?:innerHTML|outerHTML|dangerouslySetInnerHTML)$")
-DOM_SINK_GLOBAL = re.compile(r"^(?:eval|Function)$")
-# write/writeln/open/href/assign/replace/cookie are common, generic names on unrelated objects
-# (String.prototype.replace, any object's .open()); only count them rooted at document/window/
-# location/history, parsed from the full `object.property` chain web_ts_flow_parser.cjs builds.
-DOM_SINK_ROOTED = re.compile(
-    r"^(?:document\.(?:write|writeln|cookie)|window\.open|location\.(?:href|assign|replace))$", re.I)
+DOM_SINK_GLOBAL = re.compile(r"^(?:eval|Function|window\.eval|window\.Function)$")
+# Redirects/navigation and cookie writes are NOT themselves proof of XSS.
+# Keep these distinct from HTML/script-evaluation sinks to avoid mislabelling
+# an open redirect or cookie manipulation lead as script execution.
+DOM_HTML_WRITE = re.compile(r"^(?:document|window\.document)\.(?:write|writeln)$")
+DOM_NAVIGATION = re.compile(
+    r"^(?:window\.open|(?:window\.)?location\.(?:href|assign|replace))$")
+DOM_COOKIE_WRITE = re.compile(r"^(?:document|window\.document)\.cookie$")
 # A cue, never a proof: a sanitizer call present in the chain does not establish it is applied to
 # this exact value, configured safely, or not itself bypassed; its absence does not establish an
 # unsanitized sink either - sanitization can happen in a wrapper component this scan never visits.
@@ -66,8 +68,12 @@ def _dom_sink_kind(name):
         return None
     if DOM_SINK_PROPERTY.search(name):
         return "DOM_XSS_CANDIDATE_FLOW"
-    if DOM_SINK_GLOBAL.fullmatch(name) or DOM_SINK_ROOTED.fullmatch(name):
+    if DOM_SINK_GLOBAL.fullmatch(name) or DOM_HTML_WRITE.fullmatch(name):
         return "DOM_XSS_CANDIDATE_FLOW"
+    if DOM_NAVIGATION.fullmatch(name):
+        return "UNTRUSTED_NAVIGATION_CANDIDATE_FLOW"
+    if DOM_COOKIE_WRITE.fullmatch(name):
+        return "UNTRUSTED_COOKIE_WRITE_CANDIDATE_FLOW"
     return None
 
 
@@ -361,7 +367,9 @@ def analyze_index(index, parser_sha, source_bytes, omitted):
                         "cross-function return taint, class dispatch, imported namespaces, "
                         "full middleware inheritance or runtime guard verification. "
                         "Guard-name cues never establish presence/absence of authorization. "
-                        "DOM_XSS_CANDIDATE_FLOW seeds every function with a fixed identifier "
+                        "Navigation and cookie-write flows are separate from DOM XSS: a "
+                        "tainted redirect or cookie assignment is not proof of script execution. "
+                        "DOM-source passes seed every function with a fixed identifier "
                         "set (location, referrer, localStorage, sessionStorage, cookie); a "
                         "local variable or parameter sharing one of those names, not the real "
                         "DOM API, will false-positive the same way SOURCE_PARAMS already can "
