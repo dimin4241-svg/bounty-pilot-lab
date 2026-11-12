@@ -276,7 +276,7 @@ def find_siblings(functions, min_ratio=DEFAULT_MIN_RATIO):
                 if fa["body_sha256"] == fb["body_sha256"]:
                     ratio = 1.0
                 else:
-                    ratio = SequenceMatcher(None, fa["tokens"], fb["tokens"], autojunk=False).ratio()
+                    ratio = SequenceMatcher(None, fa["tokens"], fb["tokens"], autojunk=True).ratio()
                 if ratio < min_ratio:
                     continue
                 only_a = bool(fa["cues"]) and not fb["cues"]
@@ -314,13 +314,15 @@ def run(repository, min_ratio=DEFAULT_MIN_RATIO, scope=None):
         "functions_scanned": len(functions),
         "function_cap_reached": truncated_functions,
         "overlong_functions_skipped": tokens_skipped,
+        "comparison_cap_reached": comparisons >= MAX_COMPARISONS,
         "comparisons_made": comparisons,
         "bucket_caps_reached": truncated_buckets,
         "min_ratio": min_ratio,
         "leads": leads,
         "lead_cap_reached": truncated_leads,
         "notice": ("A heuristic token-shape comparison over a bounded line/brace extraction, "
-                   "not a parser or semantic clone detector. Read both bodies before concluding "
+                   "not a parser or semantic clone detector; repetitive tokens are " 
+                   "deweighted by SequenceMatcher. Read both bodies before concluding "
                    "a guard is actually missing: a cue can be a false friend, and a real guard "
                    "can use no cue term here at all. Missing from this list is not evidence a "
                    "function has no sibling; it may have been skipped by a size or scan cap.")
