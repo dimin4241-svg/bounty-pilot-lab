@@ -9,7 +9,7 @@ HTTP requests, run models, prove an externally deployed bug or certify payout.
 
 Python 3.9+ and standard library only:
 
-~~~sh
+```sh
 BP=skills/bounty-pilot/scripts/bounty.py
 
 # Disposable in-memory SQLite demo: no websites, payments or credentials.
@@ -23,7 +23,7 @@ python3 "$BP" web-business-lab plan \
 python3 "$BP" web-business-lab analyze \
   --input /private/business-observations.json \
   --out /private/business-review.json
-~~~
+```
 
 All outputs are create-only mode 0600. Store source and trace evidence outside
 the repository; do not upload credentials, actual HARs, personal information,
@@ -31,7 +31,7 @@ payment tokens, bank details or unpublished bug reports.
 
 ## Plan JSON
 
-~~~json
+```json
 {
   "schema_version": 1,
   "environment": "researcher_owned_lab",
@@ -42,7 +42,7 @@ payment tokens, bank details or unpublished bug reports.
             "refund-replay", "subscription-entitlement",
             "cancellation-stale", "cross-tenant-credit"]
 }
-~~~
+```
 
 The plan returns descriptions, not runnable target requests. Before native
 target execution independently obtain the official current program scope,
@@ -95,7 +95,7 @@ Only a *repeatable, controlled local trace discrepancy* becomes a LEAD.
 
 Example event from an owned fake-money fixture:
 
-~~~json
+```json
 {
   "kind": "credit",
   "actor": "alice",
@@ -105,7 +105,7 @@ Example event from an owned fake-money fixture:
   "facts": {"psp_confirmed": false, "non_payment_credit_allowed": false},
   "payment_event_ref": "local-test-1"
 }
-~~~
+```
 
 The corresponding honest control must use the same initial state and record
 a valid provider confirmation. At least two independent rounds, unique
@@ -135,7 +135,7 @@ receipts and negative controls are mandatory. HTTP 200 alone is not enough.
 Once analyze has produced an offline review JSON, independently inspect the
 pinned local implementation and prepare a private operator map:
 
-~~~json
+```json
 {
   "schema_version": 1,
   "project": "my-local-test",
@@ -148,11 +148,11 @@ pinned local implementation and prepare a private operator map:
     "claimed_effect_id": "balance_change"
   }]
 }
-~~~
+```
 
 Use the existing CLI to export the exact web-root-cause-dedup input schema:
 
-~~~sh
+```sh
 python3 "$BP" web-business-lab bridge \
   --input /private/business-review.json \
   --anchors /private/business-anchors.json \
@@ -161,7 +161,7 @@ python3 "$BP" web-business-lab bridge \
 python3 "$BP" web-root-cause-dedup \
   --input /private/business-dedup-input.json \
   --out /private/business-ranked.json
-~~~
+```
 
 Missing source anchors are not invented; a run with no anchored repeatable
 candidate fails closed. Bridge assigns conservative review scores, sets all
@@ -171,9 +171,9 @@ candidates can then be handed to the existing independent agent dispatcher.
 
 ## Synthetic regression
 
-~~~sh
+```sh
 python3 -m unittest discover -s tests -p 'test_web_business_lab.py' -v
-~~~
+```
 
 The 13 cases execute actual SQLite writes in a deliberately defective
 in-memory app and run the same 13 against a corrected app. They are paired
@@ -187,7 +187,7 @@ against an **already running, researcher-owned test application** on exact
 http://127.0.0.1:PORT. It is not a target scanner and MUST NOT be forwarded
 or exposed to a third-party production host.
 
-~~~sh
+```sh
 python3 "$BP" web-business-local-replay \
   --plan /private/loopback-business-plan.json \
   --out /private/validated.json
@@ -200,7 +200,7 @@ python3 "$BP" web-business-local-replay \
 python3 "$BP" web-business-lab analyze \
   --input /private/actual-local-trace.json \
   --out /private/local-invariants.json
-~~~
+```
 
 Plan requirements: schema_version 1, attestation
 "I_CONTROL_THIS_LOCAL_FIXTURE", source_revision with 40 hex characters,
@@ -221,7 +221,7 @@ containing facts with explicitly named boolean fields.
 
 Example single step inside an operator-provided candidate section:
 
-~~~json
+```json
 {
   "path": "/r1/c/credit",
   "actor": "outsider",
@@ -232,7 +232,7 @@ Example single step inside an operator-provided candidate section:
   "payment_event_ref": "fake-psp-event-1",
   "refund_event_ref": null
 }
-~~~
+```
 
 This is NOT a complete plan: add a matching control from the same starting
 state, plus a second independent candidate/control round, per the schema in
