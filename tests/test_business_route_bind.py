@@ -124,6 +124,53 @@ def pay():
         rules_seen = {lead['rule'] for route in report['routes'] for lead in route['rule_leads']}
         self.assertEqual(rules_seen, {'session-revocation'})
 
+    def test_untracked_route_is_never_an_eligible_anchor(self):
+        write(self.repo, 'app/tracked.py', 'def revoke_session(user):\n    return None\n')
+        self.commit()
+        write(self.repo, 'app/untracked.py', '''
+@app.post("/untracked")
+def surprise():
+    revoke_session("alice")
+''')
+        report = rb.bind_routes(str(self.repo), rules=['session-revocation'])
+        self.assertEqual(report['routes_scanned'], 0)
+        self.assertEqual(report['routes_with_leads'], 0)
+        self.assertTrue(report['tracked_routes_only'])
+
+    def test_scope_filters_route_inventory_not_only_lexical_hits(self):
+        write(self.repo, 'app/routes.py', '''
+@app.post("/in-scope")
+def in_scope():
+    revoke_session("alice")
+''')
+        write(self.repo, 'other/routes.py', '''
+@app.post("/out-of-scope")
+def out_of_scope():
+    revoke_session("alice")
+''')
+        self.commit()
+        report = rb.bind_routes(str(self.repo), rules=['session-revocation'],
+                                scope=['app'])
+        self.assertEqual(report['routes_scanned'], 1)
+        self.assertEqual(report['routes_with_leads'], 1)
+        self.assertEqual(report['routes'][0]['path'], '/in-scope')
+        self.assertEqual(report['selected_scope'], ['app'])
+
+    def test_private_output_permissions_and_source_revision(self):
+        write(self.repo, 'app/routes.py', '''
+@app.post("/x")
+def handler():
+    revoke_session("alice")
+''')
+        self.commit()
+        result = rb.bind_routes(str(self.repo), rules=['session-revocation'])
+        revision = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(result['source_revision'], revision)
+        out = Path(self.tmp.name) / 'private.json'
+        self.assertEqual(rb.main(['--repo', str(self.repo), '--out', str(out)]), 0)
+        self.assertEqual(out.stat().st_mode & 0o777, 0o600)
+
     def test_cli_refuses_to_overwrite_existing_output(self):
         write(self.repo, 'app/a.py', 'x = 1\n')
         self.commit()
