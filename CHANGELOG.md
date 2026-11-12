@@ -2,7 +2,7 @@
 
 ## 0.57.0 — offline Web account and payment business-integrity lab
 
-- New CLI: web-business-lab plan/analyze/demo; 13 documented, conservative
+- New CLI: web-business-lab plan/analyze/demo/bridge; 13 documented, conservative
   identity, payment, refund, subscription and cross-tenant invariants.
 - Two-to-five candidate/control observations per rule, matched initial state,
   distinct receipt digests, provenance of documented/inferred policy,
