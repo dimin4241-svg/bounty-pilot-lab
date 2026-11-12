@@ -41,18 +41,9 @@ def _load_sibling(name):
     return module
 
 
-try:
-    RULES = _load_sibling("web_business_lab").RULES
-except (ImportError, OSError, SyntaxError):
-    # Fallback only if web_business_lab.py is genuinely missing or broken;
-    # "family" is then reported as None rather than a stale guess.
-    RULES = {
-        x: None for x in (
-            "account-owner", "mfa-gate", "session-revocation", "reset-one-use",
-            "oauth-binding", "email-verification", "unpaid-credit", "event-replay",
-            "webhook-binding", "refund-replay", "subscription-entitlement",
-            "cancellation-stale", "cross-tenant-credit", "cross-actor-disclosure")
-    }
+# Fail closed if the sibling analyzer is unavailable or broken; silently
+# substituting family=None masks an actual integration failure.
+RULES = _load_sibling("web_business_lab").RULES
 
 # One researcher-curated term list per rule; every term is lexical only, never a
 # claim that matching code exists, enforces the rule or compiles.
