@@ -4,6 +4,21 @@ The release-by-release guidance for the optional lab tools, moved out of `SKILL.
 workflow reads first. `SKILL.md` keeps an index; read the section for a tool before running it.
 Every rule here still applies: nothing below is weaker for living in a reference file.
 
+### Experimental Lab 0.58.0 — access/money blind spots
+
+Read `references/web-business-lab.md`: a 14th rule, `cross-actor-disclosure`,
+covers pure-read IDOR/BOLA (another actor's private fields) that the prior 13
+missed because each required a mutation to compare. Read
+`references/web-sequence-models.md` for two paired, test-locked `scenario_fuzz`
+models showing a two-step Web ATO/payment violation that no single action
+shows alone; `web-business-lab` only reviews an operator-captured trace, it
+does not search for the violating order itself. `sibling-finder` leads a
+structurally near-duplicate function pair where only one side carries an
+access-check cue (misses.md #9). `business-schema-bind` leads a
+`web-business-lab` rule's `source_anchor` lexically against the real target
+checkout; it is never auto-accepted and `bridge()` still requires a reviewed
+anchor.
+
 ### Experimental Lab 0.57.0 — Web account and payment integrity
 
 Read references/web-business-lab.md for the offline CLI and synthetic SQLite

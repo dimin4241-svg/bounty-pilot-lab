@@ -25,7 +25,7 @@ fixture = load("web_business_fixture")
 
 
 class BusinessLabTests(unittest.TestCase):
-    def test_all_13_vulnerable_sqlite_scenarios_have_repeatable_candidate_and_clean_control(self):
+    def test_all_14_vulnerable_sqlite_scenarios_have_repeatable_candidate_and_clean_control(self):
         report = lab.analyze(fixture.generate(defective=True))
         self.assertEqual(set(lab.RULES), {row["rule"] for row in report["cases"]})
         self.assertEqual(report["candidate_count"], len(lab.RULES))
@@ -92,6 +92,18 @@ class BusinessLabTests(unittest.TestCase):
         d = fixture.generate(defective=True, rules=["unpaid-credit"])
         for run in d["cases"][0]["candidate_runs"]:
             del run["events"][0]["facts"]["non_payment_credit_allowed"]
+        self.assertEqual(lab.analyze(d)["candidate_count"], 0)
+
+    def test_same_actor_read_is_never_a_disclosure_violation(self):
+        d = fixture.generate(defective=True, rules=["cross-actor-disclosure"])
+        for run in d["cases"][0]["candidate_runs"]:
+            run["events"][0]["actor"] = run["events"][0]["subject"]
+        self.assertEqual(lab.analyze(d)["candidate_count"], 0)
+
+    def test_missing_disclosure_fact_cannot_prove_cross_actor_violation(self):
+        d = fixture.generate(defective=True, rules=["cross-actor-disclosure"])
+        for run in d["cases"][0]["candidate_runs"]:
+            del run["events"][0]["facts"]["sensitive_fields_returned"]
         self.assertEqual(lab.analyze(d)["candidate_count"], 0)
 
     def test_tampered_control_violation_disqualifies_lead(self):

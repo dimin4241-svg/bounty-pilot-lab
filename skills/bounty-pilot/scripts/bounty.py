@@ -12049,6 +12049,10 @@ HELPER_COMMANDS = {
                                      'code and balances when read'),
     'reality-gate': ('reality_gate', 'classify advertised components as live, gated, broken or '
                                      'unbuilt from saved probes (offline, no target calls)'),
+    'sibling-finder': ('sibling_finder', 'offline structural near-duplicate function leads, '
+                                         'flagging a pair where only one side has an access-check cue'),
+    'business-schema-bind': ('business_schema_bind', 'lexical source-anchor leads for web-business-lab '
+                                                      'rules on the real target checkout'),
 }
 
 

@@ -1,9 +1,13 @@
-# Web/API Account & Payment Business Integrity Lab (0.57.0)
+# Web/API Account & Payment Business Integrity Lab (0.58.0)
 
-This release adds 13 executable invariant rules, native *synthetic* SQLite
+This release has 14 executable invariant rules, native *synthetic* SQLite
 vulnerable/fixed fixtures and an evidence-gated, offline review CLI. It does
 not fetch target pages, log into services, perform payment transactions, send
 HTTP requests, run models, prove an externally deployed bug or certify payout.
+0.58.0 adds `cross-actor-disclosure`: the 13 rules through 0.57.0 all require
+a *mutation* (a credential, balance or entitlement change) to compare; reading
+another actor's private, non-financial resource fields without authorization
+never mutates anything and was outside every prior rule's reach.
 
 ## Run
 
@@ -40,7 +44,8 @@ payment tokens, bank details or unpublished bug reports.
             "reset-one-use", "oauth-binding", "email-verification",
             "unpaid-credit", "event-replay", "webhook-binding",
             "refund-replay", "subscription-entitlement",
-            "cancellation-stale", "cross-tenant-credit"]
+            "cancellation-stale", "cross-tenant-credit",
+            "cross-actor-disclosure"]
 }
 ```
 
@@ -66,6 +71,14 @@ identities, pinned source and exact product-specific policy facts.
 | subscription-entitlement | paid entitlement activated without payment or grant |
 | cancellation-stale | immediate cancellation leaves entitlement when grace disallowed |
 | cross-tenant-credit | unauthorized cross-tenant actor credits another balance |
+| cross-actor-disclosure | unauthorized actor's read returns another actor's private, non-financial fields |
+
+`cross-actor-disclosure` is a pure-read rule: it needs no before/after state
+change, only an explicit `actor`, `subject`, `actor_authorized` and
+`sensitive_fields_returned` fact on a `resource_read` event. It is the IDOR/BOLA
+case for read access to another actor's data (a profile, an order, a document,
+an exported record); `cross-tenant-credit` already covered the same authorization
+failure when the leaked effect is a balance credit instead of a data read.
 
 Rule outcomes require explicit observed before/after state. Unknown or missing
 authorization facts are NOT interpreted as false. Monetary fields use

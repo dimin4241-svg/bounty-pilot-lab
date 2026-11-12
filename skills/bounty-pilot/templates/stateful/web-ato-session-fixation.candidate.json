@@ -1,0 +1,22 @@
+{
+  "state": {
+    "email_version": 1,
+    "sessions": {"old": {"valid": 1, "issued_at_email_version": 1}},
+    "attacker_credential_changes": 0
+  },
+  "invariants": [
+    {"id": "no-ato-via-stale-session", "kind": "compare",
+     "left": {"path": "attacker_credential_changes"}, "op": "eq", "right": {"const": "0"},
+     "basis": "documented: a session issued before an email change must not be able to change credentials after that email change"}
+  ],
+  "actors": ["owner", "attacker"],
+  "actions": [
+    {"name": "owner_change_email", "actor": "owner", "guards": [],
+     "effects": [{"op": "add", "path": "email_version", "value": 1}]},
+    {"name": "attacker_use_old_session", "actor": "attacker",
+     "guards": [{"path": "sessions.old.valid", "op": "eq", "value": 1},
+               {"path": "email_version", "op": "ne",
+                "value": {"path": "sessions.old.issued_at_email_version"}}],
+     "effects": [{"op": "add", "path": "attacker_credential_changes", "value": 1}]}
+  ]
+}

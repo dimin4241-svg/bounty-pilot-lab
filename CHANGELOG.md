@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.58.0 — access/money blind spots: disclosure, sequences, siblings, anchors
+
+- `web-business-lab` gains a 14th rule, `cross-actor-disclosure`: the pure-read
+  IDOR/BOLA case (another actor's private, non-financial fields) that every
+  prior rule missed because all 13 required a mutation to compare.
+- New `references/web-sequence-models.md`, with two paired, test-locked
+  `scenario_fuzz` models (session fixation after an email change; a stale
+  webhook reactivating a cancelled subscription) showing the engine applied
+  to Web ATO/payment sequences, not only Solidity. `web-business-lab` reviews
+  an operator-supplied trace; it does not search for the violating sequence
+  itself, which is what these models demonstrate instead.
+- New `sibling-finder` (`sibling_finder.py`): a bounded, offline structural
+  near-duplicate function scan flagging a pair where only one side carries an
+  access-check cue term (misses.md #9: "did you look for the siblings?").
+  A lead, never a clone verdict; read both bodies before reporting a gap.
+- New `business-schema-bind` (`business_schema_bind.py`): lexical source-anchor
+  leads for every web-business-lab rule against the real target checkout, so
+  `plan()`'s required `source_anchor` starts from a place to read instead of a
+  blank page. Never auto-accepted; `web_business_lab.bridge()` still refuses an
+  unreviewed guess.
+- Integrated `sibling-finder` and `business-schema-bind` into bounty.py helper
+  routing and the Web/API and core-audit skill guidance.
+
 ## 0.57.0 — offline Web account and payment business-integrity lab
 
 - New CLI: web-business-lab plan/analyze/demo/bridge; 13 documented, conservative
