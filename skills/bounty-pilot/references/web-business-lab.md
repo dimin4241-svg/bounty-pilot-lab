@@ -130,6 +130,45 @@ receipts and negative controls are mandatory. HTTP 200 alone is not enough.
 7. Test against real, independently source-pinned historical vulnerable/fixed
    cases before measuring unique findings, spending or duplicate rate.
 
+### Explicit source-anchor bridge to existing deduplication
+
+Once analyze has produced an offline review JSON, independently inspect the
+pinned local implementation and prepare a private operator map:
+
+~~~json
+{
+  "schema_version": 1,
+  "project": "my-local-test",
+  "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "entries": [{
+    "case_id": "candidate-1",
+    "source_file": "src/payments.py",
+    "code_anchor": "credit_order",
+    "trust_boundary_id": "provider_to_ledger",
+    "claimed_effect_id": "balance_change"
+  }]
+}
+~~~
+
+Use the existing CLI to export the exact web-root-cause-dedup input schema:
+
+~~~sh
+python3 "$BP" web-business-lab bridge \
+  --input /private/business-review.json \
+  --anchors /private/business-anchors.json \
+  --out /private/business-dedup-input.json
+
+python3 "$BP" web-root-cause-dedup \
+  --input /private/business-dedup-input.json \
+  --out /private/business-ranked.json
+~~~
+
+Missing source anchors are not invented; a run with no anchored repeatable
+candidate fails closed. Bridge assigns conservative review scores, sets all
+dispositions to unreviewed, and never asserts an authenticated receipt,
+verified production finding or completed dispatch. Human-reviewed anchored
+candidates can then be handed to the existing independent agent dispatcher.
+
 ## Synthetic regression
 
 ~~~sh
