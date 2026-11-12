@@ -158,11 +158,14 @@ def _run(rule, *, defective, candidate, repetition):
     try:
         if rule == "cancellation-stale":
             app._entitlement(True)
-        if rule == "session-revocation" and candidate:
-            app.db.execute("UPDATE account SET session_active=0 WHERE id='alice'")
-            app.db.commit()
         initial = app.snapshot()
         events = []
+        if rule == "session-revocation" and candidate:
+            def revoke():
+                app.db.execute("UPDATE account SET session_active=0 WHERE id='alice'")
+                app.db.commit()
+                return {"revoked": True}
+            events.append(_record(app, "session_revoked", revoke))
         if rule == "account-owner":
             actor = "bob" if candidate else "alice"
             events.append(_record(app, "sensitive_account_update",
