@@ -6,7 +6,6 @@ Input observations are researcher-supplied and NOT authenticated native evidence
 The demo executes only its own disposable SQLite application, never a target.
 """
 import argparse
-import hashlib
 import importlib.util
 import json
 import os
