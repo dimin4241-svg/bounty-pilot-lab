@@ -7,6 +7,9 @@
 - Two-to-five candidate/control observations per rule, matched initial state,
   distinct receipt digests, provenance of documented/inferred policy,
   no missing-fact-to-violation conversions, no target network access.
+- A strict, opt-in web-business-local-replay captures multi-step owned
+  loopback POST/GET state effects with separate actors and paired rounds;
+  no DNS, proxies, redirects or remote targets.
 - Disposable SQLite vulnerable/fixed scenarios for all 13 rules, paired unit
   tests and deterministic synthetic benchmark. No claims of real bug bounty
   discovery, authorization, payment settlement or report readiness.
