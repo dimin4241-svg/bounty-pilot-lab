@@ -97,6 +97,33 @@ class TSGraphTests(unittest.TestCase):
         self.assertEqual(dom[0]["sanitizer_name_cues"], ["DOMPurify.sanitize"])
         self.assertEqual(dom[0]["classification"], "UNVERIFIED_STATIC_ARGUMENT_FLOW")
 
+    def test_cross_file_sanitizer_cue_is_propagated_without_marking_safe(self):
+        index = {"schema_version": 1, "files": [
+            {"path": "web/App.ts", "imports": [
+                {"specifier": "./render", "names": [
+                    {"local": "renderUnsafe", "exported": "renderUnsafe"}]}],
+             "routes": [], "parse_diagnostics": 0,
+             "functions": [{"name": "App", "line": 1, "params": [], "exported": True,
+                            "aliases": [{"name": "value",
+                                         "from": ["location", "search"]}],
+                            "calls": [{"callee": "DOMPurify.sanitize", "line": 3,
+                                       "args": [["value"]]},
+                                      {"callee": "renderUnsafe", "line": 4,
+                                       "args": [["value"]]}]}]},
+            {"path": "web/render.ts", "imports": [], "routes": [],
+             "parse_diagnostics": 0,
+             "functions": [{"name": "renderUnsafe", "line": 1, "params": ["html"],
+                            "exported": True, "aliases": [],
+                            "calls": [{"callee": "node.innerHTML", "line": 2,
+                                       "args": [["html"]]}]}]}]}
+        report = flow.analyze_index(index, "0" * 64, 100, {})
+        dom = [row for row in report["flows"]
+               if row["kind"] == "DOM_XSS_CANDIDATE_FLOW"]
+        self.assertEqual(len(dom), 1)
+        self.assertTrue(dom[0]["cross_file"])
+        self.assertIn("DOMPurify.sanitize", dom[0]["sanitizer_name_cues"])
+        self.assertEqual(dom[0]["classification"], "UNVERIFIED_STATIC_ARGUMENT_FLOW")
+
     def test_navigation_and_cookie_writes_are_not_mislabeled_as_xss(self):
         index = {"schema_version": 1, "files": [{
             "path": "web/Links.ts", "imports": [], "routes": [], "parse_diagnostics": 0,
