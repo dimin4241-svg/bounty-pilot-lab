@@ -242,8 +242,8 @@ def _call(opener, url, method, token, payload=None):
     req = request.Request(url, data=body, method=method, headers=headers)
     try:
         response = opener.open(req, timeout=4)
-    except error.HTTPError as response:
-        pass
+    except error.HTTPError as exc:
+        response = exc
     with response:
         status = response.status
         content = response.read(MAX_BYTES + 1)
