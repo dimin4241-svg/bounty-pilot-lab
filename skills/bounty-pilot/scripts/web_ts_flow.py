@@ -241,10 +241,10 @@ def analyze_index(index, parser_sha, source_bytes, omitted):
     budget = {"steps": 0, "dom_steps": 0}
 
     def _trace(entry, starting_names, initial_guards, origin, sink_kind_of, step_key, step_cap):
-        queue = deque([(entry, frozenset(starting_names), [], initial_guards)])
+        queue = deque([(entry, frozenset(starting_names), [], initial_guards, [])])
         seen = set()
         while queue and budget[step_key] < step_cap and len(flows) < MAX_LEADS:
-            key, taints, chain, guards = queue.popleft()
+            key, taints, chain, guards, seen_sanitizers = queue.popleft()
             state = (key, tuple(sorted(taints)))
             if state in seen or len(chain) >= MAX_HOPS:
                 continue
@@ -258,7 +258,7 @@ def analyze_index(index, parser_sha, source_bytes, omitted):
                             any(x in taints for x in alias.get("from", []))):
                         taints.add(alias["name"])
             local_guards = set(guards)
-            sanitizer_cues = set()
+            sanitizer_cues = set(seen_sanitizers)
             for c in definition.get("calls", [])[:150]:
                 name = c.get("callee")
                 if not isinstance(name, str) or len(name) > 150:
@@ -283,7 +283,8 @@ def analyze_index(index, parser_sha, source_bytes, omitted):
                                  if tainted and i < len(target_params) and target_params[i]}
                     if next_names:
                         queue.append((callee, frozenset(next_names),
-                                      chain + [hop], sorted(local_guards)[:40]))
+                                      chain + [hop], sorted(local_guards)[:40],
+                                      sorted(sanitizer_cues)[:40]))
                 elif sink_kind:
                     fingerprint = (origin["fingerprint"], key[0], key[1], name)
                     if fingerprint in seen_flows:
