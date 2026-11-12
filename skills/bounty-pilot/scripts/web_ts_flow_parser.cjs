@@ -83,19 +83,23 @@ function parseFunction(sf, name, node, exported) {
         calls.push({callee: c, line: location(sf, n),
           args: [...n.arguments].slice(0, 15).map(arg => ids(arg))});
     }
-    // `new Function(payload)` / `new SomeSink(payload)`: same sink-argument shape as a call.
+    // Record executable-code constructors, not *every* new expression. Broad
+    // constructor indexing can consume the 150-call cap before a real sink.
     if (ts.isNewExpression(n)) {
       const c = callee(n.expression);
-      if (c && calls.length < 150)
+      if ((c === 'Function' || c === 'window.Function') && calls.length < 150)
         calls.push({callee: c, line: location(sf, n),
           args: (n.arguments ? [...n.arguments] : []).slice(0, 15).map(arg => ids(arg))});
     }
-    // `el.innerHTML = value` / `location.href = value`: a property write is not a call, but
-    // DOM-sink assignment is syntactically identical in shape to a one-argument sink call.
+    // Only index supported DOM-sensitive assignments: ordinary object writes
+    // must not consume the 150-call budget reserved for meaningful call sites.
     if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
         ts.isPropertyAccessExpression(n.left)) {
       const c = callee(n.left);
-      if (c && calls.length < 150)
+      const htmlWrite = /(?:^|\.)(?:innerHTML|outerHTML|dangerouslySetInnerHTML)$/.test(c);
+      const otherSensitiveWrite = /^(?:window\.)?location\.href$/.test(c) ||
+        /^(?:window\.)?document\.cookie$/.test(c);
+      if ((htmlWrite || otherSensitiveWrite) && calls.length < 150)
         calls.push({callee: c, line: location(sf, n), args: [ids(n.right)]});
     }
     if (ts.isJsxAttribute(n) && ts.isIdentifier(n.name) &&
