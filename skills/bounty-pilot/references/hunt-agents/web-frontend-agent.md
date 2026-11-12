@@ -41,7 +41,9 @@ from a missing function name. More detail:
    already traces backend ones: it seeds every function with a fixed DOM-source identifier set
    (`location`, `document.referrer`, `localStorage`, `sessionStorage`, `document.cookie`) and reports
    `DOM_XSS_CANDIDATE_FLOW` leads with any sanitizer call name seen in the chain as a cue — never a
-   clearance. It is still a syntactic, flow-insensitive leads list, not a taint proof; read the call
+   clearance. Untrusted navigation and cookie writes get distinct non-XSS classes,
+   `UNTRUSTED_NAVIGATION_CANDIDATE_FLOW` and `UNTRUSTED_COOKIE_WRITE_CANDIDATE_FLOW`.
+   It is still a syntactic, flow-insensitive leads list, not a taint proof; read the call
    chain yourself. `eval`/`new Function` fed by a backend request parameter instead is reported
    separately, as `SYNTACTIC_REQUEST_ARGUMENT_TO_CODE_EVALUATION` (server-side code injection, not DOM
    XSS). To demonstrate a sink mechanism locally, `bounty.py dom-xss-poc-scaffold --sink <kind>
