@@ -16,9 +16,9 @@ only means the term's line number falls between the handler's def and its
 last statement, not that the term is reachable, assigned, or read; a
 called-function-name match only means a call expression ends in a name a
 researcher associated with the rule, never that the callee does what its
-name suggests. Read-only, tracked checkout for the business-rule side,
-whole-filesystem walk for the route side (matching each tool's own existing
-scope); never executes target code.
+name suggests. Read-only, clean pinned tracked checkout for both the business-rule side
+and route AST side; the route inventory receives the same selected scope
+as the rule scan and never reads untracked source. Never executes target code.
 """
 import argparse
 import importlib.util
@@ -52,8 +52,19 @@ def _call_name_matches(call_names, terms):
 
 
 def bind_routes(repository, rules=None, scope=None):
-    route_report = route_ast.inspect_repo(repository)
+    # Check revision/dirty tree and validate scope before opening source files.
     schema_report = schema_bind.bind(repository, rules, scope)
+    root = Path(repository).resolve()
+    tracked = schema_bind._files(root)
+    prefixes = [schema_bind._path_prefix(x) for x in scope] if scope else None
+    allowed = {
+        name for name in tracked
+        if Path(name).suffix.lower() == ".py"
+        and not schema_bind.EXCLUDED.intersection(Path(name).parts)
+        and (prefixes is None or any(
+            name == prefix or name.startswith(prefix + "/") for prefix in prefixes))
+    }
+    route_report = route_ast.inspect_repo(repository, allowed_files=allowed)
     if len(route_report["routes"]) > MAX_ROUTES:
         raise ValueError("route inventory exceeds safety cap; narrow the checkout")
     hits_by_rule = {row["rule"]: row["hits"] for row in schema_report["rules"]}
@@ -86,6 +97,10 @@ def bind_routes(repository, rules=None, scope=None):
         "source_revision": schema_report["source_revision"],
         "routes_scanned": len(route_report["routes"]),
         "code_files_scanned_for_terms": schema_report["code_files_scanned"],
+        "tracked_routes_only": True,
+        "selected_scope": prefixes,
+        "rule_hit_caps_reached": sorted(row["rule"] for row in schema_report["rules"]
+                                        if row["hit_cap_reached"]),
         "route_parse_errors": route_report["parse_errors"],
         "routes_with_leads": len(routes),
         "routes": routes,
