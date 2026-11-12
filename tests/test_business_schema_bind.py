@@ -86,6 +86,39 @@ class BusinessSchemaBindTests(unittest.TestCase):
         for hit in report['rules'][0]['hits']:
             self.assertTrue(hit['path'].startswith('app/'))
 
+    def test_per_term_hit_cap_prevents_one_term_from_hiding_other_anchors(self):
+        lines = ["session_active = 1" for _ in range(30)]
+        lines.append("revoke_session = lambda user: None")
+        write(self.repo, 'app/session.py', "\n".join(lines) + "\n")
+        self.commit()
+        output = bind_mod.bind(str(self.repo), rules=["session-revocation"])
+        hits = output["rules"][0]["hits"]
+        self.assertLessEqual(sum(h["term"] == "session_active" for h in hits),
+                             bind_mod.MAX_HITS_PER_TERM)
+        self.assertTrue(any(h["term"] == "revoke_session" for h in hits))
+        self.assertLessEqual(len(hits), bind_mod.MAX_HITS_PER_RULE)
+
+    def test_output_uses_private_mode_and_rejects_symlink(self):
+        write(self.repo, 'app/a.py', 'def revoke_session(user):\n    return None\n')
+        self.commit()
+        out = Path(self.tmp.name) / 'private.json'
+        self.assertEqual(bind_mod.main(['--repo', str(self.repo), '--out', str(out)]), 0)
+        self.assertEqual(out.stat().st_mode & 0o777, 0o600)
+        alias = Path(self.tmp.name) / 'alias.json'
+        alias.symlink_to(out)
+        self.assertEqual(bind_mod.main(['--repo', str(self.repo), '--out', str(alias)]), 2)
+
+    def test_revision_matches_git_and_dirty_tracked_source_refused(self):
+        write(self.repo, 'app/a.py', 'def revoke_session(user):\n    return None\n')
+        self.commit()
+        report = bind_mod.bind(str(self.repo))
+        actual = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(report["source_revision"], actual)
+        write(self.repo, 'app/a.py', 'def revoke_session(user):\n    return True\n')
+        with self.assertRaisesRegex(ValueError, "modified"):
+            bind_mod.bind(str(self.repo))
+
     def test_unknown_rule_is_rejected(self):
         write(self.repo, 'app/a.py', 'x = 1\n')
         self.commit()
