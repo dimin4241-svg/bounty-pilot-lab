@@ -13,6 +13,7 @@ matching. Never executes target code.
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -87,6 +88,30 @@ def _path_prefix(value):
     return p.as_posix().rstrip("/")
 
 
+def _revision(root):
+    commit = subprocess.run(["git", *GIT_OPTS, "-C", str(root), "rev-parse", "--verify",
+                             "HEAD^{commit}"], text=True, capture_output=True,
+                            check=True, timeout=20).stdout.strip()
+    changed = subprocess.run(["git", *GIT_OPTS, "-C", str(root), "status",
+                              "--porcelain", "--untracked-files=no"],
+                             text=True, capture_output=True, check=True, timeout=20)
+    if changed.stdout:
+        raise ValueError("tracked checkout is modified; use a clean pinned source checkout")
+    return commit
+
+
+def _write_private(path, text):
+    target = Path(path)
+    if target.exists() or target.is_symlink():
+        raise ValueError("refusing to overwrite an existing output file")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(target, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(text)
+
+
 def _files(root):
     cp = subprocess.run(["git", *GIT_OPTS, "-C", str(root), "ls-files", "-z"],
                         capture_output=True, check=True, timeout=20)
@@ -114,6 +139,7 @@ def bind(repository, rules=None, scope=None):
     root = Path(repository).resolve()
     if not (root / ".git").exists():
         raise ValueError("a local git checkout is required")
+    revision = _revision(root)
     all_rules = _rules()
     selected = list(all_rules) if rules is None else list(rules)
     if not selected or len(set(selected)) != len(selected) or any(
@@ -138,6 +164,7 @@ def bind(repository, rules=None, scope=None):
     for rule in selected:
         terms = [t for t in RULE_KEYWORDS[rule] if TERM.fullmatch(t)]
         hits = []
+        term_counts = {term: 0 for term in terms}
         for name in names:
             if len(hits) >= MAX_HITS_PER_RULE:
                 break
@@ -146,11 +173,14 @@ def bind(repository, rules=None, scope=None):
                 continue
             for n, line in enumerate(body, 1):
                 for term in terms:
+                    if term_counts[term] >= MAX_HITS_PER_TERM:
+                        continue
                     if re.search(r"(?<![A-Za-z0-9_])" + re.escape(term) + r"(?![A-Za-z0-9_])",
                                 line, re.IGNORECASE):
                         hits.append({"path": name, "line": n, "term": term,
                                     "line_sha256": hashlib.sha256(
                                         line.encode("utf-8")).hexdigest()})
+                        term_counts[term] += 1
                         break
                 if len(hits) >= MAX_HITS_PER_RULE:
                     break
@@ -163,6 +193,7 @@ def bind(repository, rules=None, scope=None):
         })
     return {
         "schema_version": 1, "classification": "LEXICAL_ANCHOR_LEADS",
+        "source_revision": revision,
         "code_files_scanned": len(names), "rules": report,
         "notice": ("A lexical hit is a place to read, never a confirmed source_anchor "
                    "or code_anchor. web_business_lab.bridge() still requires a human to "
@@ -188,9 +219,7 @@ def main(argv=None):
         text = json.dumps(result, indent=2, ensure_ascii=False)
         if args.out:
             out = Path(args.out)
-            if out.exists():
-                raise ValueError("refusing to overwrite an existing output file")
-            out.write_text(text, encoding="utf-8")
+            _write_private(out, text)
         else:
             print(text)
         return 0
