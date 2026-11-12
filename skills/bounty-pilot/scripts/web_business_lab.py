@@ -279,6 +279,71 @@ def plan(doc):
     }
 
 
+def bridge(review, anchors):
+    """Conservative manual-anchor handoff to web-root-cause-dedup schema.
+
+    Never accepts automatically guessed code anchors or labels a lead verified.
+    """
+    if (not isinstance(review, dict) or review.get("mode") != "web-business-lab" or
+            not isinstance(anchors, dict) or anchors.get("schema_version") != 1):
+        raise ValueError("business review and operator anchor-map are required")
+    revision = review.get("source_revision")
+    if (not HEX40.fullmatch(str(revision)) or
+            anchors.get("source_revision") != revision):
+        raise ValueError("anchor revision must exactly match reviewed source")
+    project = anchors.get("project")
+    if not isinstance(project, str) or not SAFE_ID.fullmatch(project):
+        raise ValueError("bounded project ID required")
+    entries = anchors.get("entries")
+    if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_CASES:
+        raise ValueError("bounded anchor entries required")
+    by_case = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {
+                "case_id", "source_file", "code_anchor", "trust_boundary_id",
+                "claimed_effect_id"}:
+            raise ValueError("exact anchor fields required")
+        case_id = entry["case_id"]
+        if not isinstance(case_id, str) or not SAFE_ID.fullmatch(case_id) or case_id in by_case:
+            raise ValueError("invalid or duplicate anchor case ID")
+        for name in ("source_file", "code_anchor", "trust_boundary_id",
+                     "claimed_effect_id"):
+            value = entry[name]
+            if not isinstance(value, str) or not re.fullmatch(
+                    r"[A-Za-z0-9_./:-]{1,160}", value):
+                raise ValueError("unsafe or empty anchor " + name)
+        file_name = entry["source_file"]
+        if file_name.startswith("/") or any(part in ("", ".", "..") for part in
+                                            file_name.split("/")):
+            raise ValueError("source_file must be a relative pinned source path")
+        by_case[case_id] = entry
+    candidates = []
+    for row in review.get("cases", []):
+        if row.get("classification") != "REPEATED_LOCAL_TRACE_LEAD":
+            continue
+        case_id = row.get("id")
+        if case_id not in by_case:
+            continue  # No speculative source anchor, no agent work order.
+        anchor = by_case[case_id]
+        proven_policy = row.get("invariant_basis") == "documented"
+        candidates.append({
+            "id": case_id, "source_file": anchor["source_file"],
+            "code_anchor": anchor["code_anchor"], "invariant_id": row["lead_kind"],
+            "trust_boundary_id": anchor["trust_boundary_id"],
+            "reviewed_root_cause_id": None,
+            "claimed_effect_id": anchor["claimed_effect_id"],
+            "evidence": {"reachability": 1, "trust_boundary": 1,
+                         "business_effect": 2 if proven_policy else 1,
+                         "novelty": 0, "testability": 2},
+            "evidence_digest": None,  # Supplied trace digests are not authenticated receipts.
+            "disposition": "unreviewed"
+        })
+    if not candidates:
+        raise ValueError("no repeated local leads with explicit source anchors")
+    return {"schema_version": 1, "project": project,
+            "pinned_revision": revision, "candidates": candidates}
+
+
 def _read(path):
     p = Path(path).expanduser()
     if p.is_symlink() or not p.is_file() or p.stat().st_size > 3_000_000:
@@ -321,26 +386,35 @@ def _demo():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "analyze", "demo"))
+    parser.add_argument("action", choices=("plan", "analyze", "demo", "bridge"))
     parser.add_argument("--input", help="private local plan or observations; never credentials")
+    parser.add_argument("--anchors", help="operator-supplied case to pinned source-anchor map")
     parser.add_argument("--out", required=True, help="private, new JSON output path")
     args = parser.parse_args(argv)
     try:
         if args.action == "demo":
-            if args.input is not None:
-                raise ValueError("demo does not accept --input")
+            if args.input is not None or args.anchors is not None:
+                raise ValueError("demo does not accept --input or --anchors")
             report = _demo()
         else:
             if not args.input:
-                raise ValueError("--input required for plan/analyze")
+                raise ValueError("--input required")
             data = _read(args.input)
-            report = plan(data) if args.action == "plan" else analyze(data)
+            if args.action == "bridge":
+                if not args.anchors:
+                    raise ValueError("bridge requires --anchors")
+                report = bridge(data, _read(args.anchors))
+            else:
+                if args.anchors is not None:
+                    raise ValueError("--anchors only valid for bridge")
+                report = plan(data) if args.action == "plan" else analyze(data)
         _write(args.out, report)
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
-    print(json.dumps({"out": args.out, "mode": report["mode"],
-                      "classification": report["classification"],
-                      "cases": len(report.get("cases", report.get("jobs", []))),
+    print(json.dumps({"out": args.out, "mode": report.get("mode", "web-root-cause-bridge"),
+                      "classification": report.get("classification", "UNVERIFIED_REVIEW_QUEUE"),
+                      "cases": len(report.get("cases", report.get("jobs",
+                                   report.get("candidates", [])))),
                       "confirmed_production_vulnerabilities": 0}))
     return 0
 
