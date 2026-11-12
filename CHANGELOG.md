@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.60.0 — DOM-XSS tracing, scheme-guard check and a local proof scaffold
+
+- `web_ts_flow.py` traces DOM sinks the same way it already traced backend ones.
+  Every function (not just route handlers - a browser-side component is normally
+  never called from a server route) is seeded with a fixed DOM-source identifier
+  set (`location`, `document.referrer`, `localStorage`, `sessionStorage`,
+  `document.cookie`) and traced to `innerHTML`/`outerHTML`/`dangerouslySetInnerHTML`/
+  `document.write`/`eval`/`new Function`, reported as `DOM_XSS_CANDIDATE_FLOW` with
+  any sanitizer call name seen in the chain surfaced as a cue, never a clearance.
+  `eval`/`new Function` fed by a backend request parameter is reported separately
+  as `SYNTACTIC_REQUEST_ARGUMENT_TO_CODE_EVALUATION` (server-side code injection,
+  a related but distinct class from DOM XSS). `web_ts_flow_parser.cjs` gained three
+  small additive AST cases (`new X(...)`, a property-assignment sink such as
+  `el.innerHTML = x`, and the `dangerouslySetInnerHTML={{__html: x}}` JSX
+  attribute) so these reach the sink matcher the same way a call argument already
+  did; the existing backend tracing is unchanged and fully regression-tested.
+- New `url-scheme-guard-check` (`url_scheme_guard_check.py`): parses researcher-
+  supplied candidate URLs with both `urllib` and real Node WHATWG `URL`, flagging
+  the classic `javascript://host/%0a...` shape where a dangerous protocol still
+  carries a parseable hostname - exactly what a hostname-only link guard misses.
+  Never fetches a URL or tests the target's own guard code.
+- New `dom-xss-poc-scaffold` (`dom_xss_poc_scaffold.py`): writes a static, local
+  candidate/control HTML pair demonstrating a DOM sink's execution mechanism
+  (an `onerror`-based marker for `innerHTML`/`dangerouslySetInnerHTML`, a split
+  `<script>` tag for `document.write`, a direct call for `eval`) for a researcher
+  to open themselves in a disposable, network-disabled browser profile. Not
+  executed in a browser by this tool - no browser is available to it - and
+  explicitly not a claim that any specific application is reachable; it only
+  proves the generic mechanism, the same division of labor `poc_scaffold.py`
+  already uses for backend candidate/control tests.
+
+All three verified end to end against a real, locally installed TypeScript
+5.9.3 and Node.js, not just hand-built index fixtures - `test_web_ts_flow.py`'s
+existing `BP_TYPESCRIPT_PARSER`-gated real-parser test is joined by a second one
+for the DOM-XSS fixture, and CI's `web-invariant-ci.yml` already installs a real
+TypeScript compiler for exactly this job. Full suite unaffected elsewhere:
+pre-existing backend-flow tests pass unchanged after the tracing core was
+refactored into a shared routine used by both the backend and DOM passes.
+
 ## 0.59.0 — route anchors and conservation sequences
 
 - New `business-route-bind` (`business_route_bind.py`): joins `web-route-ast`'s

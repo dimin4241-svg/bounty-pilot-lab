@@ -54,6 +54,20 @@ function nextPath(filename) {
 function isExport(node) {
   return !!(node.modifiers && node.modifiers.some(m => m.kind === ts.SyntaxKind.ExportKeyword));
 }
+function dangerousHtmlValue(attr) {
+  // `dangerouslySetInnerHTML={{__html: value}}`: find the `__html` property's value.
+  if (!attr.initializer || !ts.isJsxExpression(attr.initializer) || !attr.initializer.expression)
+    return null;
+  const obj = attr.initializer.expression;
+  if (!ts.isObjectLiteralExpression(obj)) return null;
+  for (const prop of obj.properties) {
+    if (ts.isPropertyAssignment(prop) &&
+        ((ts.isIdentifier(prop.name) && prop.name.text === '__html') ||
+         (ts.isStringLiteral(prop.name) && prop.name.text === '__html')))
+      return prop.initializer;
+  }
+  return null;
+}
 function parseFunction(sf, name, node, exported) {
   const params = node.parameters
     ? [...node.parameters].map(x => ts.isIdentifier(x.name) ? x.name.text : '')
@@ -68,6 +82,27 @@ function parseFunction(sf, name, node, exported) {
       if (c && calls.length < 150)
         calls.push({callee: c, line: location(sf, n),
           args: [...n.arguments].slice(0, 15).map(arg => ids(arg))});
+    }
+    // `new Function(payload)` / `new SomeSink(payload)`: same sink-argument shape as a call.
+    if (ts.isNewExpression(n)) {
+      const c = callee(n.expression);
+      if (c && calls.length < 150)
+        calls.push({callee: c, line: location(sf, n),
+          args: (n.arguments ? [...n.arguments] : []).slice(0, 15).map(arg => ids(arg))});
+    }
+    // `el.innerHTML = value` / `location.href = value`: a property write is not a call, but
+    // DOM-sink assignment is syntactically identical in shape to a one-argument sink call.
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isPropertyAccessExpression(n.left)) {
+      const c = callee(n.left);
+      if (c && calls.length < 150)
+        calls.push({callee: c, line: location(sf, n), args: [ids(n.right)]});
+    }
+    if (ts.isJsxAttribute(n) && ts.isIdentifier(n.name) &&
+        n.name.text === 'dangerouslySetInnerHTML') {
+      const html = dangerousHtmlValue(n);
+      if (html && calls.length < 150)
+        calls.push({callee: 'dangerouslySetInnerHTML', line: location(sf, n), args: [ids(html)]});
     }
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) &&
         n.initializer && aliases.length < 100) {
