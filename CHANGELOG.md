@@ -7,8 +7,11 @@
   never called from a server route) is seeded with a fixed DOM-source identifier
   set (`location`, `document.referrer`, `localStorage`, `sessionStorage`,
   `document.cookie`) and traced to `innerHTML`/`outerHTML`/`dangerouslySetInnerHTML`/
-  `document.write`/`eval`/`new Function`, reported as `DOM_XSS_CANDIDATE_FLOW` with
-  any sanitizer call name seen in the chain surfaced as a cue, never a clearance.
+  `document.write`/`eval`/`new Function`, reported as `DOM_XSS_CANDIDATE_FLOW`.
+  Navigation and cookie-write sinks are separate classes
+  (`UNTRUSTED_NAVIGATION_CANDIDATE_FLOW` and
+  `UNTRUSTED_COOKIE_WRITE_CANDIDATE_FLOW`), not mislabeled XSS. Sanitizer
+  names are propagated as cues across calls, never proof of safety.
   `eval`/`new Function` fed by a backend request parameter is reported separately
   as `SYNTACTIC_REQUEST_ARGUMENT_TO_CODE_EVALUATION` (server-side code injection,
   a related but distinct class from DOM XSS). `web_ts_flow_parser.cjs` gained three
