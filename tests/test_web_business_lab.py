@@ -110,6 +110,50 @@ class BusinessLabTests(unittest.TestCase):
         self.assertEqual(out["external_network_requests"], 0)
         self.assertEqual(out["classification"], "OFFLINE_TEST_DESCRIPTIONS_NOT_EXECUTED")
 
+    def test_source_anchored_bridge_is_accepted_by_existing_dedup(self):
+        root_dedup = load("web_root_cause_dedup")
+        review = lab.analyze(fixture.generate(defective=True, rules=["unpaid-credit"]))
+        case_id = review["cases"][0]["id"]
+        anchors = {
+            "schema_version": 1,
+            "project": "owned-sqlite-lab",
+            "source_revision": review["source_revision"],
+            "entries": [{
+                "case_id": case_id,
+                "source_file": "src/payments.py",
+                "code_anchor": "credit_balance",
+                "trust_boundary_id": "psp_to_ledger",
+                "claimed_effect_id": "balance_delta"
+            }]
+        }
+        queue = lab.bridge(review, anchors)
+        self.assertEqual(queue["candidates"][0]["evidence_digest"], None)
+        self.assertEqual(queue["candidates"][0]["disposition"], "unreviewed")
+        ranked = root_dedup.analyze(queue)
+        self.assertEqual(ranked["candidates"], 1)
+        self.assertEqual(len(ranked["groups"]), 1)
+        self.assertEqual(ranked["confirmed_vulnerabilities"], 0)
+
+    def test_bridge_refuses_revision_mismatch_and_unanchored_leads(self):
+        review = lab.analyze(fixture.generate(defective=True, rules=["mfa-gate"]))
+        anchors = {"schema_version": 1, "project": "owned-lab",
+                   "source_revision": "a" * 40, "entries": [{
+                       "case_id": "sqlite-mfa-gate",
+                       "source_file": "src/auth.py", "code_anchor": "verify",
+                       "trust_boundary_id": "session", "claimed_effect_id": "credential"
+                   }]}
+        with self.assertRaisesRegex(ValueError, "revision"):
+            lab.bridge(review, anchors)
+        anchors["source_revision"] = review["source_revision"]
+        anchors["entries"][0]["source_file"] = "../outside.py"
+        with self.assertRaisesRegex(ValueError, "relative"):
+            lab.bridge(review, anchors)
+        anchors["entries"][0]["source_file"] = "src/auth.py"
+        anchors["entries"][0]["case_id"] = "not-this-case"
+        with self.assertRaisesRegex(ValueError, "no repeated"):
+            lab.bridge(review, anchors)
+
+
     def test_write_private_create_only_and_duplicate_json_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "result.json"
