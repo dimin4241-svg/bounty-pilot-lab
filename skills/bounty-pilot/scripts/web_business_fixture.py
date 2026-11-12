@@ -18,7 +18,7 @@ except ImportError:
             "account-owner", "mfa-gate", "session-revocation", "reset-one-use",
             "oauth-binding", "email-verification", "unpaid-credit", "event-replay",
             "webhook-binding", "refund-replay", "subscription-entitlement",
-            "cancellation-stale", "cross-tenant-credit")
+            "cancellation-stale", "cross-tenant-credit", "cross-actor-disclosure")
     }
 
 SOURCE_REVISION = hashlib.sha1(b"owned-synthetic-sqlite-v1-not-a-target-commit").hexdigest()
@@ -192,6 +192,13 @@ class LocalApp:
             self._entitlement(False)
         return {"cancelled_now": True, "grace_period_allowed": grace}
 
+    def read_profile(self, *, authorized):
+        # Fixed mode: an unauthorized read of another actor's profile must be refused,
+        # not served with private fields silently omitted or redacted after the fact.
+        sensitive_fields_returned = authorized or self.defective
+        return {"actor_authorized": authorized,
+                "sensitive_fields_returned": sensitive_fields_returned}
+
 
 def _record(app, kind, action, *, actor="alice", subject="alice",
             payment_event_ref=None, refund_event_ref=None):
@@ -272,6 +279,11 @@ def _run(rule, *, defective, candidate, repetition):
                 lambda: app.credit("payment-1", authorized=not candidate,
                                    cross_tenant=candidate), actor=actor,
                 payment_event_ref="payment-1"))
+        elif rule == "cross-actor-disclosure":
+            actor = "bob" if candidate else "alice"
+            events.append(_record(app, "resource_read",
+                lambda: app.read_profile(authorized=not candidate),
+                actor=actor, subject="alice"))
         else:
             raise ValueError("unsupported synthetic scenario")
         receipt = {"fixture": "sqlite", "defective": defective,

@@ -72,6 +72,9 @@ target economics. A low denominator is **not a veto** on a verified bug.
 Read `references/targets.md` for the correct uncertainty bounds.
 Use `agent_dispatch.py` only when independent bounded readings are
 needed; the dispatcher **plans** before it runs any model.
+Before closing out, run `sibling-finder`: the same mistake is nearly
+always copied, and it leads a structurally near-duplicate function pair
+where only one side has an access-check cue.
 
 ### B. Researcher-owned Web/API workflow or Standoff / BI.ZONE preparation
 
@@ -82,11 +85,16 @@ For **account takeover, identity lifecycle, balances, payments, refunds,
 subscriptions and multi-step business logic**, read
 references/web-business-lab.md. Run web-business-lab plan/analyze/demo for
 offline invariant planning, paired-trace review, an owned synthetic
-SQLite example or a source-anchored handoff to web-root-cause-dedup.
-For independently authorized owned HTTP fixtures, web-business-local-replay
+SQLite example or a source-anchored handoff to web-root-cause-dedup. Its
+14 rules include `cross-actor-disclosure` (pure-read IDOR/BOLA, no mutation
+needed); `business-schema-bind` leads a `source_anchor` lexically instead
+of from scratch. For independently authorized owned HTTP fixtures, web-business-local-replay
 supports strictly loopback-only candidate/control action sequences with
 redacted state observations; it never reaches a third-party host. This is not a live login or payment runner; it does not
 authenticate receipts or establish production impact.
+When only a **sequence** of actions is wrong, not any single one, search
+it the way `references/web-sequence-models.md` applies `scenario_fuzz.py`
+(domain-agnostic, not Solidity-specific) to Web ATO/payment examples.
 
 For **owned loopback fixtures**:
 - `web-workflow-capture` imports already saved owner/outsider HAR

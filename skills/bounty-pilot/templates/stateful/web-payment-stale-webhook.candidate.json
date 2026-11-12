@@ -1,0 +1,25 @@
+{
+  "state": {
+    "entitlement_active": 1,
+    "cancelled": 0,
+    "payment_confirmed_for_current_term": 1,
+    "unauthorized_entitlement_grants": 0
+  },
+  "invariants": [
+    {"id": "no-entitlement-after-cancel-without-new-payment", "kind": "compare",
+     "left": {"path": "unauthorized_entitlement_grants"}, "op": "eq", "right": {"const": "0"},
+     "basis": "documented: an entitlement may only become active through a confirmed payment for the currently active subscription term, never through a webhook for a term that was already cancelled"}
+  ],
+  "actors": ["owner", "webhook_processor"],
+  "actions": [
+    {"name": "cancel_subscription", "actor": "owner",
+     "guards": [{"path": "entitlement_active", "op": "eq", "value": 1}],
+     "effects": [{"op": "set", "path": "entitlement_active", "value": 0},
+                {"op": "set", "path": "cancelled", "value": 1},
+                {"op": "set", "path": "payment_confirmed_for_current_term", "value": 0}]},
+    {"name": "late_webhook_reactivates", "actor": "webhook_processor",
+     "guards": [{"path": "cancelled", "op": "eq", "value": 1}],
+     "effects": [{"op": "set", "path": "entitlement_active", "value": 1},
+                {"op": "add", "path": "unauthorized_entitlement_grants", "value": 1}]}
+  ]
+}

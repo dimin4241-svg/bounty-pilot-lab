@@ -18,6 +18,18 @@
 
 ---
 
+## 0.58.0 — access and money blind spots: disclosure, sequences, siblings, anchors
+
+web-business-lab's 13 rules become 14 with `cross-actor-disclosure`, the
+pure-read IDOR/BOLA case (another actor's private fields, no mutation
+required). A new [sequence-models guide](skills/bounty-pilot/references/web-sequence-models.md)
+shows `scenario_fuzz` finding a two-step Web ATO/payment violation that no
+single request shows on its own. New `sibling-finder` flags a structurally
+near-duplicate function where only one side carries an access-check cue
+(the copied-and-missed-the-guard class). New `business-schema-bind` turns
+each web-business-lab rule into lexical leads against the real target
+checkout, instead of a blank page for `plan()`'s required `source_anchor`.
+
 ## 0.57.0 — offline account takeover and payment-integrity research
 
 New web-business-lab plan/analyze/demo routes review 13 authorization,

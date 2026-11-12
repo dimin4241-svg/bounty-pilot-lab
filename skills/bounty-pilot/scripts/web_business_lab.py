@@ -46,6 +46,9 @@ RULES = {
                             "Paid entitlement retained after cancellation without allowed grace"),
     "cross-tenant-credit": ("payment", "CROSS_TENANT_CREDIT",
                             "Unauthorized cross-tenant actor credited another balance"),
+    "cross-actor-disclosure": ("disclosure", "CROSS_ACTOR_DISCLOSURE",
+                               "Unauthorized actor received another actor's private "
+                               "non-financial resource fields"),
 }
 SENSITIVE = {"sensitive_account_update", "email_change", "password_reset"}
 
@@ -77,7 +80,7 @@ def _matching(event, rule, seen):
     kind = _event_kind(event)
     if kind not in {"sensitive_account_update", "email_change", "password_reset",
                     "oauth_login", "credit", "refund", "subscription_activated",
-                    "subscription_cancelled"}:
+                    "subscription_cancelled", "resource_read"}:
         return False
     if rule == "account-owner":
         return (kind in SENSITIVE and _increase(event, "credential_version") is True
@@ -148,6 +151,13 @@ def _matching(event, rule, seen):
                 and after.get("entitlement_active") is True
                 and _flag(event, "cancelled_now") is True
                 and _flag(event, "grace_period_allowed") is False)
+    if rule == "cross-actor-disclosure":
+        return (kind == "resource_read"
+                and isinstance(event.get("actor"), str)
+                and isinstance(event.get("subject"), str)
+                and event.get("actor") != event.get("subject")
+                and _flag(event, "actor_authorized") is False
+                and _flag(event, "sensitive_fields_returned") is True)
     raise ValueError("unknown invariant")
 
 
@@ -269,7 +279,9 @@ def plan(doc):
                             "ledger or session state and exact authorization policy."),
              "source_of_truth": ("Identity database and session ledger" if
                                  RULES[r][0] == "identity" else
-                                 "Payment provider confirmation and append-only ledger"),
+                                 "Payment provider confirmation and append-only ledger" if
+                                 RULES[r][0] == "payment" else
+                                 "Resource authorization policy and access/audit log"),
              "required": ["source_anchor", "documented_or_inferred_invariant",
                           "two_candidate_replays", "two_negative_controls",
                           "native_effect", "independent_review", "novelty_gate"]}
