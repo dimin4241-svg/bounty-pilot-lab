@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.60.1 — pinned offline proof gates for argument binding and specifications
+
+- New `web-evidence-gates argument-binding` checks exact pinned Java/Smali
+  Retrofit declaration parameter annotations against the invocation argument
+  order. It models absolute/protocol-relative `@Url` versus relative/empty
+  destination classes; it cannot infer cookie sensitivity, live URI values,
+  reachability, actual HTTP delivery or production impact. A failed binding
+  blocks a claim rather than producing a vulnerability score.
+- New `web-evidence-gates spec-implementation` checks SHA-256-pinned
+  specification quotes, code anchors and optional distinct researcher-supplied
+  candidate/control receipts. `SPEC_CONFIRMED` remains distinct from inferred
+  design and hypotheses. Receipts are not authenticated and nothing is
+  promoted to `verified` or report-ready automatically.
+- New offline regression tests cover wrong annotation order, direct Java/Smali
+  calls, absolute/relative/empty URL forms, stale source hashes, old documents,
+  duplicate controls and symlink rejection. The standalone commands issue no
+  requests to third-party systems.
+
+
 ## 0.60.0 — DOM-XSS tracing, scheme-guard check and a local proof scaffold
 
 - `web_ts_flow.py` traces DOM sinks the same way it already traced backend ones.

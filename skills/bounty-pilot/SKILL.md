@@ -81,6 +81,11 @@ where only one side has an access-check cue.
 Read `references/web-hunt-loop-phase5.md` and
 `references/web-invariants-phase3.md`.
 
+Before dynamic-URL/Retrofit or documentation-backed Web/API impact claims, read
+`references/web-proof-gates.md` and run the matching offline
+`web-evidence-gates` preflight on pinned source. Structural evidence is not
+proof of a deployed exploit, runtime behavior or authorization.
+
 For **account takeover, identity lifecycle, balances, payments, refunds,
 subscriptions and multi-step business logic**, read
 references/web-business-lab.md. Run web-business-lab plan/analyze/demo for

@@ -12011,6 +12011,7 @@ def build_parser():
 HELPER_COMMANDS = {
     'web-invariants': ('web_invariant_engine', 'offline OpenAPI operation graph, owned-account matrix, state and parser leads'),
     'web-business-lab': ('web_business_lab', 'offline account takeover and payments integrity plan, paired trace review and synthetic SQLite demonstration'),
+    'web-evidence-gates': ('web_evidence_gates', 'pinned offline argument-binding and specification-to-implementation evidence preflights'),
     'web-business-local-replay': ('web_business_local_replay', 'opt-in, multistep business effect capture on literal 127.0.0.1 owned fixtures'),
     'web-local-replay': ('web_local_replay', 'two-owned-account evidence on literal loopback only'),
     'web-route-ast': ('web_route_ast', 'offline Python AST route and guard-name cues'),
