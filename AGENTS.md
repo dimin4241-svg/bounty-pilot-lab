@@ -7,6 +7,16 @@ directories, logs or credentials. The toolkit being public does not make any fin
 
 Preserve these invariants when editing:
 
+- **Web argument/spec gates are non-attesting preflights.** A `@Header` and
+  `@Url` must be matched by parameter position to the actual call, never by
+  an assumed order or a model-supplied URI. Absolute `@Url` replaces the
+  `baseUrl` destination; relative/empty URLs only create conditional routing
+  leads without proving sensitive header state or production reachability.
+  Every specification invariant needs a pinned document quote and source
+  anchor, with `SPEC_CONFIRMED` distinct from inferred design/hypothesis.
+  Even a paired receipt is operator supplied, not authenticated execution;
+  the gates never promote a finding to verified or authorize live testing.
+
 - **Never commit, log, echo, pass into tests, or otherwise persist real
   Anthropic API secrets.** The `opus5_charon_audit.py` trial uses
   only a local environment key, exact pinned public source, preflight
