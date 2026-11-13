@@ -18,6 +18,17 @@
 
 ---
 
+## 0.60.1 — offline argument-binding and specification evidence gates
+
+New `web-evidence-gates` adds an opt-in, evidence-first review preflight before
+impact/severity claims. `argument-binding` pins source SHA-256 anchors and checks
+Java/Smali Retrofit `@Header`/`@Url` parameter ordering against calls, then
+classifies modeled URL forms (absolute, relative, empty) without claiming a
+production request. `spec-implementation` checks pinned requirement quotes,
+implementation anchors and distinct operator-supplied candidate/control receipt
+hashes without claiming native execution or deployment. See the
+[proof-gates guide](skills/bounty-pilot/references/web-proof-gates.md).
+
 ## 0.60.0 — DOM-XSS tracing, scheme-guard check and a local proof scaffold
 
 `web-ts-flow` now traces DOM sinks (`innerHTML`, `dangerouslySetInnerHTML`,
