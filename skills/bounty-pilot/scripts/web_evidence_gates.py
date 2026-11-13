@@ -204,6 +204,11 @@ def _arguments(block, method, syntax):
     return registers[1:]  # receiver register is first
 
 
+def _safe_expression(value):
+    # Never persist a literal, constructed URL, credential or full call expression.
+    return value if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]{0,80}", value) else "<redacted-expression>"
+
+
 def _routing(value):
     if not isinstance(value, str) or len(value) > 800 or any(ord(c) < 32 for c in value):
         return "unknown"
@@ -257,9 +262,9 @@ def argument_binding(data, repo, _documents=None, _evidence=None):
                       else "STATIC_ROUTING_ONLY")
             cases.append({"id": case_id, "status": status,
                           "url_parameter_index": url_positions[0],
-                          "url_argument": invoked[url_positions[0]],
+                          "url_argument": _safe_expression(invoked[url_positions[0]]),
                           "header_parameter_index": indices[0],
-                          "header_argument": invoked[indices[0]],
+                          "header_argument": _safe_expression(invoked[indices[0]]),
                           "routing": routes,
                           "unverified": ["runtime reachability", "URL value provenance",
                                          "header value provenance", "simultaneous session state",
