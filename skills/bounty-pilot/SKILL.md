@@ -81,13 +81,10 @@ where only one side has an access-check cue.
 Read `references/web-hunt-loop-phase5.md` and
 `references/web-invariants-phase3.md`.
 
-Before raising an Android/Retrofit or other dynamic-URL finding to an impact claim,
-read `references/web-proof-gates.md` and run `web-evidence-gates argument-binding`
-on pinned local source. Verify parameter annotations against invocation argument order,
-URL forms, header provenance and unresolved runtime conditions. For documentation-
-backed Web/API business invariants, run `web-evidence-gates spec-implementation`
-with pinned source and documentation anchors. Neither preflight proves an exploit,
-a deployed revision or authorization, and both remain offline.
+Before dynamic-URL/Retrofit or documentation-backed Web/API impact claims, read
+`references/web-proof-gates.md` and run the matching offline
+`web-evidence-gates` preflight on pinned source. Structural evidence is not
+proof of a deployed exploit, runtime behavior or authorization.
 
 For **account takeover, identity lifecycle, balances, payments, refunds,
 subscriptions and multi-step business logic**, read
