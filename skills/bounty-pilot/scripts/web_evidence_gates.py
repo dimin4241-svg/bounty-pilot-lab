@@ -61,7 +61,12 @@ def _head(repo):
                "-C", str(repo), "rev-parse", "HEAD"]
     done = subprocess.run(command, capture_output=True, timeout=20, env=env,
                           check=True)
-    return done.stdout.decode("ascii").strip()
+    result = done.stdout.decode("ascii").strip()
+    status = subprocess.run(command[:-2] + ["status", "--porcelain", "--untracked-files=normal"],
+                            capture_output=True, timeout=20, env=env, check=True)
+    if status.stdout.strip():
+        raise ValueError("source checkout is dirty; pin a clean separate checkout")
+    return result
 
 
 def _root(path):
@@ -86,6 +91,9 @@ def _anchor(root, anchor):
             not isinstance(excerpt, str) or not excerpt.strip() or len(excerpt) > 2000):
         raise ValueError("invalid anchored path/hash/line/text")
     path = root / relative
+    resolved = path.resolve(strict=True)
+    if root not in resolved.parents:
+        raise ValueError("anchor resolves outside root")
     data = _regular_bytes(path, MAX_FILE)
     if hashlib.sha256(data).hexdigest() != digest:
         raise ValueError("anchor file digest differs from pinned bytes")
@@ -273,7 +281,11 @@ def _receipt(root, obj):
     digest = obj.get("sha256")
     if not isinstance(digest, str) or not SHA256.fullmatch(digest):
         raise ValueError("invalid evidence digest")
-    contents = _regular_bytes(root / path, MAX_FILE)
+    receipt = root / path
+    resolved = receipt.resolve(strict=True)
+    if root not in resolved.parents:
+        raise ValueError("receipt resolves outside evidence root")
+    contents = _regular_bytes(receipt, MAX_FILE)
     if hashlib.sha256(contents).hexdigest() != digest:
         raise ValueError("evidence hash mismatch")
     if obj.get("exit_code") != 0 or obj.get("executed") is not True:
