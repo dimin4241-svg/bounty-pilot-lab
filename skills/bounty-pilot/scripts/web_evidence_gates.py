@@ -100,7 +100,7 @@ def _anchor(root, anchor):
 
 def _block(root, anchor):
     # A parse region is bounded, anchored by an exact first line and full-file SHA.
-    excerpt = _anchor(root, anchor)
+    _anchor(root, anchor)
     relative = anchor["path"]
     lines = _regular_bytes(root / relative, MAX_FILE).decode("utf-8").splitlines()
     count = anchor.get("span", 1)
