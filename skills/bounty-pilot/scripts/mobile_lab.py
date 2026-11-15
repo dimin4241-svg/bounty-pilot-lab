@@ -24,7 +24,10 @@ ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 SOURCE_SUFFIXES = {".java", ".kt", ".kts", ".smali", ".swift", ".m", ".mm", ".dart"}
 ANDROID_SOURCE = {".java", ".kt", ".kts", ".smali", ".dart"}
 IOS_SOURCE = {".swift", ".m", ".mm"}
-MAX_ARCHIVE = 200 * 1024 * 1024
+# Only archive metadata members are decompressed; archive bytes are streamed.
+MAX_ARCHIVE = 2 * 1024 * 1024 * 1024
+MAX_TOTAL_UNCOMPRESSED = 16 * 1024 * 1024 * 1024
+MAX_SINGLE_MEMBER = 4 * 1024 * 1024 * 1024
 MAX_MANIFEST = 2 * 1024 * 1024
 MAX_ENTRIES = 40000
 MAX_FILES = 1500
@@ -105,6 +108,35 @@ def _regular_file(path, size_limit):
     return data
 
 
+
+
+def _regular_digest_stream(path, size_limit):
+    """Hash an archive in 1-MiB chunks, rejecting symlinks and changed files."""
+    path = Path(path)
+    pre = path.lstat()
+    if not stat.S_ISREG(pre.st_mode) or pre.st_size > size_limit:
+        raise ValueError("archive must be a regular non-symlink file within size limit")
+    fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (pre.st_dev, pre.st_ino):
+            raise ValueError("archive was replaced before it could be opened")
+        h = hashlib.sha256()
+        count = 0
+        while True:
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            count += len(chunk)
+            if count > size_limit:
+                raise ValueError("archive exceeds maximum size")
+            h.update(chunk)
+        post = os.fstat(stream.fileno())
+        if (post.st_size != count or post.st_mtime_ns != opened.st_mtime_ns
+                or post.st_ctime_ns != opened.st_ctime_ns):
+            raise ValueError("archive changed during hashing")
+        return h.hexdigest(), count
+
 def _name_safe(name):
     parts = name.replace("\\", "/").split("/")
     return not (name.startswith("/") or any(p in ("", ".", "..") for p in (parts[:-1] if name.endswith("/") else parts))
@@ -121,7 +153,12 @@ def _zip_index(path):
         if len(entries) > MAX_ENTRIES:
             raise ValueError("archive has too many entries")
         found = set()
+        declared_uncompressed = 0
         for item in entries:
+            declared_uncompressed += item.file_size
+            if (item.file_size > MAX_SINGLE_MEMBER
+                    or declared_uncompressed > MAX_TOTAL_UNCOMPRESSED):
+                raise ValueError("archive declares excessive uncompressed content")
             if not _name_safe(item.filename):
                 raise ValueError("unsafe archive member path")
             if item.filename in found:
@@ -268,8 +305,8 @@ def _platform_from_file(path):
 
 def _inspect_artifact(path):
     platform = _platform_from_file(path)
-    raw = _regular_file(path, MAX_ARCHIVE)
-    meta = {"artifact_sha256": _sha(raw), "artifact_bytes": len(raw),
+    digest, archive_size = _regular_digest_stream(path, MAX_ARCHIVE)
+    meta = {"artifact_sha256": digest, "artifact_bytes": archive_size,
             "platform": platform, "binary_code_inspected": False}
     with _zip_index(path) as archive:
         names = set(archive.namelist())
