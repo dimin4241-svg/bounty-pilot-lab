@@ -44,7 +44,7 @@ RULES = {
         "webview-bridge": r"\b(?:addJavascriptInterface|JavascriptInterface|WebMessageListener|postWebMessage)\b",
         "file-input": r"\b(?:ContentResolver|OpenableColumns\.DISPLAY_NAME|openInputStream|FileProvider|content://)\b",
         "file-output": r"\b(?:FileOutputStream|openFileOutput|Files\.copy|copyTo|openOutputStream)\s*\(",
-        "api-operation": r"\b(?:Retrofit|@POST|@PUT|@PATCH|@DELETE|enqueue|execute)\b",
+        "api-operation": r"\b(?:Retrofit|@POST|@PUT|@PATCH|@DELETE|OkHttpClient|RequestBody|HttpURLConnection)\b",
         "oauth-flow": r"\b(?:AuthorizationRequest|CustomTabsIntent|redirect_uri|code_verifier|OAuth)\b",
         "guard-cue": r"\b(?:checkCallingPermission|enforceCallingPermission|checkPermission|requireNotNull|isAllowed|isAuthorized)\b",
         "dynamic-code": r"\b(?:DexClassLoader|PathClassLoader|System\.loadLibrary|loadDex)\b",
