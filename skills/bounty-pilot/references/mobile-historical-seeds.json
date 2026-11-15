@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "description": "Historical public mobile security mechanisms for research prompts, not benchmark fixtures or proof of any current vulnerability.",
+  "verified_native_fixtures": 0,
+  "cases": [
+    {
+      "id": "CVE-2022-28799",
+      "platform": "android",
+      "product": "TikTok Android",
+      "class": "deeplink-webview",
+      "families": [
+        "IPC_TO_WEBVIEW_REVIEW",
+        "WEBVIEW_BRIDGE_REVIEW"
+      ],
+      "reference": "https://nvd.nist.gov/vuln/detail/CVE-2022-28799",
+      "fixture_status": "REFERENCE_ONLY"
+    },
+    {
+      "id": "CVE-2022-30746",
+      "platform": "android",
+      "product": "Samsung SmartThings",
+      "class": "webview-bridge",
+      "families": [
+        "IPC_TO_WEBVIEW_REVIEW",
+        "WEBVIEW_BRIDGE_REVIEW"
+      ],
+      "reference": "https://nvd.nist.gov/vuln/detail/CVE-2022-30746",
+      "fixture_status": "REFERENCE_ONLY"
+    },
+    {
+      "id": "CVE-2024-26131",
+      "platform": "android",
+      "product": "Element Android",
+      "class": "inter-component-trust",
+      "families": [
+        "NESTED_IPC_REVIEW",
+        "EXTERNAL_RESULT_REVIEW"
+      ],
+      "reference": "https://nvd.nist.gov/vuln/detail/CVE-2024-26131",
+      "fixture_status": "REFERENCE_ONLY"
+    },
+    {
+      "id": "CVE-2024-26132",
+      "platform": "android",
+      "product": "Element Android",
+      "class": "inter-component-trust",
+      "families": [
+        "NESTED_IPC_REVIEW",
+        "EXTERNAL_RESULT_REVIEW"
+      ],
+      "reference": "https://nvd.nist.gov/vuln/detail/CVE-2024-26132",
+      "fixture_status": "REFERENCE_ONLY"
+    },
+    {
+      "id": "CVE-2019-11932",
+      "platform": "android",
+      "product": "WhatsApp Android",
+      "class": "native-gif-parser",
+      "families": [
+        "NATIVE_PARSER_FUTURE"
+      ],
+      "reference": "https://nvd.nist.gov/vuln/detail/CVE-2019-11932",
+      "fixture_status": "REFERENCE_ONLY"
+    },
+    {
+      "id": "CVE-2020-1895",
+      "platform": "android",
+      "product": "Instagram Android",
+      "class": "native-image-parser",
+      "families": [
+        "NATIVE_PARSER_FUTURE"
+      ],
+      "reference": "https://nvd.nist.gov/vuln/detail/CVE-2020-1895",
+      "fixture_status": "REFERENCE_ONLY"
+    },
+    {
+      "id": "CVE-2025-55177",
+      "platform": "ios",
+      "product": "WhatsApp iOS",
+      "class": "linked-device-message-auth",
+      "families": [
+        "IOS_CALLBACK_BINDING_REVIEW"
+      ],
+      "reference": "https://nvd.nist.gov/vuln/detail/CVE-2025-55177",
+      "fixture_status": "REFERENCE_ONLY"
+    }
+  ],
+  "notes": [
+    "Each CVE needs independent original-source and affected-version validation before use.",
+    "Family mappings are broad teaching tags, not statements of exact CVE root cause.",
+    "The synthetic two-pair CLI benchmark does not use these CVEs."
+  ]
+}
