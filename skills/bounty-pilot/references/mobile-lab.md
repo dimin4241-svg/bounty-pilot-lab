@@ -84,6 +84,66 @@ or claim authorization, information disclosure, credential exfiltration or RCE.
 Paired synthetic controls test that constants and irrelevant methods do not
 produce the same chain; a successful synthetic test is not proof on a target.
 
+## Phase 3: conservative cross-file calls and owned-fixture native probes
+
+The crossfile subcommand links *explicit* and *uniquely matched*
+Java/Kotlin class or constructed-instance calls, plus Swift class/struct
+qualified calls, across files. It propagates an observed local source
+assignment or selected mobile entrypoint parameter through up to three
+inter-file edges to a sensitive sink. It does not resolve dynamic dispatch,
+overloads, imported static method aliases, nested argument calls,
+cross-file return values, Objective-C messages or Smali inter-file methods.
+The source and sink each carry an independent file digest and line anchor.
+Class/receiver matching remains a conservative **lexical approximation**,
+not compiler resolution or evidence that an external actor can invoke it.
+
+    python3 "$BP" mobile-lab crossfile \
+      --sources /private/decompiled-src --platform android \
+      --out /private/run/mobile-crossfile.json
+
+For Swift source, use platform ios. On ambiguity the analyzer *drops*
+the edge rather than picking a target. Source and sink bytes are never
+included in the resulting JSON. Findings remain UNVERIFIED and
+NOT_ESTABLISHED.
+
+The native-plan command produces an offline protocol description for a
+dedicated **operator-owned synthetic fixture**; the native-run command is
+separately opted-in. Its hard-coded package/bundle is
+org.bountypilot.fixture and its deep-link scheme is bpilottest. It refuses
+physical Android serials and non-UDID iOS targets, and checks emulator or
+booted simulator status before issuing any app action.
+
+    python3 "$BP" mobile-lab native-plan \
+      --platform android --out /private/run/mobile-native-plan.json
+
+    python3 "$BP" mobile-lab native-run \
+      --platform android --device-id emulator-5554 \
+      --confirm-owned-fixture --out /private/run/mobile-native-pair.json
+
+For a booted iOS Simulator supply platform ios and its literal UUID
+device identifier. This runner only works **after you independently build
+and install an owned synthetic fixture** implementing the following
+protocol: register bpilottest://probe/candidate and /control; accept a
+fresh nonce query; write files/bpilot-{phase}.json in Android app storage
+or Documents/bpilot-{phase}.json in the iOS app data container. Each
+document must contain schema_version=1, phase, nonce,
+fixture_package=org.bountypilot.fixture, a lowercase 64-digit
+fixture_build_sha256, and a boolean sink_seen, consistent across the pair.
+The app must issue a new witness on each invocation, not replay old data.
+A comparison expects candidate=true, control=false as a differential
+observation **of that fixture only**.
+
+The runner invokes fixed adb or xcrun commands without an arbitrary shell,
+external endpoints, injected package names or credentials. It does not
+install APK/IPA, generate test accounts, test other applications, or
+intercept user data. A clean paired outcome is labelled
+PAIRED_SYNTHETIC_FIXTURE_OBSERVATION with UNATTESTED_SELF_REPORT, **never**
+a proven vulnerability or verified source-to-sink path in production.
+
+CI exercises mocked native execution with paired witnesses and rejects
+stale nonces, non-emulator serials, missing confirmation and controls with
+the same effect. It does not boot a real simulator or run a real native app.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
@@ -108,8 +168,8 @@ Before treating a lead as a reportable finding, verify exact app/OS/SDK version,
 scope, real caller identity, runtime reachability, the protected action, paired
 candidate/negative control, independent authorization policy and reviewer
 adjudication. Use the existing experimenter, program-scope and evidence-gate
-machinery for these subsequent steps. **This version has no dynamic mobile
-runner, no native taint analysis and no independently authenticated receipts.**
+machinery for these subsequent steps. **This version only has an opt-in synthetic fixture runner, no native taint
+analysis, no production target execution and no independently authenticated receipts.**
 
 ## Input safety and reproducibility
 
@@ -134,8 +194,8 @@ runner, no native taint analysis and no independently authenticated receipts.**
    deliberately narrower than this.
 2. Deep-link / App Link / OAuth callback protocol checks with actual origin
    binding and app-claimant validation, not keyword matching.
-3. Operator-approved isolated Android/iOS runtime candidate+negative-control
-   receipts attached to code-version anchors.
+3. Ship and test a maintained Android/iOS synthetic fixture app, and expand
+   scoped runtime receipts beyond the current fixture-only self-report protocol.
 4. Independently licensed historical CVE fixtures, corrected paired variants
    and blind A/B evaluation against existing Bounty Pilot.
 5. Analysis of native parsers and dependency provenance.
