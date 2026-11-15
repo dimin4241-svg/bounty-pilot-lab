@@ -112,6 +112,16 @@ def _write_new(path, report):
         stream.write("\n")
 
 
+def _preflight_report(path, sources_out, artifact):
+    p = Path(path).expanduser().absolute()
+    sources = Path(sources_out).expanduser().absolute()
+    original = Path(artifact).expanduser().absolute()
+    if (p.is_symlink() or p.exists() or not p.parent.is_dir()
+            or p.parent.is_symlink() or p == original
+            or p == sources or sources in p.parents):
+        raise ValueError("report must be NEW, separate from APK and decompiled sources")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--artifact", required=True)
@@ -122,6 +132,7 @@ def main(argv=None):
     p.add_argument("--out", required=True)
     args = p.parse_args(argv)
     try:
+        _preflight_report(args.out, args.sources_out, args.artifact)
         result = analyze(args.artifact, args.sources_out, args.tool,
                          args.confirm_isolated_local_analysis, args.timeout)
         _write_new(args.out, result)
