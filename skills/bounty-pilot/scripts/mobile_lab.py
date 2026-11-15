@@ -494,6 +494,11 @@ def main(argv=None):
     inspect.add_argument("--sources")
     inspect.add_argument("--platform", choices=sorted(VALID_PLATFORMS))
     inspect.add_argument("--out", required=True)
+    flow = cmds.add_parser("flow", help="bounded function-level lexical def-use leads; no runtime proof")
+    flow.add_argument("--sources", required=True)
+    flow.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
+    flow.add_argument("--max-leads", type=int, default=120)
+    flow.add_argument("--out", required=True)
     bench = cmds.add_parser("benchmark", help="run 2 synthetic positive/control pairs")
     bench.add_argument("--out", required=True)
     args = parser.parse_args(argv)
@@ -501,6 +506,10 @@ def main(argv=None):
         if args.action == "analyze":
             report = analyze(args.artifact, args.sources, args.platform)
             _write_private(args.out, report, args.sources, args.artifact)
+        elif args.action == "flow":
+            import mobile_flow
+            report = mobile_flow.analyze(args.sources, args.platform, args.max_leads)
+            _write_private(args.out, report, args.sources)
         else:
             report = benchmark()
             _write_private(args.out, report)
