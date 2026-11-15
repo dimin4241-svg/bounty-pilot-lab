@@ -499,6 +499,19 @@ def main(argv=None):
     flow.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
     flow.add_argument("--max-leads", type=int, default=120)
     flow.add_argument("--out", required=True)
+    cross = cmds.add_parser("crossfile", help="bounded explicit class cross-file lexical review leads")
+    cross.add_argument("--sources", required=True)
+    cross.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
+    cross.add_argument("--max-leads", type=int, default=120)
+    cross.add_argument("--out", required=True)
+    nplan = cmds.add_parser("native-plan", help="plan a synthetic emulator/simulator paired probe; no execution")
+    nplan.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
+    nplan.add_argument("--out", required=True)
+    nrun = cmds.add_parser("native-run", help="execute fixed owned synthetic fixture on emulator/simulator")
+    nrun.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
+    nrun.add_argument("--device-id", required=True)
+    nrun.add_argument("--confirm-owned-fixture", action="store_true")
+    nrun.add_argument("--out", required=True)
     bench = cmds.add_parser("benchmark", help="run 2 synthetic positive/control pairs")
     bench.add_argument("--out", required=True)
     args = parser.parse_args(argv)
@@ -510,6 +523,19 @@ def main(argv=None):
             import mobile_flow
             report = mobile_flow.analyze(args.sources, args.platform, args.max_leads)
             _write_private(args.out, report, args.sources)
+        elif args.action == "crossfile":
+            import mobile_crossfile
+            report = mobile_crossfile.analyze(args.sources, args.platform, args.max_leads)
+            _write_private(args.out, report, args.sources)
+        elif args.action == "native-plan":
+            import mobile_native_probe
+            report = mobile_native_probe.plan(args.platform)
+            _write_private(args.out, report)
+        elif args.action == "native-run":
+            import mobile_native_probe
+            report = mobile_native_probe.run_fixture(
+                args.platform, args.device_id, args.confirm_owned_fixture)
+            _write_private(args.out, report)
         else:
             report = benchmark()
             _write_private(args.out, report)

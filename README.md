@@ -18,6 +18,15 @@
 
 ---
 
+### Mobile Lab cross-file and synthetic native pair review
+
+The opt-in crossfile command now joins uniquely matched explicit class calls
+between Java/Kotlin/Swift source files, using pinned source/sink line and digest
+anchors. A separate native-plan/native-run protocol targets only an owned
+instrumented synthetic fixture on Android Emulator or iOS Simulator, with
+candidate/control fresh-nonce witnesses. Neither path proves a live app issue.
+See [Mobile Lab](skills/bounty-pilot/references/mobile-lab.md).
+
 ## Experimental Mobile Lab — offline APK/IPA trust boundary leads
 
 A new opt-in mobile-lab CLI inventories APK/AAB Android manifests and IPA
