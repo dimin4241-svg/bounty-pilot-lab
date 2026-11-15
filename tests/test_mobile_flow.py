@@ -186,6 +186,34 @@ webView.load(URLRequest(url: url))
         again = subprocess.run(cmd, capture_output=True, text=True)
         self.assertNotEqual(again.returncode, 0)
 
+    def test_manifest_filename_exposure_is_not_claimed_reachable(self):
+        (self.src / "AndroidManifest.xml").write_text(
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+            'package="fixture"><application>'
+            '<activity android:name=".Entry" android:exported="true" '
+            'android:permission="fixture.SIGNATURE" />'
+            '</application></manifest>', encoding="utf-8")
+        self.write("Entry.java",
+                   "class Entry { void open(){ web.loadUrl(getIntent()); } }")
+        result = self.scan()
+        lead = result["leads"][0]
+        self.assertEqual(result["manifest_status"], "present")
+        self.assertEqual(lead["component_filename_matches"][0]["name"], "fixture.Entry")
+        self.assertEqual(lead["component_filename_matches"][0]["permission"],
+                         "fixture.SIGNATURE")
+        self.assertEqual(lead["component_binding"], "UNVERIFIED_FILENAME_HEURISTIC")
+        self.assertEqual(lead["reachability"], "UNKNOWN")
+
+    def test_nonmatching_manifest_component_not_linked(self):
+        (self.src / "AndroidManifest.xml").write_text(
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+            'package="fixture"><application>'
+            '<activity android:name=".Other" android:exported="true" />'
+            '</application></manifest>', encoding="utf-8")
+        self.write("Entry.java",
+                   "class Entry { void open(){ web.loadUrl(getIntent()); } }")
+        self.assertEqual(self.scan()["leads"][0]["component_filename_matches"], [])
+
     def test_reproducibility_and_bad_platform(self):
         self.write("Entry.java", "class Entry { void open(){ web.loadUrl(getIntent()); } }")
         first, second = self.scan(), self.scan()
