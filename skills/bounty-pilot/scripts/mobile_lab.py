@@ -164,6 +164,7 @@ def _manifest_android(raw):
     package = root.attrib.get("package", "")
     app = root.find("application")
     app_permission = _android_attr(app, "permission") if app is not None else None
+    app_enabled = _android_attr(app, "enabled") if app is not None else None
     declared_permissions = [
         {"name": _android_attr(item, "name"),
          "protection_level": _android_attr(item, "protectionLevel") or "normal"}
@@ -190,6 +191,10 @@ def _manifest_android(raw):
                     exposure = "implicit-internal-legacy"
                 components.append({
                     "kind": kind, "name": name, "exposure": exposure,
+                    "enabled": _android_attr(item, "enabled"),
+                    "process": _android_attr(item, "process"),
+                    "path_permission_count": len(item.findall("path-permission")),
+                    "grant_uri_permission_paths_count": len(item.findall("grant-uri-permission")),
                     "permission": _android_attr(item, "permission"),
                     "inherited_application_permission": app_permission,
                     "read_permission": _android_attr(item, "readPermission"),
@@ -214,6 +219,7 @@ def _manifest_android(raw):
     return {
         "platform": "android", "package": package,
         "application_permission": app_permission,
+        "application_enabled": app_enabled,
         "declared_permissions": sorted(declared_permissions, key=lambda p: p["name"]),
         "target_sdk": _android_attr(sdk, "targetSdkVersion") if sdk is not None else None,
         "min_sdk": _android_attr(sdk, "minSdkVersion") if sdk is not None else None,
