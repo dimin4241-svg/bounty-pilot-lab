@@ -12010,6 +12010,8 @@ def build_parser():
 # Standalone helpers reachable as `bounty.py <command> ...`: each owns its argument parser.
 HELPER_COMMANDS = {
     'research-run': ('research_run_hub', 'one-command offline private multi-engine reviewer with scope snapshot'),
+    'mobile-decompile': ('mobile_decompile', 'opt-in offline local JADX/Apktool APK extraction with provenance'),
+    'historical-paired-eval': ('historical_paired_eval', 'offline vulnerable/fixed paired evaluator; blinding not attested'),
     'graph-variant-lab': ('graph_variant_lab', 'offline bounded before/after guarded path and structural variant review'),
     'electron-lab': ('electron_lab', 'offline Electron source trust-boundary cues and project-wide review candidates'),
     'ios-trust-lab': ('ios_trust_lab', 'offline Info.plist and operator-supplied entitlements trust review'),
