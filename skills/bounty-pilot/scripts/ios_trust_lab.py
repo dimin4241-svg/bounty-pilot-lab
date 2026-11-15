@@ -9,7 +9,6 @@ import hashlib
 import json
 import os
 import plistlib
-import re
 import sys
 from pathlib import Path
 
