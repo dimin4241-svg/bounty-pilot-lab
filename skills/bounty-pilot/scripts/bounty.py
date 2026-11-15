@@ -12009,6 +12009,7 @@ def build_parser():
 
 # Standalone helpers reachable as `bounty.py <command> ...`: each owns its argument parser.
 HELPER_COMMANDS = {
+    'mobile-lab': ('mobile_lab', 'offline Android APK/AAB and iOS IPA inventory, bounded source co-location trust-boundary leads and synthetic benchmark'),
     'web-invariants': ('web_invariant_engine', 'offline OpenAPI operation graph, owned-account matrix, state and parser leads'),
     'web-business-lab': ('web_business_lab', 'offline account takeover and payments integrity plan, paired trace review and synthetic SQLite demonstration'),
     'web-evidence-gates': ('web_evidence_gates', 'pinned offline argument-binding and specification-to-implementation evidence preflights'),
