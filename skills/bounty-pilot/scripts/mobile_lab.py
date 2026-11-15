@@ -563,7 +563,7 @@ def main(argv=None):
         else:
             report = benchmark()
             _write_private(args.out, report)
-        print(json.dumps({"status": report.get("assurance", "SYNTHETIC_REGRESSION"),
+        print(json.dumps({"status": report.get("assurance", report.get("status", "SYNTHETIC_REGRESSION")),
                           "out": str(Path(args.out).absolute()),
                           "count": report.get("lead_count", report.get("pairs"))}, sort_keys=True))
         return 0 if report.get("passed", True) else 1
