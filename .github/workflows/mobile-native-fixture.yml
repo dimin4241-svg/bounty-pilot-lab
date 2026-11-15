@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: intel-ios-fixture-${{ github.workflow }}-${{ github.ref }}
+  group: android-ios-compile-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
