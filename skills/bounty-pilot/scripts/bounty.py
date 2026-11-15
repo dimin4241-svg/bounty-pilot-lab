@@ -12009,6 +12009,8 @@ def build_parser():
 
 # Standalone helpers reachable as `bounty.py <command> ...`: each owns its argument parser.
 HELPER_COMMANDS = {
+    'business-impact-oracle': ('business_impact_oracle', 'offline candidate/control protected-state and evidence integrity preflight'),
+    'oauth-lifecycle-lab': ('oauth_lifecycle_lab', 'offline explicit OAuth grant, refresh and role lifecycle policy comparisons'),
     'mobile-lab': ('mobile_lab', 'offline Android APK/AAB and iOS IPA inventory, bounded source co-location trust-boundary leads and synthetic benchmark'),
     'web-invariants': ('web_invariant_engine', 'offline OpenAPI operation graph, owned-account matrix, state and parser leads'),
     'web-business-lab': ('web_business_lab', 'offline account takeover and payments integrity plan, paired trace review and synthetic SQLite demonstration'),
