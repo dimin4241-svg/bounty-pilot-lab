@@ -18,7 +18,7 @@ MAX_CASES = 1000
 
 
 def _ids(obj, name):
-    if not isinstance(obj, list) or not 2 <= len(obj) <= MAX_CASES:
+    if not isinstance(obj, list) or not 1 <= len(obj) <= MAX_CASES:
         raise ValueError(name + " must be a bounded list")
     result = {}
     for row in obj:
@@ -38,6 +38,8 @@ def evaluate(answers, predictions):
         raise ValueError("schema_version 1 answers and predictions required")
     truth = _ids(answers.get("cases"), "answers")
     observed = _ids(predictions.get("cases"), "predictions")
+    if len(truth) < 2:
+        raise ValueError("at least one vulnerable/fixed answer pair required")
     if truth.keys() != observed.keys():
         raise ValueError("predictions and truth require identical case ids")
     groups = defaultdict(dict)
