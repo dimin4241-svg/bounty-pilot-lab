@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: fixture-validation-${{ github.workflow }}-${{ github.ref }}
+  group: intel-ios-fixture-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -53,7 +53,7 @@ jobs:
           retention-days: 5
 
   ios-fixture:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
