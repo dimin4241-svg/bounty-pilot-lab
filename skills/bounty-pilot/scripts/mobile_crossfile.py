@@ -291,12 +291,35 @@ def analyze(sources, platform, max_leads=MAX_LEADS):
                                          "caller identity/permission", "native execution",
                                          "negative control", "actual impact"],
                 })
+    graph_edges = {}
+    graph_nodes = {}
+    for lead in leads:
+        source = lead["source"]
+        sink = lead["sink"]
+        for hop in lead["hops"]:
+            caller = hop["caller_file"] + "::" + hop["caller_method"]
+            callee = hop["callee_file"] + "::" + hop["callee_method"]
+            graph_nodes[caller] = {"id": caller, "kind": "method",
+                                   "file": hop["caller_file"],
+                                   "method": hop["caller_method"]}
+            graph_nodes[callee] = {"id": callee, "kind": "method",
+                                   "file": hop["callee_file"],
+                                   "method": hop["callee_method"]}
+            key = (caller, callee, hop["caller_line"])
+            graph_edges[key] = {"from": caller, "to": callee,
+                                "call_line": hop["caller_line"],
+                                "resolution": hop["resolution"],
+                                "verified_runtime": False}
     return {
         "schema_version": 1,
         "engine": "mobile-crossfile",
         "mode": "offline-explicit-unique-symbol-lexical",
         "platform": platform, "source_root": "operator-provided",
-        "coverage": coverage, "leads": leads, "lead_count": len(leads),
+        "coverage": coverage,
+        "graph": {"nodes": [graph_nodes[k] for k in sorted(graph_nodes)],
+                  "edges": [graph_edges[k] for k in sorted(graph_edges)],
+                  "interpretation": "lexically resolved review edges, not verified runtime calls"},
+        "leads": leads, "lead_count": len(leads),
         "assurance": "STATIC_LEADS_ONLY_NOT_COMPILER_VERIFIED",
         "limits": {
             "max_interfile_hops": MAX_HOPS,
