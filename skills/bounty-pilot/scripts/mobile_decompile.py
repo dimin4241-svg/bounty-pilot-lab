@@ -9,7 +9,6 @@ import argparse
 import json
 import os
 import shutil
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -62,6 +61,9 @@ def analyze(artifact, out_sources, tool="jadx", confirm=False, timeout=900,
     if source.suffix.lower() != ".apk":
         raise ValueError("decompile adapter currently accepts only APK")
     digest, length = mobile_lab._regular_digest_stream(source, mobile_lab.MAX_ARCHIVE)
+    with mobile_lab._zip_index(source) as archive:
+        if "AndroidManifest.xml" not in archive.namelist():
+            raise ValueError("APK lacks AndroidManifest.xml")
     destination = Path(out_sources).expanduser().absolute()
     if (destination.is_symlink() or destination.exists()
             or not destination.parent.is_dir()
@@ -86,7 +88,8 @@ def analyze(artifact, out_sources, tool="jadx", confirm=False, timeout=900,
     inventory = _file_inventory(destination)
     return {
         "schema_version": 1, "engine": "mobile-local-decompile",
-        "status": "DECOMPILER_RETURNED_ZERO_REVIEW_SOURCES",
+        "status": ("DECOMPILATION_COMPLETED_UNVERIFIED" if inventory["files_seen"]
+                   else "NO_REVIEW_FILES_FROM_LOCAL_DECOMPILER"),
         "artifact_sha256": digest, "artifact_bytes": length,
         "tool": tool, "binary_source": "LOCAL_OPERATOR_PATH",
         "out_sources": str(destination),
