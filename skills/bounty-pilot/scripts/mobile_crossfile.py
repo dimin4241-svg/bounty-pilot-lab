@@ -294,8 +294,6 @@ def analyze(sources, platform, max_leads=MAX_LEADS):
     graph_edges = {}
     graph_nodes = {}
     for lead in leads:
-        source = lead["source"]
-        sink = lead["sink"]
         for hop in lead["hops"]:
             caller = hop["caller_file"] + "::" + hop["caller_method"]
             callee = hop["callee_file"] + "::" + hop["callee_method"]
