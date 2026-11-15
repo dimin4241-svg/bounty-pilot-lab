@@ -196,7 +196,14 @@ def _manifest_android(raw):
                     "write_permission": _android_attr(item, "writePermission"),
                     "grant_uri_permissions": _android_attr(item, "grantUriPermissions"),
                     "authorities": _android_attr(item, "authorities"),
-                    "target_activity": _android_attr(item, "targetActivity"),
+                    "target_activity": (
+                        package + _android_attr(item, "targetActivity")
+                        if (_android_attr(item, "targetActivity") or "").startswith(".")
+                        else package + "." + _android_attr(item, "targetActivity")
+                        if (_android_attr(item, "targetActivity") or "")
+                        and "." not in _android_attr(item, "targetActivity")
+                        else _android_attr(item, "targetActivity")
+                    ),
                     "intent_filters": [
                         {"actions": [_android_attr(c, "name") for c in f.findall("action")],
                          "categories": [_android_attr(c, "name") for c in f.findall("category")],
