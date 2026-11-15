@@ -79,7 +79,7 @@
       "product": "WhatsApp iOS",
       "class": "linked-device-message-auth",
       "families": [
-        "IOS_CALLBACK_BINDING_REVIEW"
+        "IOS_LINKED_DEVICE_AUTH_FUTURE"
       ],
       "reference": "https://nvd.nist.gov/vuln/detail/CVE-2025-55177",
       "fixture_status": "REFERENCE_ONLY"
