@@ -120,6 +120,118 @@ class Router {static void forward(String url) { web.loadUrl(url); }}
         self.assertEqual(result["leads"][0]["entrypoint_context"],
                          "POSSIBLE_EXTERNAL_STATIC_ENTRY")
 
+
+    def test_arbitrary_helper_not_mistaken_for_framework_entry(self):
+        self.manifest('<activity android:name=".Entry" android:exported="true"/>')
+        lead = self.check()["leads"][0]
+        self.assertEqual(lead["framework_callback_review_priority"],
+                         "UNLINKED_TO_FRAMEWORK_CALLBACK_REVIEW_ONLY")
+        ctx = lead["entrypoint_assessments"][0]["entry_method"]
+        self.assertEqual(ctx["source_method"], "open")
+        self.assertEqual(ctx["method_assessment"],
+                         "NO_DIRECT_FRAMEWORK_CALLBACK_NAME_MATCH")
+        self.assertFalse(ctx["framework_dispatch_proven"])
+
+    def test_activity_oncreate_callback_name_is_tentative(self):
+        self.source("Entry.java", """package fixture;
+class Entry {
+void onCreate(Bundle saved) {
+String raw=getIntent().getDataString();
+Router.forward(raw);
+}
+}""")
+        self.manifest('<activity android:name=".Entry" android:exported="true"/>')
+        lead = self.check()["leads"][0]
+        self.assertEqual(lead["framework_callback_review_priority"],
+                         "REVIEW_FIRST_STATIC_CALLBACK_CANDIDATE")
+        ctx = lead["entrypoint_assessments"][0]["entry_method"]
+        self.assertEqual(ctx["method_assessment"],
+                         "FRAMEWORK_CALLBACK_NAME_CANDIDATE")
+        self.assertFalse(ctx["framework_dispatch_proven"])
+        self.assertEqual(self.check()["summary"]
+                         ["leads_with_framework_callback_name_candidate"], 1)
+
+    def test_receiver_wrong_callback_rejected(self):
+        self.source("Entry.java", """package fixture;
+class Entry {
+void onCreate(Bundle b) {
+String raw=getIntent().getDataString();
+Router.forward(raw);
+}
+}""")
+        self.manifest('<receiver android:name=".Entry" android:exported="true"/>')
+        lead = self.check()["leads"][0]
+        self.assertEqual(lead["framework_callback_review_priority"],
+                         "UNLINKED_TO_FRAMEWORK_CALLBACK_REVIEW_ONLY")
+
+    def test_disabled_component_remains_blocked_for_priority(self):
+        self.source("Entry.java", """package fixture;
+class Entry {void onNewIntent(Intent intent) {
+String raw=getIntent().getDataString();
+Router.forward(raw);
+}}""")
+        self.manifest('<activity android:name=".Entry" android:exported="true" '
+                      'android:enabled="false"/>')
+        ctx = self.check()["leads"][0]["entrypoint_assessments"][0]
+        self.assertEqual(ctx["enabled_assessment"],
+                         "COMPONENT_DISABLED_IN_MANIFEST")
+        self.assertEqual(self.check()["leads"][0]["framework_callback_review_priority"],
+                         "REVIEW_CONDITIONAL_FRAMEWORK_CALLBACK")
+
+    def test_disabled_application_overrides_component_enabled(self):
+        self.manifest('<activity android:name=".Entry" android:exported="true" '
+                      'android:enabled="true"/>',
+                      app='android:enabled="false"')
+        assessment = self.check()["leads"][0]["entrypoint_assessments"][0]
+        self.assertEqual(assessment["enabled_assessment"],
+                         "APPLICATION_DISABLED_IN_MANIFEST")
+        self.assertEqual(self.check()["android_manifest"]
+                         ["application_enabled"], "false")
+
+    def test_provider_read_write_and_path_permissions_are_separate(self):
+        self.source("Entry.java", """package fixture;
+class Entry {void query(Uri uri) {
+String raw=getIntent().getDataString();
+Router.forward(raw);
+}}""")
+        self.manifest(
+            '<provider android:name=".Entry" android:authorities="fixture.data" '
+            'android:exported="true" android:permission="fixture.BASE" '
+            'android:readPermission="fixture.READ" '
+            'android:writePermission="fixture.WRITE" '
+            'android:grantUriPermissions="true">'
+            '<path-permission android:pathPrefix="/secured" '
+            'android:readPermission="fixture.PATH"/>'
+            '</provider>')
+        lead = self.check()["leads"][0]
+        ctx = lead["entrypoint_assessments"][0]
+        self.assertEqual(ctx["entry_method"]["method_assessment"],
+                         "FRAMEWORK_CALLBACK_NAME_CANDIDATE")
+        gates = ctx["provider_operation_gates"]
+        self.assertEqual(gates["read_permission_name"], "fixture.READ")
+        self.assertEqual(gates["write_permission_name"], "fixture.WRITE")
+        self.assertEqual(gates["path_permission_count"], 1)
+        self.assertTrue(gates["uri_grant_overrides_possible"])
+        self.assertEqual(gates["effective_access"],
+                         "OPERATION_AND_PATH_DEPENDENT_NOT_EVALUATED")
+
+    def test_alias_entry_callback_is_context_only(self):
+        self.source("Entry.java", """package fixture;
+class Entry {void onNewIntent(Intent x) {
+String raw=getIntent().getDataString();
+Router.forward(raw);
+}}""")
+        self.manifest(
+            '<activity android:name=".Entry" android:exported="false"/>'
+            '<activity-alias android:name=".PublicAlias" '
+            'android:targetActivity=".Entry" android:exported="true"/>')
+        assessments = self.check()["leads"][0]["entrypoint_assessments"]
+        alias = [p for p in assessments if p["component_kind"] ==
+                 "activity-alias"][0]
+        self.assertEqual(alias["entry_method"]["method_assessment"],
+                         "FRAMEWORK_CALLBACK_NAME_CANDIDATE")
+        self.assertFalse(alias["entry_method"]["framework_dispatch_proven"])
+
     def test_manifest_report_deterministic(self):
         self.manifest('<activity android:name=".Entry" android:exported="true"/>')
         self.assertEqual(self.check(), self.check())
