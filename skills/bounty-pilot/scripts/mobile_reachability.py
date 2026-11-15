@@ -132,7 +132,7 @@ def analyze(sources, max_leads=120):
         if "EXPORTED_NO_MANIFEST_PERMISSION" in statuses:
             lead["entrypoint_context"] = "POSSIBLE_EXTERNAL_STATIC_ENTRY"
             potential += 1
-        elif any(s.endswith("_WITH_PERMISSION") for s in statuses):
+        elif any(s in ("EXPORTED_WITH_MANIFEST_PERMISSION", "LEGACY_FILTER_IMPLICIT_EXPORT_WITH_PERMISSION", "LEGACY_PROVIDER_DEFAULT_EXPORTED_WITH_PERMISSION") for s in statuses):
             lead["entrypoint_context"] = "STATIC_EXPORTED_ENTRY_PERMISSION_GATED"
             protected += 1
         elif assessments:
