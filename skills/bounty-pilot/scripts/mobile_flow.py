@@ -58,7 +58,7 @@ SWIFT_METHOD = re.compile(r"\bfunc\s+([A-Za-z_][\w]*)\s*\(([^()]{0,1200})\)"
                           r"(?:\s*->\s*[\w?.<>, \[\]]{1,100})?\s*\{", re.M)
 ASSIGN = re.compile(
     r"(?:\b(?:val|var|let|final|const|String|Uri|Intent|URL|NSString|NSURL)\s+)?"
-    r"(?P<name>[A-Za-z_$][\w$]*)(?:\s*:\s*[\w?.<>]+)?\s*=(?!=)\s*(?P<value>.+)$"
+    r"(?P<name>[A-Za-z_$][\w$]*)(?:\s*:\s*[\w?.<>]+)?\s*=(?!=)\s*(?P<value>.*)$"
 )
 NAME = re.compile(r"(?<![\w$])([A-Za-z_$][\w$]*)(?![\w$])")
 CALL = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\(([^()]{0,400})\)")
