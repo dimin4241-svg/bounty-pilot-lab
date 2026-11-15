@@ -205,10 +205,14 @@ def analyze(sources, max_leads=120):
                     "specific_handler_path_observed": False,
                 })
         assessments.sort(key=lambda e: (e["component_name"], e["component_kind"]))
-        statuses = {p["static_exposure_assessment"] for p in assessments}
+        enabled_entries = [p for p in assessments
+                           if p["enabled_assessment"] == "NO_STATIC_DISABLED_FLAG"]
+        statuses = {p["static_exposure_assessment"] for p in enabled_entries}
         if assessments:
             matched += 1
-        if "EXPORTED_NO_MANIFEST_PERMISSION" in statuses:
+        if assessments and not enabled_entries:
+            lead["entrypoint_context"] = "STATIC_DISABLED_OR_UNRESOLVED_ENTRY"
+        elif "EXPORTED_NO_MANIFEST_PERMISSION" in statuses:
             lead["entrypoint_context"] = "POSSIBLE_EXTERNAL_STATIC_ENTRY"
             potential += 1
         elif any(s in ("EXPORTED_WITH_MANIFEST_PERMISSION", "LEGACY_FILTER_IMPLICIT_EXPORT_WITH_PERMISSION", "LEGACY_PROVIDER_DEFAULT_EXPORTED_WITH_PERMISSION") for s in statuses):
