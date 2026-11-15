@@ -163,6 +163,12 @@ def _manifest_android(raw):
         raise ValueError("Android manifest root is not <manifest>")
     package = root.attrib.get("package", "")
     app = root.find("application")
+    app_permission = _android_attr(app, "permission") if app is not None else None
+    declared_permissions = [
+        {"name": _android_attr(item, "name"),
+         "protection_level": _android_attr(item, "protectionLevel") or "normal"}
+        for item in root.findall("permission") if _android_attr(item, "name")
+    ]
     components = []
     if app is not None:
         for kind in ("activity", "activity-alias", "receiver", "service", "provider"):
@@ -185,11 +191,19 @@ def _manifest_android(raw):
                 components.append({
                     "kind": kind, "name": name, "exposure": exposure,
                     "permission": _android_attr(item, "permission"),
+                    "inherited_application_permission": app_permission,
                     "read_permission": _android_attr(item, "readPermission"),
                     "write_permission": _android_attr(item, "writePermission"),
                     "grant_uri_permissions": _android_attr(item, "grantUriPermissions"),
                     "authorities": _android_attr(item, "authorities"),
-                    "target_activity": _android_attr(item, "targetActivity"),
+                    "target_activity": (
+                        package + _android_attr(item, "targetActivity")
+                        if (_android_attr(item, "targetActivity") or "").startswith(".")
+                        else package + "." + _android_attr(item, "targetActivity")
+                        if (_android_attr(item, "targetActivity") or "")
+                        and "." not in _android_attr(item, "targetActivity")
+                        else _android_attr(item, "targetActivity")
+                    ),
                     "intent_filters": [
                         {"actions": [_android_attr(c, "name") for c in f.findall("action")],
                          "categories": [_android_attr(c, "name") for c in f.findall("category")],
@@ -199,6 +213,8 @@ def _manifest_android(raw):
     sdk = root.find("uses-sdk")
     return {
         "platform": "android", "package": package,
+        "application_permission": app_permission,
+        "declared_permissions": sorted(declared_permissions, key=lambda p: p["name"]),
         "target_sdk": _android_attr(sdk, "targetSdkVersion") if sdk is not None else None,
         "min_sdk": _android_attr(sdk, "minSdkVersion") if sdk is not None else None,
         "permissions": sorted({_android_attr(x, "name") for x in root.findall("uses-permission")
@@ -504,6 +520,10 @@ def main(argv=None):
     cross.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
     cross.add_argument("--max-leads", type=int, default=120)
     cross.add_argument("--out", required=True)
+    reach = cmds.add_parser("reachability", help="annotate cross-file leads with static Android manifest exposure and permission gates")
+    reach.add_argument("--sources", required=True)
+    reach.add_argument("--max-leads", type=int, default=120)
+    reach.add_argument("--out", required=True)
     nplan = cmds.add_parser("native-plan", help="plan a synthetic emulator/simulator paired probe; no execution")
     nplan.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
     nplan.add_argument("--out", required=True)
@@ -527,6 +547,10 @@ def main(argv=None):
             import mobile_crossfile
             report = mobile_crossfile.analyze(args.sources, args.platform, args.max_leads)
             _write_private(args.out, report, args.sources)
+        elif args.action == "reachability":
+            import mobile_reachability
+            report = mobile_reachability.analyze(args.sources, args.max_leads)
+            _write_private(args.out, report, args.sources)
         elif args.action == "native-plan":
             import mobile_native_probe
             report = mobile_native_probe.plan(args.platform)
@@ -539,7 +563,7 @@ def main(argv=None):
         else:
             report = benchmark()
             _write_private(args.out, report)
-        print(json.dumps({"status": report.get("assurance", "SYNTHETIC_REGRESSION"),
+        print(json.dumps({"status": report.get("assurance", report.get("status", "SYNTHETIC_REGRESSION")),
                           "out": str(Path(args.out).absolute()),
                           "count": report.get("lead_count", report.get("pairs"))}, sort_keys=True))
         return 0 if report.get("passed", True) else 1

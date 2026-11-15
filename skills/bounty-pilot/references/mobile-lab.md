@@ -144,6 +144,40 @@ CI exercises mocked native execution with paired witnesses and rejects
 stale nonces, non-emulator serials, missing confirmation and controls with
 the same effect. It does not boot a real simulator or run a real native app.
 
+## Phase 4: static manifest gating and native fixture CI
+
+For decoded Android source and an AndroidManifest.xml in the root:
+
+    python3 "$BP" mobile-lab reachability \
+      --sources /private/decompiled-src \
+      --out /private/run/manifest-context.json
+
+This overlays conservative cross-file leads with exact fully-qualified
+component class matches. The output distinguishes exported, internal,
+permission-gated and platform-dependent Android components, targetSdk
+defaults, inherited application permission, custom permission definitions
+and activity-alias targets. A missing android:exported with intent filter
+at targetSdk >= 31 is reported as install-invalid on Android 12+.
+Providers have separate read/write operation considerations.
+
+These fields are *metadata context only*. They do not establish that
+a particular entry method executes from an external caller, that the
+caller has/does not have a permission, or that any sink has exploitable
+impact. All lead severities remain unassessed and all runtime effects
+unproven.
+
+The native integration workflow at
+.github/workflows/mobile-native-fixture.yml runs Android Emulator
+build+install+candidate/control on eligible pull requests and also
+compiles the owned Swift iOS Simulator fixture (without booting an
+iOS simulator). GitHub-hosted CoreSimulator repeatedly stalled during
+its initial data migration; consequently iOS runtime execution is
+separately available through workflow_dispatch only, with bounded
+boot checks and explicit errors. **An iOS compile pass is not an iOS
+runtime pass**. Native test results are self-reported by only our own
+org.bountypilot.fixture applications, never third-party targets.
+Actual native verification is claimed only when a runtime job succeeds.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
