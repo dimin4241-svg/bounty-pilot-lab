@@ -178,6 +178,18 @@ runtime pass**. Native test results are self-reported by only our own
 org.bountypilot.fixture applications, never third-party targets.
 Actual native verification is claimed only when a runtime job succeeds.
 
+## Phase 5: Android callback-name and enabled-state context
+
+The reachability report now includes an entry-method review signal from the first cross-file hop's caller method, compared to the framework callback vocabulary for the matching Android component kind. An activity's onCreate and onNewIntent are candidates, whereas an arbitrary helper called open receives NO_DIRECT_FRAMEWORK_CALLBACK_NAME_MATCH. An activity callback does not match a broadcast receiver callback.
+
+These are method-name comparisons, **not verified framework invocation**. A method with a familiar name can still be unreachable, overloaded, or subject to runtime authorization checks.
+
+Manifest application/component android:enabled=false now prevents POSSIBLE_EXTERNAL_STATIC_ENTRY classification. Resource-backed values or dynamic enablement remain unknown. Activity-alias target class matching is only a string-level clue.
+
+Provider reviews preserve operation-specific readPermission and writePermission, counts of path-permission and grant-uri-permission entries, and flag possible URI grant overrides. Without a specific URI, operation, caller and device version, effective access is unknown.
+
+The framework_callback_review_priority field is a queue-order hint, **not** a severity or exploitability assessment. All detected findings remain unverified.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
