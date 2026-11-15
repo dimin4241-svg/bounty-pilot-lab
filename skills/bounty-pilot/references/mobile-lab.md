@@ -53,6 +53,37 @@ All outputs must be NEW paths under an existing private directory, and
 outside the source checkout. Never put target reports, real credentials or
 proprietary client code in a public Git repository or issue.
 
+## Phase 2: optional function-level lexical flow review
+
+The new flow subcommand traces simple explicit input API/entrypoint values
+through local assignments to sensitive calls in Java, Kotlin and Swift.
+Smali support follows basic object registers and invoke/move-result pairs.
+It also follows an **unambiguous same-file helper call** up to two hops.
+This improves on file-wide co-location. It is still a conservative lexical
+def-use review: no compiler AST, SSA, branch feasibility, overload/dynamic
+dispatch, cross-file calls, Swift closures, ObjC message semantics or
+comprehensive Smali register-range handling.
+
+Run this *after* extracting source in your isolated workstation:
+
+    python3 "$BP" mobile-lab flow \
+      --sources /private/decompiled-src --platform android \
+      --out /private/run/mobile-flow.json
+
+For Swift source use platform ios. Output includes source/sink line numbers,
+file SHA-256, helper hop anchors, and candidate Android component-to-filename
+matches including manifest export/permission metadata. These matches are
+explicitly UNVERIFIED_FILENAME_HEURISTIC, not established Android caller
+reachability. Result statuses:
+LEXICAL_DEF_USE_REVIEW_UNVERIFIED and NOT_ESTABLISHED. No arbitrary target
+source text or real authentication values are stored. Entry-point seeds are
+heuristic and not proof that an external attacker can reach the sink.
+
+The flow command does **not** dynamically execute APK/IPA, test real devices,
+or claim authorization, information disclosure, credential exfiltration or RCE.
+Paired synthetic controls test that constants and irrelevant methods do not
+produce the same chain; a successful synthetic test is not proof on a target.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
@@ -97,9 +128,10 @@ runner, no native taint analysis and no independently authenticated receipts.**
 
 ## Next implementation stages
 
-1. Real Java/Kotlin/Smali and Swift symbol resolution with function-scoped
-   data-flow, control-flow guards, callback/caller semantics and SDK/targetSdk
-   dependent permission models.
+1. Compiler-backed Java/Kotlin/Smali and Swift symbol resolution with full
+   cross-file data-flow, control-flow guards, callback/caller semantics and
+   SDK/targetSdk dependent permission models. The Phase 2 lexical helper is
+   deliberately narrower than this.
 2. Deep-link / App Link / OAuth callback protocol checks with actual origin
    binding and app-claimant validation, not keyword matching.
 3. Operator-approved isolated Android/iOS runtime candidate+negative-control
