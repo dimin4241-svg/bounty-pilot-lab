@@ -2,6 +2,7 @@
 import hashlib
 import json
 import plistlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -79,6 +80,20 @@ class ResearchHubTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertFalse(entry["impact_verified_by_orchestrator"])
         self.assertTrue((out / "index.json").is_file())
+
+    def test_cli_one_command_writes_private_reports(self):
+        plan = self.manifest([{"id": "a", "engine": "electron",
+                               "path": "electron"}])
+        (self.root / "plan.json").write_text(json.dumps(plan))
+        out = self.root.parent / "cli-report"
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS / "bounty.py"), "research-run",
+             "--manifest", "plan.json", "--work-root", str(self.root),
+             "--out-dir", str(out)],
+            capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads((out / "index.json").read_text())
+                         ["jobs"][0]["engine"], "electron")
 
     def test_scope_confirmation_is_required(self):
         case = self.manifest()
