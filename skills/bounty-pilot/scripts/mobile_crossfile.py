@@ -155,7 +155,6 @@ def _resolve_method(entry, name, arity):
 
 def _calls(statement, owner, symbols, platform, binding):
     result = []
-    occupied = []
     for match in QUALIFIED_CALL.finditer(statement):
         receiver, name = match.group("receiver"), match.group("name")
         args = mobile_flow._split_args(match.group("args"))
@@ -167,77 +166,11 @@ def _calls(statement, owner, symbols, platform, binding):
         method = _resolve_method(target, name, len(args))
         if method is None:
             continue
-        occupied.append((match.start(), match.end()))
         result.append((target, method, args, "explicit-class-or-local-instance"))
     # Unqualified method calls are handled only within the current source file,
     # where the existing bounded lexical engine already has this behavior.
     # No global search by same method name is ever performed.
     return result[:MAX_CALLS_PER_METHOD]
-
-
-def _trace(fn, owner, symbols, platform, initial=None, trail=(), depth=0,
-           source_file=None, limits=None):
-    if depth > MAX_HOPS:
-        return []
-    identity = (owner["path"], fn["line"], fn["name"])
-    if identity in trail:
-        return []
-    trail = trail + (identity,)
-    tainted = dict(initial or mobile_flow._seed_parameters(fn, platform))
-    # Seeds on method entry are anchored to that method, never to a fabricated
-    # upstream file. Explicit upstream origin comes from caller taint state.
-    for key, value in list(tainted.items()):
-        if len(value) == 2:
-            tainted[key] = (owner["path"], value[1], owner["sha256"], value[0])
-    receiver_types = {}
-    flows = []
-    calls = 0
-    for line, statement in mobile_flow._statements(fn["body"], fn["start"],
-                                                   owner["source"]):
-        _receiver_types(statement, owner, symbols, platform, receiver_types)
-        match = mobile_flow.ASSIGN.search(statement)
-        if match:
-            name, expr = match.group("name"), match.group("value")
-            used = mobile_flow._uses_any(expr, tainted)
-            if mobile_flow.SOURCE[platform].search(expr):
-                tainted[name] = (owner["path"], line, owner["sha256"], "SOURCE_API")
-            elif used:
-                tainted[name] = tainted[used[0]]
-            else:
-                tainted.pop(name, None)
-        if depth >= MAX_HOPS:
-            continue
-        for target, helper, args, resolution in _calls(
-                statement, owner, symbols, platform, receiver_types):
-            calls += 1
-            if calls > MAX_CALLS_PER_METHOD:
-                break
-            inherited = {}
-            for param, arg in zip(helper["params"], args):
-                used = mobile_flow._uses_any(arg, tainted)
-                if used:
-                    inherited[param] = tainted[used[0]]
-            if not inherited:
-                continue
-            child = _trace(helper, target, symbols, platform, inherited, trail,
-                           depth + 1, owner["path"], limits)
-            for item in child:
-                item["hops"].insert(0, {
-                    "caller_file": owner["path"], "caller_line": line,
-                    "caller_method": fn["name"], "callee_file": target["path"],
-                    "callee_method": helper["name"],
-                    "resolution": resolution,
-                })
-                flows.append(item)
-    # Only emit a sink when an upstream different file reached this method:
-    # locally generated source-to-sink leads are handled by mobile_flow.
-    if depth and initial:
-        for line, statement in mobile_flow._statements(
-                fn["body"], fn["start"], owner["source"]):
-            # Process conservatively in one pass, not using the final taint
-            # state: a later overwrite cannot validate an earlier sink.
-            pass
-    return flows
 
 
 def _trace_ordered(fn, owner, symbols, platform, initial, trail=(), depth=0):
