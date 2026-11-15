@@ -210,7 +210,7 @@ def _seed_parameters(fn, platform):
         return {}
     if name in ("application", "scene", "onopenurl", "continueuseractivity"):
         return {p: ("ENTRY_PARAMETER", fn["line"]) for p in params
-                if p.lower() in ("url", "urls", "contexts", "useractivity", "activity")}
+                if p.lower() in ("url", "urls", "contexts", "urlcontexts", "useractivity", "activity")}
     return {}
 
 
@@ -226,7 +226,6 @@ def _trace(fn, platform, defs, source, file_digest, path, seeds, visited=(), dep
     tainted = dict(seeds)
     flows = []
     for line, statement in _statements(fn["body"], fn["start"], source):
-        direct_source = bool(SOURCE[platform].search(statement))
         match = ASSIGN.search(statement)
         rhs = match.group("value") if match else None
         if match:
