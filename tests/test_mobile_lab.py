@@ -34,7 +34,7 @@ def axml_string_pool(strings):
         offsets.append(len(blob))
         blob += bytes([len(value), len(encoded)]) + encoded + b"\x00"
     size = 28 + 4 * len(strings) + len(blob)
-    header = struct.pack("<HHIIIII", 1, 28, size, len(strings), 0, 0x100, 28 + 4 * len(strings))
+    header = struct.pack("<HHIIIIII", 1, 28, size, len(strings), 0, 0x100, 28 + 4 * len(strings), 0)
     return header + b"".join(struct.pack("<I", x) for x in offsets) + blob
 
 
