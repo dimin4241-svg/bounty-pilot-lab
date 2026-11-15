@@ -6,6 +6,7 @@ on:
     paths:
       - 'skills/bounty-pilot/scripts/mobile_*.py'
       - 'tests/test_mobile_lab.py'
+      - 'tests/test_mobile_large_archive.py'
       - 'tests/test_mobile_flow.py'
       - 'tests/test_mobile_crossfile.py'
       - 'tests/test_mobile_native_probe.py'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'skills/bounty-pilot/scripts/mobile_*.py'
       - 'tests/test_mobile_lab.py'
+      - 'tests/test_mobile_large_archive.py'
       - 'tests/test_mobile_flow.py'
       - 'tests/test_mobile_crossfile.py'
       - 'tests/test_mobile_native_probe.py'
