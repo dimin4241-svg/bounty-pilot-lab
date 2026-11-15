@@ -167,13 +167,16 @@ impact. All lead severities remain unassessed and all runtime effects
 unproven.
 
 The native integration workflow at
-.github/workflows/mobile-native-fixture.yml (pull_request on fixture
-changes and workflow_dispatch) builds and runs ONLY the local
-org.bountypilot.fixture test apps inside disposable GitHub-hosted Android
-Emulator and iOS Simulator instances. The runner compares fresh
-candidate/control nonces and uploads short-lived synthetic receipts.
-Actual native verification is claimed *only* when those CI jobs succeed.
-This is not a test of any third-party Android or iOS application.
+.github/workflows/mobile-native-fixture.yml runs Android Emulator
+build+install+candidate/control on eligible pull requests and also
+compiles the owned Swift iOS Simulator fixture (without booting an
+iOS simulator). GitHub-hosted CoreSimulator repeatedly stalled during
+its initial data migration; consequently iOS runtime execution is
+separately available through workflow_dispatch only, with bounded
+boot checks and explicit errors. **An iOS compile pass is not an iOS
+runtime pass**. Native test results are self-reported by only our own
+org.bountypilot.fixture applications, never third-party targets.
+Actual native verification is claimed only when a runtime job succeeds.
 
 ## Trust boundaries and evidence model
 
