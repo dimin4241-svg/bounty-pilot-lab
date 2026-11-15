@@ -76,7 +76,7 @@ Before closing out, run `sibling-finder`: the same mistake is nearly
 always copied, and it leads a structurally near-duplicate function pair
 where only one side has an access-check cue.
 
-### B. Researcher-owned Web/API workflow or Standoff / BI.ZONE preparation
+### B. Researcher-owned Web/API, Mobile or Standoff / BI.ZONE preparation
 
 Read `references/web-hunt-loop-phase5.md` and
 `references/web-invariants-phase3.md`.

@@ -18,6 +18,15 @@
 
 ---
 
+## Experimental Mobile Lab — offline APK/IPA trust boundary leads
+
+A new opt-in mobile-lab CLI inventories APK/AAB Android manifests and IPA
+Info.plist, and optionally links bounded Java/Kotlin/Smali or Swift/ObjC
+source patterns into a source-anchored **unverified review queue**.
+It does not decompile executable code, prove call-flow, launch a device,
+test production traffic or claim a bounty. Two synthetic paired controls
+are provided. See [Mobile Lab](skills/bounty-pilot/references/mobile-lab.md).
+
 ## 0.60.1 — offline argument-binding and specification evidence gates
 
 New `web-evidence-gates` adds an opt-in, evidence-first review preflight before
