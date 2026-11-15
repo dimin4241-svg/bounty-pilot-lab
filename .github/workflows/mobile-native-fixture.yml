@@ -52,7 +52,23 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+  ios-build:
+    runs-on: macos-15-intel
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile owned iOS Simulator app without launching CoreSimulator
+        run: |
+          sh tests/fixtures/mobile-native/ios/build-sim.sh
+          plutil -lint tests/fixtures/mobile-native/ios/build/BountyPilotFixture.app/Info.plist
+          test -s tests/fixtures/mobile-native/ios/build/BountyPilotFixture.app/BountyPilotFixture
+
   ios-fixture:
+    # Cold GitHub-hosted CoreSimulator boots can hang on runtime migration.
+    # Run explicitly on demand, never as a required PR check.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-15-intel
     timeout-minutes: 35
     steps:
