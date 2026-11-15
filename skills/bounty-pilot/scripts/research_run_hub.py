@@ -132,7 +132,11 @@ def analyze(manifest, work_root, output_dir):
         seen.add(name)
     dest = Path(output_dir).expanduser().absolute()
     if (dest.is_symlink() or dest.exists() or not dest.parent.is_dir()
-            or dest.parent.is_symlink() or dest == root or root in dest.parents):
+            or any(p.is_symlink() for p in dest.parents)):
+        raise ValueError("output must be a new directory outside private work tree")
+    destination_parent = dest.parent.resolve(strict=True)
+    if (destination_parent == root or root in destination_parent.parents
+            or dest == root or root in dest.parents):
         raise ValueError("output must be a new directory outside private work tree")
     dest.mkdir(mode=0o700)
     index = {
