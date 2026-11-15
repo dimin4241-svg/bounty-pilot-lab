@@ -12009,6 +12009,8 @@ def build_parser():
 
 # Standalone helpers reachable as `bounty.py <command> ...`: each owns its argument parser.
 HELPER_COMMANDS = {
+    'mobile-decompile': ('mobile_decompile', 'opt-in offline local JADX/Apktool APK extraction with provenance'),
+    'historical-paired-eval': ('historical_paired_eval', 'offline labeled vulnerable/fixed paired evaluation; blindness not attested'),
     'business-impact-oracle': ('business_impact_oracle', 'offline candidate/control protected-state and evidence integrity preflight'),
     'oauth-lifecycle-lab': ('oauth_lifecycle_lab', 'offline explicit OAuth grant, refresh and role lifecycle policy comparisons'),
     'mobile-lab': ('mobile_lab', 'offline Android APK/AAB and iOS IPA inventory, bounded source co-location trust-boundary leads and synthetic benchmark'),
