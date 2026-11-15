@@ -6,6 +6,7 @@ on:
     paths:
       - 'skills/bounty-pilot/scripts/mobile_*.py'
       - 'tests/test_mobile_lab.py'
+      - 'tests/test_mobile_decompile_historical.py'
       - 'tests/test_mobile_large_archive.py'
       - 'tests/test_mobile_flow.py'
       - 'tests/test_mobile_crossfile.py'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'skills/bounty-pilot/scripts/mobile_*.py'
       - 'tests/test_mobile_lab.py'
+      - 'tests/test_mobile_decompile_historical.py'
       - 'tests/test_mobile_large_archive.py'
       - 'tests/test_mobile_flow.py'
       - 'tests/test_mobile_crossfile.py'
@@ -42,6 +44,6 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Compile mobile tools
-        run: python3 -m compileall -q skills/bounty-pilot/scripts/mobile_axml.py skills/bounty-pilot/scripts/mobile_lab.py skills/bounty-pilot/scripts/mobile_flow.py skills/bounty-pilot/scripts/mobile_crossfile.py skills/bounty-pilot/scripts/mobile_native_probe.py skills/bounty-pilot/scripts/mobile_reachability.py
+        run: python3 -m compileall -q skills/bounty-pilot/scripts/mobile_axml.py skills/bounty-pilot/scripts/mobile_lab.py skills/bounty-pilot/scripts/mobile_flow.py skills/bounty-pilot/scripts/mobile_crossfile.py skills/bounty-pilot/scripts/mobile_native_probe.py skills/bounty-pilot/scripts/mobile_reachability.py skills/bounty-pilot/scripts/mobile_decompile.py
       - name: Offline APK and IPA synthetic controls
         run: python3 -m unittest discover -s tests -p 'test_mobile*.py' -v
