@@ -71,7 +71,10 @@ Run this *after* extracting source in your isolated workstation:
       --out /private/run/mobile-flow.json
 
 For Swift source use platform ios. Output includes source/sink line numbers,
-file SHA-256, helper hop anchors, and statuses:
+file SHA-256, helper hop anchors, and candidate Android component-to-filename
+matches including manifest export/permission metadata. These matches are
+explicitly UNVERIFIED_FILENAME_HEURISTIC, not established Android caller
+reachability. Result statuses:
 LEXICAL_DEF_USE_REVIEW_UNVERIFIED and NOT_ESTABLISHED. No arbitrary target
 source text or real authentication values are stored. Entry-point seeds are
 heuristic and not proof that an external attacker can reach the sink.
