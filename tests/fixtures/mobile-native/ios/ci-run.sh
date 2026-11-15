@@ -23,11 +23,33 @@ print(devices[0]["udid"])
 PY
 )
 echo "Chosen simulator: $UDID"
-if ! xcrun simctl list devices booted | grep -F "$UDID"; then
-    xcrun simctl boot "$UDID"
-fi
-xcrun simctl bootstatus "$UDID" -b
+echo "Requesting simulator boot with strict timeout"
+python3 - "$UDID" <<'PY'
+import subprocess
+import sys
+cmd = ["xcrun", "simctl", "boot", sys.argv[1]]
+try:
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+except subprocess.TimeoutExpired:
+    raise SystemExit("simctl boot stalled: simulator service unavailable after 120 seconds")
+if p.returncode and "Current state: Booted" not in p.stderr:
+    raise SystemExit("simctl boot failed: " + p.stderr[-900:])
+print("Simulator boot request sent.")
+PY
+echo "Waiting for iOS Simulator boot completion"
+python3 - "$UDID" <<'PY'
+import subprocess
+import sys
+try:
+    subprocess.run(["xcrun", "simctl", "bootstatus", sys.argv[1], "-b"],
+                   timeout=180, check=True)
+except subprocess.TimeoutExpired:
+    raise SystemExit("simctl bootstatus stalled: simulator not ready after 180 seconds")
+print("iOS simulator fully booted.")
+PY
+echo "Compiling owned fixture with Xcode"
 sh "$ROOT/build-sim.sh"
+echo "Installing owned fixture on simulator"
 xcrun simctl install "$UDID" "$ROOT/build/BountyPilotFixture.app"
 python3 skills/bounty-pilot/scripts/bounty.py mobile-lab native-run \
     --platform ios --device-id "$UDID" \
