@@ -107,7 +107,7 @@ def _regular_file(path, size_limit):
 
 def _name_safe(name):
     parts = name.replace("\\", "/").split("/")
-    return not (name.startswith("/") or any(p in ("", ".", "..") for p in parts)
+    return not (name.startswith("/") or any(p in ("", ".", "..") for p in (parts[:-1] if name.endswith("/") else parts))
                 or "\x00" in name or ":" in parts[0])
 
 
