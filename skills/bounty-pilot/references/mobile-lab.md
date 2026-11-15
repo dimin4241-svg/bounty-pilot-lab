@@ -220,7 +220,7 @@ analysis, no production target execution and no independently authenticated rece
 ## Input safety and reproducibility
 
 - Read-only, local files. Artifact must be a regular, non-symlink file of at
-  most 200 MiB. The analyzer never extracts its ZIP contents to disk.
+  most 2 GiB; it is hashed in 1 MiB chunks, without whole-archive reads. The analyzer never extracts its ZIP contents to disk.
 - Reject duplicate, traversal and symlink archive entries; bound member counts
   and metadata sizes to avoid casual archive bombs.
 - Source walk is bounded to 1500 files, 12 MiB and 2000 matched anchors.
@@ -247,3 +247,7 @@ analysis, no production target execution and no independently authenticated rece
 5. Analysis of native parsers and dependency provenance.
 
 Do not label the planned stages as implemented.
+
+## Large APK/IPA streaming inventory
+
+Archives up to 2 GiB are hashed in 1 MiB chunks; only explicitly selected small manifest/plist metadata members are decompressed. ZIP central-directory entry count, names, duplicates and declared uncompressed sizes are bounded (16 GiB total / 4 GiB per member). No ZIP members are extracted to disk or executed. A sparse synthetic APK over the previous 200 MiB cap is exercised in CI. This does **not** decode DEX or install the APK: source decompilation and permission-granted native execution require independent steps.
