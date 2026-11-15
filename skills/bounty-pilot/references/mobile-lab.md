@@ -31,21 +31,22 @@ It adds source-anchored *review leads* to the existing Bounty Pilot workflow.
 Prepare APK/IPA yourself through the program's allowed distribution process
 and, if needed, an independently vetted local decompiler. This helper never
 downloads APKs, installs untrusted dependencies or starts an emulator.
+Define BP=skills/bounty-pilot/scripts/bounty.py in your shell before running.
 
-    python3 skills/bounty-pilot/scripts/bounty.py mobile-lab analyze \
+    python3 "$BP" mobile-lab analyze \
       --artifact /private/artifacts/owned-test.apk \
       --sources /private/decompiled-src \
       --out /private/run/mobile-android.json
 
 For source-only tests:
 
-    python3 skills/bounty-pilot/scripts/bounty.py mobile-lab analyze \
+    python3 "$BP" mobile-lab analyze \
       --sources /private/own-ios-src --platform ios \
       --out /private/run/mobile-ios.json
 
 Run synthetic controls:
 
-    python3 skills/bounty-pilot/scripts/bounty.py mobile-lab benchmark \
+    python3 "$BP" mobile-lab benchmark \
       --out /private/run/mobile-synthetic.json
 
 All outputs must be NEW paths under an existing private directory, and
