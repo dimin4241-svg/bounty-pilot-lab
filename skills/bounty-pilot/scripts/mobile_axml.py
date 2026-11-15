@@ -90,7 +90,7 @@ def decode_manifest(data):
         if kind == 0x0001:
             strings = _strings(data, pos, length)
         elif kind == 0x0102:
-            if header < 36 or not strings:
+            if header < 16 or not strings:
                 raise ValueError("invalid AXML start element")
             ns, name = _u32(data, pos + 16), _u32(data, pos + 20)
             start, width, count = struct.unpack_from("<HHH", data, pos + 24)
