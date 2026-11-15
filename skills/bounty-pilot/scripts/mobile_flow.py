@@ -333,6 +333,18 @@ def analyze(sources, platform, max_leads=MAX_LEADS):
     if not root.is_dir() or root.is_symlink():
         raise ValueError("source root must be a non-symlink directory")
     leads = []
+    # A component-to-filename join is a candidate only: neither class loading
+    # nor platform permission checks nor runtime entrypoint reachability is
+    # established by this lightweight source inventory.
+    manifest_status = "not-applicable"
+    components = []
+    if platform == "android":
+        try:
+            inventory = mobile_lab._inspect_decoded_manifest(root, platform)
+            components = inventory.get("components", [])
+            manifest_status = ("present" if components else "no-component-metadata")
+        except (ValueError, OSError):
+            manifest_status = "unreadable"
     scanned = 0
     bytes_read = 0
     skipped = 0
@@ -360,6 +372,12 @@ def analyze(sources, platform, max_leads=MAX_LEADS):
             skipped += 1
             continue
         rel = path.relative_to(root).as_posix()
+        simple = path.stem
+        possible_components = [
+            {"name": item["name"], "exposure": item["exposure"],
+             "permission": item["permission"]}
+            for item in components if item["name"].rsplit(".", 1)[-1] == simple
+        ][:12]
         digest = hashlib.sha256(data).hexdigest()
         if path.suffix == ".smali":
             flows = _smali_flows(source)
@@ -389,6 +407,8 @@ def analyze(sources, platform, max_leads=MAX_LEADS):
                 "method": flow["method"], "source_line": flow["source_line"],
                 "sink_line": flow["sink_line"], "sink_kind": flow["sink"],
                 "source_kind": flow["source_kind"], "hops": flow["hops"],
+                "component_filename_matches": possible_components,
+                "component_binding": "UNVERIFIED_FILENAME_HEURISTIC",
                 "status": "LEXICAL_DEF_USE_REVIEW_UNVERIFIED",
                 "reachability": "UNKNOWN", "impact": "NOT_ESTABLISHED",
                 "severity": "unassessed",
@@ -403,6 +423,7 @@ def analyze(sources, platform, max_leads=MAX_LEADS):
                    "unsupported": ["compiler AST", "SSA", "branch feasibility",
                                    "overloaded/dynamic dispatch", "cross-file calls",
                                    "full Smali ranges", "Swift closures", "ObjC messages"]},
+        "manifest_status": manifest_status,
         "coverage": {"files_read": scanned, "bytes_read": bytes_read,
                      "skipped_files": skipped, "truncated": truncated},
         "leads": leads, "lead_count": len(leads),
