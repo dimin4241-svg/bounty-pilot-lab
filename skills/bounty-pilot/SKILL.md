@@ -127,7 +127,18 @@ relabel a loopback synthetic finding as a real target vulnerability.
 For static Web source analysis read `references/web-semantic-phase2.md`;
 for available native tools read `references/web-native-phase4.md`.
 
-### C. Advanced cross-component/Web3 differential investigation
+### C. Experimental Mobile Lab (Android APK/AAB and iOS IPA)
+
+Read references/mobile-lab.md. The mobile-lab command performs bounded **offline
+metadata and source-co-location analysis**, not APK/IPA decompilation or native
+execution. Treat its trust-boundary leads as unverified; no ATO, RCE, severity
+or live exploit is proven. Use real scoped program rules, isolated local
+fixtures, independent native observation, negative controls and the existing
+evidence/experiment gates before any report. Android permission behavior
+depends on OS and targetSdk; iOS signed entitlements and encrypted Mach-O
+are not decoded by this helper.
+
+### D. Advanced cross-component/Web3 differential investigation
 
 Choose a reference by the actual hypothesis, not by tool count:
 - AVRE, native execution and failure triage:
