@@ -175,6 +175,8 @@ Router.forward(raw);
         ctx = self.check()["leads"][0]["entrypoint_assessments"][0]
         self.assertEqual(ctx["enabled_assessment"],
                          "COMPONENT_DISABLED_IN_MANIFEST")
+        self.assertEqual(self.check()["leads"][0]["entrypoint_context"],
+                         "STATIC_DISABLED_OR_UNRESOLVED_ENTRY")
         self.assertEqual(self.check()["leads"][0]["framework_callback_review_priority"],
                          "REVIEW_CONDITIONAL_FRAMEWORK_CALLBACK")
 
@@ -185,6 +187,8 @@ Router.forward(raw);
         assessment = self.check()["leads"][0]["entrypoint_assessments"][0]
         self.assertEqual(assessment["enabled_assessment"],
                          "APPLICATION_DISABLED_IN_MANIFEST")
+        self.assertEqual(self.check()["summary"]
+                         ["leads_with_possible_static_external_entry"], 0)
         self.assertEqual(self.check()["android_manifest"]
                          ["application_enabled"], "false")
 
