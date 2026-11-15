@@ -17,6 +17,7 @@ MAX_EDGES = 12000
 MAX_DEPTH = 25
 MAX_PATHS = 100
 MAX_LEADS = 150
+MAX_EXPANSIONS = 50000
 
 
 def _graph(value):
@@ -51,9 +52,14 @@ def _paths(table, adj):
     starts = sorted(k for k, v in table.items() if v["kind"] == "entry")
     results = defaultdict(list)
     truncated = False
+    expansions = 0
     for start in starts:
         stack = [(start, [start], bool(table[start]["guard_present"]))]
         while stack:
+            expansions += 1
+            if expansions > MAX_EXPANSIONS:
+                truncated = True
+                return results, truncated
             current, path, guarded = stack.pop()
             if table[current]["kind"] == "sink":
                 if len(results[current]) < MAX_PATHS:
@@ -97,7 +103,7 @@ def analyze(doc):
         guarded = [p for p in paths if p["guard_cue_on_path"]]
         earlier = first.get(sink, [])
         was_guarded = bool(earlier) and all(p["guard_cue_on_path"] for p in earlier)
-        for path in unguarded[:MAX_LEADS - len(leads)]:
+        for path in unguarded[:max(0, MAX_LEADS - len(leads))]:
             leads.append({
                 "sink": sink, "entry": path["entry"],
                 "path": path["path"], "guard_cue_on_path": False,
