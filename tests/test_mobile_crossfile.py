@@ -46,6 +46,9 @@ static void forward(String url) { webView.loadUrl(url); }
         self.assertEqual(finding["hops"][0]["caller_method"], "open")
         self.assertEqual(finding["status"], "UNVERIFIED_EXPLICIT_CROSSFILE_LEXICAL_PATH")
         self.assertEqual(finding["impact"], "NOT_ESTABLISHED")
+        self.assertEqual(len(report["graph"]["edges"]), 1)
+        self.assertFalse(report["graph"]["edges"][0]["verified_runtime"])
+        self.assertIn("Entry.java::open", [n["id"] for n in report["graph"]["nodes"]])
         self.assertNotIn("getDataString", json.dumps(finding))
 
     def test_java_explicit_import_cross_package(self):
