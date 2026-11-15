@@ -31,7 +31,7 @@ It adds source-anchored *review leads* to the existing Bounty Pilot workflow.
 Prepare APK/IPA yourself through the program's allowed distribution process
 and, if needed, an independently vetted local decompiler. This helper never
 downloads APKs, installs untrusted dependencies or starts an emulator.
-Define BP=skills/bounty-pilot/scripts/bounty.py in your shell before running.
+Set BP=skills/bounty-pilot/scripts/bounty.py; use it for commands below.
 
     python3 "$BP" mobile-lab analyze \
       --artifact /private/artifacts/owned-test.apk \
