@@ -1,6 +1,11 @@
 name: mobile-native-fixture (owned synthetic apps)
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/mobile-native-fixture.yml'
+      - 'skills/bounty-pilot/scripts/mobile_native_probe.py'
+      - 'tests/fixtures/mobile-native/**'
   workflow_dispatch:
 
 permissions:
