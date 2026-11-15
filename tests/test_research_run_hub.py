@@ -122,6 +122,15 @@ class ResearchHubTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside"):
             hub.analyze(self.manifest(), self.root, self.root / "result")
 
+    def test_output_via_symlinked_grandparent_refused(self):
+        (self.root / "nested").mkdir()
+        outer = self.root.parent / "outer"
+        outer.mkdir()
+        (outer / "alias").symlink_to(self.root, target_is_directory=True)
+        path = outer / "alias" / "nested" / "report"
+        with self.assertRaisesRegex(ValueError, "outside"):
+            hub.analyze(self.manifest(), self.root, path)
+
     def test_unknown_engine_rejected(self):
         with self.assertRaisesRegex(ValueError, "unsupported"):
             hub.analyze(self.manifest([{"id": "x", "engine": "shell",
