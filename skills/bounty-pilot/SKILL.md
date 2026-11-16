@@ -129,15 +129,7 @@ for available native tools read `references/web-native-phase4.md`.
 
 ### C. Advanced cross-component/Web3 differential investigation
 
-For **confirmed-pattern cross-operation issues** (shared funds/context, callback nesting,
-mode/trigger combinations, successor approvals, lazy accrual, wrapped/native asset
-identity), first inspect `references/sequence-invariant-lab.md`. Use
-`bounty.py sequence-invariants scan` for bounded lexical reading candidates;
-`review` and `proof-plan` need independently collected, pinned observations.
-Neither the synthetic review nor a supplied native receipt is validation of a
-live bug. `caseforge` is known-case calibration, **not** a blind benchmark.
-
-Choose a reference by the actual hypothesis, not by tool count:
+Choose references by hypothesis (cross-operation: `references/sequence-invariant-lab.md`; manual native proof required), not tool count:
 - AVRE, native execution and failure triage:
   `references/lab-050-research-loop.md`,
   `references/lab-055-productivity.md`,
