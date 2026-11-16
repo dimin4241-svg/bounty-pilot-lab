@@ -200,5 +200,103 @@ class Explode {
         self.assertEqual(report["lead_count"], 1)
 
 
+    def test_same_file_static_helper_is_compiler_bound(self):
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "safe"; } }
+    Intent getIntent() { return new Intent(); }
+    static void relay(String value) { Router.forward(value); }
+    void run() {
+        String raw = getIntent().getDataString();
+        relay(raw);
+    }
+}""")
+        self.put("fixture/Router.java", """package fixture;
+class Router {
+    static class Web { void loadUrl(String s) {} }
+    static Web web = new Web();
+    static void forward(String s) { web.loadUrl(s); }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+        self.assertEqual(len(report["leads"][0]["hops"]), 2)
+        self.assertEqual(report["leads"][0]["hops"][0]["caller_file"],
+                         report["leads"][0]["hops"][0]["callee_file"])
+
+    def test_private_same_file_instance_helper_is_fixed_dispatch(self):
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "safe"; } }
+    Intent getIntent() { return new Intent(); }
+    private void relay(String s) { Router.forward(s); }
+    void run() { String raw = getIntent().getDataString(); relay(raw); }
+}""")
+        self.put("fixture/Router.java", """package fixture;
+class Router {
+    static class Web { void loadUrl(String s) {} }
+    static Web web = new Web();
+    static void forward(String s) { web.loadUrl(s); }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+
+    def test_virtual_overridable_declaration_not_assumed_executed(self):
+        self.prepare(body="Router r = new Derived(); r.forward(raw);",
+                     helper="""void forward(String s) { web.loadUrl(s); }""")
+        self.put("fixture/Derived.java", """package fixture;
+class Derived extends Router {
+    @Override void forward(String s) { /* deliberately no sink */ }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 0, report)
+
+    def test_final_instance_method_can_be_followed(self):
+        self.prepare(body="Router r = new Router(); r.forward(raw);",
+                     helper="""final void forward(String s) { web.loadUrl(s); }""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+
+    def test_matching_assignment_only_branches_preserve_origin(self):
+        self.prepare(body="""String copy = "";
+boolean flag = false;
+if (flag) { copy = raw; } else { copy = raw; }
+Router.forward(copy);""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+        self.assertGreater(report["coverage"]["unsupported_control_flow_statements"], 0)
+
+    def test_implicit_else_must_not_preserve_one_sided_copy(self):
+        self.prepare(body="""String copy = "";
+boolean flag = false;
+if (flag) { copy = raw; }
+Router.forward(copy);""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 0, report)
+
+    def test_sanitized_on_one_branch_drops_provenance(self):
+        self.prepare(body="""boolean flag = false;
+if (flag) { raw = "safe"; } else { raw = raw; }
+Router.forward(raw);""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 0, report)
+
+    def test_mutating_condition_is_unsupported(self):
+        self.prepare(body="""if ((raw = "safe") != null) { }
+Router.forward(raw);""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 0, report)
+        self.assertGreater(report["coverage"]["unsupported_control_flow_statements"], 0)
+
+    def test_calls_inside_conditional_block_remain_unanalyzed(self):
+        self.prepare(body="""boolean flag = true;
+if (flag) { Router.forward(raw); }""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 0, report)
+
 if __name__ == "__main__":
     unittest.main()

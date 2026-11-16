@@ -289,6 +289,38 @@ abstract interpretation model. The JDK process is not OS-network-sandboxed;
 use a trusted local JDK within an isolated, no-network environment for
 untrusted applications.
 
+## Phase 8: Fixed-dispatch Java calls and restricted conditional joins
+
+The `flow-java` review also follows **compiler-bound same-file calls** when
+the call has fixed dispatch: `static`, `private`, `final` methods, members
+on `final` classes, or explicit `super` calls. This extends the prior
+interfile-only argument flow; **a compiler-resolved virtual method does not
+prove which overriding implementation executes at runtime**. Calls whose
+dispatch can vary are not traversed. Each traversed method call counts
+toward the existing three-hop budget, including same-file edges.
+
+For limited `if`/`else` statements, the helper symbolically evaluates
+only simple, side-effect-free conditions and direct assignments/copies of
+local variables. The state after the conditional retains an input origin
+**only when both outcomes carry the exact same origin**. A missing
+`else` is treated as the unchanged incoming state. Sanitization on
+only one branch therefore removes the assertion of flow. Complex
+conditions, method calls in branches, loops, nested branches, try/catch,
+object field writes and other unsupported statements still invalidate
+the state; sinks inside such branches are not reviewed.
+
+This is **not general control-flow reachability**. Conditional expressions
+are not evaluated to true/false; no dynamic dispatch, Android framework
+callback, field, return value, asynchronous message, Kotlin, or runtime
+method is modeled. The diagnostic counter for unsupported/partially
+reviewed conditional statements remains nonzero even where the limited
+assignment join succeeds. The parser/report schema and historical
+`impact: NOT_ESTABLISHED` convention are unchanged.
+
+This stage is verified only with local synthetic Java fixtures; actual
+APK attacks, production app reachability and authorization bypasses
+must be established independently on permitted test systems.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
@@ -333,11 +365,11 @@ analysis, no production target execution and no independently authenticated rece
 
 ## Next implementation stages
 
-1. Extend the shipped Java AST call-target alignment to Kotlin/Smali and
-   Swift; develop compiler-resolved cross-file taint, branch/callback flows,
-   precise Android runtime permissions and dynamic-dispatch modelling.
-   This stage currently proves call-target binding only for eligible Java
-   method calls, not dataflow or exploit reachability.
+1. Extend bounded Java AST argument-flow review to method returns, fields,
+   nested expressions and carefully reviewed CFG edges; add separate Kotlin,
+   Smali and Swift analyzers, and Android framework SDK bindings.
+   Dynamic dispatch, precise permissions and callback reachability remain
+   unmodeled; no current static flow proves real-app exploitability.
 2. Deep-link / App Link / OAuth callback protocol checks with actual origin
    binding and app-claimant validation, not keyword matching.
 3. Ship and test a maintained Android/iOS synthetic fixture app, and expand

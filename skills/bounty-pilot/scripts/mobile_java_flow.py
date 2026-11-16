@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """JDK-resolved bounded Java argument/dataflow review, not an exploit or runtime proof.
 
-A trusted JDK helper analyzes straight-line methods only. Caller symbols and
-arguments are compiler-resolved; intent sources and sink APIs are *name/syntax
+A trusted JDK helper analyzes ordered locals and narrow assignment-only joins.
+Call targets are compiler-resolved and traversed only for fixed dispatch;
+intent sources and sink APIs are *name/syntax
 cues*, not authenticated Android framework objects. No app classes execute.
 """
 import hashlib
@@ -118,7 +119,7 @@ def _parse(payload, digests):
                 "Android source API recognition is name/syntax-based",
                 "sink API recognition is name-based, not OS-side authenticated",
                 "parameter binding resolved by Java compiler",
-                "unmodeled aliases, returns, fields, branches and dynamic calls",
+                "unmodeled aliases, returns, fields, complex branches and virtual dispatch",
             ],
         }
         identity = (source_file, result["source"]["line"], sink_file,
@@ -195,10 +196,10 @@ def analyze(sources):
         "lead_count": len(results["leads"]),
         "engine_does_not_execute_target_classes": True,
         "limitations": [
-            "only straight-line local Java variables and direct argument passing",
-            "only resolved inter-file Java method calls (three hops maximum)",
-            "unknown branches/loops clear taint state rather than speculate",
-            "no method returns, field flow, alias analysis or true value provenance",
+            "ordered local Java variables and conditional assignment joins only",
+            "only statically dispatched intra/inter-file Java method calls (three hops maximum)",
+            "complex conditions, branch bodies, loops and try/catch clear taint rather than speculate",
+            "no method returns, field flow, object alias analysis or true value provenance",
             "Android Intent source and sink names are syntax cues, not verified APIs",
             "not Kotlin, Swift, native code, Smali or runtime callback dispatch",
             "no proof of authorization, user control, exploitability or harm",

@@ -4,8 +4,9 @@
  * loading application classpath or invoking annotation processors.
  *
  * This is intentionally NOT a complete taint or control-flow analysis.
- * It only handles ordered straight-line assignments and exact Java method
- * symbols. Branches invalidate state rather than create imaginary flows.
+ * It handles ordered local assignments, statically dispatched Java method
+ * symbols and assignment-only conditional joins. Complex branches still
+ * invalidate state rather than create imaginary flows.
  */
 import com.sun.source.tree.*;
 import com.sun.source.util.*;
@@ -111,6 +112,25 @@ public final class MobileCompilerFlow {
         return methodName(parent).equals("getIntent") && parent.getArguments().isEmpty();
     }
 
+    // A javac symbol names a declaration, not necessarily the implementation
+    // executed by a virtual call. Traverse only fixed-dispatch call edges.
+    private static boolean fixedDispatch(MethodInvocationTree call,
+                                         ExecutableElement target) {
+        Set<Modifier> modifiers = target.getModifiers();
+        if (modifiers.contains(Modifier.STATIC) ||
+            modifiers.contains(Modifier.PRIVATE) ||
+            modifiers.contains(Modifier.FINAL)) return true;
+        Element owner = target.getEnclosingElement();
+        if (owner != null && owner.getModifiers().contains(Modifier.FINAL)) return true;
+        if (call.getMethodSelect() instanceof MemberSelectTree) {
+            ExpressionTree receiver =
+                ((MemberSelectTree) call.getMethodSelect()).getExpression();
+            if (receiver instanceof IdentifierTree &&
+                ((IdentifierTree) receiver).getName().contentEquals("super")) return true;
+        }
+        return false;
+    }
+
     private static final class Engine {
         final Trees trees;
         final Map<ExecutableElement, Method> methods;
@@ -209,8 +229,8 @@ public final class MobileCompilerFlow {
             Element target = trees.getElement(new TreePath(path, call.getMethodSelect()));
             if (!(target instanceof ExecutableElement)) return;
             Method callee = methods.get(target);
-            if (callee == null || callee.file.equals(method.file)
-                || callee.params.size() != passed.size()) return;
+            if (callee == null || callee.params.size() != passed.size()
+                || !fixedDispatch(call, (ExecutableElement) target)) return;
             String key = callee.signature + "@" + callee.file;
             if (active.contains(key)) return;
             Map<Element, Origin> inherited = new HashMap<>();
@@ -223,6 +243,104 @@ public final class MobileCompilerFlow {
             List<Hop> next = new ArrayList<>(hops);
             next.add(new Hop(method, callee, line(method, call)));
             process(callee, inherited, next, active, depth + 1);
+        }
+
+
+        // Conditions are inspected only for simple, non-mutating expression
+        // shapes. We intentionally never inspect sinks inside branch bodies.
+        boolean simpleCondition(ExpressionTree expr) {
+            if (expr instanceof IdentifierTree || expr instanceof LiteralTree) return true;
+            if (expr instanceof ParenthesizedTree) {
+                return simpleCondition(((ParenthesizedTree) expr).getExpression());
+            }
+            if (expr instanceof UnaryTree && expr.getKind() == Tree.Kind.LOGICAL_COMPLEMENT) {
+                return simpleCondition(((UnaryTree) expr).getExpression());
+            }
+            if (expr instanceof BinaryTree) {
+                Tree.Kind kind = expr.getKind();
+                if (kind != Tree.Kind.CONDITIONAL_AND && kind != Tree.Kind.CONDITIONAL_OR
+                    && kind != Tree.Kind.EQUAL_TO && kind != Tree.Kind.NOT_EQUAL_TO
+                    && kind != Tree.Kind.LESS_THAN && kind != Tree.Kind.LESS_THAN_EQUAL
+                    && kind != Tree.Kind.GREATER_THAN && kind != Tree.Kind.GREATER_THAN_EQUAL) {
+                    return false;
+                }
+                BinaryTree binary = (BinaryTree) expr;
+                return simpleCondition(binary.getLeftOperand())
+                    && simpleCondition(binary.getRightOperand());
+            }
+            return false;
+        }
+
+        boolean simpleValue(ExpressionTree expr) {
+            if (expr == null || expr instanceof LiteralTree ||
+                expr instanceof IdentifierTree) return true;
+            if (expr instanceof ParenthesizedTree) {
+                return simpleValue(((ParenthesizedTree) expr).getExpression());
+            }
+            return false;
+        }
+
+        boolean localSymbol(Element symbol) {
+            return symbol != null && (symbol.getKind() == ElementKind.LOCAL_VARIABLE
+                || symbol.getKind() == ElementKind.PARAMETER);
+        }
+
+        boolean branchAssignments(Method method, StatementTree statement,
+                                  TreePath path, Map<Element, Origin> state) {
+            if (statement instanceof EmptyStatementTree) return true;
+            if (statement instanceof BlockTree) {
+                for (StatementTree nested : ((BlockTree) statement).getStatements()) {
+                    if (!branchAssignments(method, nested,
+                            new TreePath(path, nested), state)) return false;
+                }
+                return true;
+            }
+            Element symbol;
+            ExpressionTree rhs;
+            TreePath rhsPath = null;
+            if (statement instanceof VariableTree) {
+                symbol = trees.getElement(path);
+                rhs = ((VariableTree) statement).getInitializer();
+                if (rhs != null) rhsPath = new TreePath(path, rhs);
+            } else if (statement instanceof ExpressionStatementTree) {
+                ExpressionTree expr = ((ExpressionStatementTree) statement).getExpression();
+                if (!(expr instanceof AssignmentTree)) return false;
+                TreePath assignmentPath = new TreePath(path, expr);
+                AssignmentTree assignment = (AssignmentTree) expr;
+                if (!(assignment.getVariable() instanceof IdentifierTree)) return false;
+                symbol = trees.getElement(new TreePath(assignmentPath,
+                    assignment.getVariable()));
+                rhs = assignment.getExpression();
+                rhsPath = new TreePath(assignmentPath, rhs);
+            } else {
+                return false;
+            }
+            if (!localSymbol(symbol) || !simpleValue(rhs)) return false;
+            Origin value = rhs == null ? null : expression(method, rhs, rhsPath, state);
+            if (value == null) state.remove(symbol);
+            else state.put(symbol, value);
+            return true;
+        }
+
+        boolean joinConditional(Method method, IfTree tree, TreePath path,
+                                Map<Element, Origin> state) {
+            if (!simpleCondition(tree.getCondition())) return false;
+            Map<Element, Origin> onTrue = new HashMap<>(state);
+            Map<Element, Origin> onFalse = new HashMap<>(state);
+            StatementTree thenStatement = tree.getThenStatement();
+            StatementTree elseStatement = tree.getElseStatement();
+            if (!branchAssignments(method, thenStatement,
+                    new TreePath(path, thenStatement), onTrue)) return false;
+            if (elseStatement != null && !branchAssignments(method, elseStatement,
+                    new TreePath(path, elseStatement), onFalse)) return false;
+            state.clear();
+            for (Map.Entry<Element, Origin> entry : onTrue.entrySet()) {
+                Origin a = entry.getValue();
+                Origin b = onFalse.get(entry.getKey());
+                if (b != null && a.file.equals(b.file) && a.line == b.line
+                    && a.kind.equals(b.kind)) state.put(entry.getKey(), a);
+            }
+            return true;
         }
 
         void process(Method method, Map<Element, Origin> inherited,
@@ -293,6 +411,10 @@ public final class MobileCompilerFlow {
                         taint.clear();
                         unknownBranches++;
                     }
+                } else if (statement instanceof IfTree) {
+                    unknownBranches++;
+                    if (!joinConditional(method, (IfTree) statement,
+                            statementPath, taint)) taint.clear();
                 } else if (statement instanceof ReturnTree
                            || statement instanceof ThrowTree) {
                     break;
