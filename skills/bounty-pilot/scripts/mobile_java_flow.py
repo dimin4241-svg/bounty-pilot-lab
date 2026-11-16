@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""JDK-resolved bounded Java argument/dataflow review, not an exploit or runtime proof.
+"""Bounded Java AST flow review; neither runtime verification nor an exploit.
 
-A trusted JDK helper analyzes ordered locals and narrow assignment-only joins.
-Call targets are compiler-resolved and traversed only for fixed dispatch;
-intent sources and sink APIs are *name/syntax
-cues*, not authenticated Android framework objects. No app classes execute.
+A trusted JDK helper analyzes ordered locals, pure return summaries,
+private current-object fields, and narrow assignment-only joins.
+Calls require fixed dispatch. Intent sources and sinks remain syntax/name
+cues, not authenticated Android framework objects. No target classes execute.
 """
 import hashlib
 import shutil
@@ -60,8 +60,9 @@ def _parse(payload, digests):
         (source_file, source_line, source_kind, sink_file, sink_line,
          sink_method, sink_signature, sink_cue, hop_count) = values[:9]
         hops = _positive(hop_count, "hop count")
-        if hops > MAX_HOPS or len(fields) != 10 + 8 * hops:
+        if hops > MAX_HOPS or len(fields) not in (10 + 8 * hops, 10 + 9 * hops):
             raise ValueError("compiler flow hop count inconsistent")
+        stride = 9 if len(fields) == 10 + 9 * hops else 8
         if source_file not in digests or sink_file not in digests:
             raise ValueError("flow mentions a source outside pinned snapshot")
         if source_kind not in ("ANDROID_INTENT_SOURCE_SYNTAX_CUE",
@@ -74,9 +75,13 @@ def _parse(payload, digests):
             raise ValueError("unsupported sink cue")
         chain = []
         data = values[9:]
-        for i in range(0, len(data), 8):
+        for i in range(0, len(data), stride):
+            segments = data[i:i + stride]
             (caller_file, caller_method, caller_signature, call_line,
-             callee_file, callee_method, callee_line, callee_signature) = data[i:i + 8]
+             callee_file, callee_method, callee_line, callee_signature) = segments[:8]
+            kind = segments[8] if stride == 9 else "METHOD_CALL"
+            if kind not in ("METHOD_CALL", "RETURN_TO_CALLER"):
+                raise ValueError("unknown compiler flow edge kind")
             if caller_file not in digests or callee_file not in digests:
                 raise ValueError("flow hop refers to unknown source")
             chain.append({
@@ -88,15 +93,29 @@ def _parse(payload, digests):
                 "callee_method": callee_method,
                 "callee_signature": callee_signature,
                 "callee_declaration_line": _positive(callee_line, "declaration line"),
-                "method_binding": "JDK_EXECUTABLE_ELEMENT",
+                "edge_kind": kind,
+                "method_binding": ("JDK_EXECUTABLE_ELEMENT"
+                                   if kind == "METHOD_CALL"
+                                   else "JDK_BOUND_RETURN_TO_CALLER"),
             })
         if not chain or chain[0]["caller_file"] != source_file:
             raise ValueError("flow source/hops do not connect")
         if chain[-1]["callee_file"] != sink_file:
             raise ValueError("flow hop/sink do not connect")
-        if any(chain[j]["callee_file"] != chain[j + 1]["caller_file"]
-               for j in range(len(chain) - 1)):
-            raise ValueError("non-contiguous compiler flow chain")
+        # A return must restore precisely the active call frame.
+        stack = [(chain[0]["caller_file"], chain[0]["caller_signature"])]
+        for edge in chain:
+            if (edge["caller_file"], edge["caller_signature"]) != stack[-1]:
+                raise ValueError("non-contiguous compiler flow method chain")
+            target = (edge["callee_file"], edge["callee_signature"])
+            if edge["edge_kind"] == "METHOD_CALL":
+                stack.append(target)
+            else:
+                if len(stack) < 2 or target != stack[-2]:
+                    raise ValueError("return does not match compiler call frame")
+                stack.pop()
+        if stack[-1] != (sink_file, sink_signature):
+            raise ValueError("compiler flow terminates outside sink method")
         result = {
             "source": {"file": source_file,
                        "line": _positive(source_line, "source line"),
@@ -108,7 +127,7 @@ def _parse(payload, digests):
                      "method_signature": sink_signature,
                      "api_name_cue": sink_cue},
             "hops": chain,
-            "status": "JAVA_AST_STRAIGHT_LINE_ARGUMENT_FLOW_REVIEW",
+            "status": "JAVA_AST_BOUNDED_ARGUMENT_RETURN_FIELD_FLOW_REVIEW",
             "severity": "unassessed",
             "reachability": "UNKNOWN",
             "impact": "NOT_ESTABLISHED",
@@ -119,13 +138,15 @@ def _parse(payload, digests):
                 "Android source API recognition is name/syntax-based",
                 "sink API recognition is name-based, not OS-side authenticated",
                 "parameter binding resolved by Java compiler",
-                "unmodeled aliases, returns, fields, complex branches and virtual dispatch",
+                "pure fixed-dispatch return helpers only; return hops are explicit",
+                "private this.field accesses only within the current method",
+                "unmodeled aliases, cross-method heap, complex branches and virtual dispatch",
             ],
         }
         identity = (source_file, result["source"]["line"], sink_file,
                     result["sink"]["line"],
                     tuple((hop["caller_file"], hop["call_line"],
-                           hop["callee_signature"]) for hop in chain))
+                           hop["callee_signature"], hop["edge_kind"]) for hop in chain))
         if identity in seen:
             continue
         seen.add(identity)
@@ -178,7 +199,7 @@ def analyze(sources):
         "schema_version": 1,
         "engine": "mobile-java-compiler-flow",
         "platform": "android",
-        "mode": "JDK_AST_EXACT_METHOD_SYMBOL_AND_STRAIGHT_LINE_ARGUMENT_PROPAGATION",
+        "mode": "JDK_AST_FIXED_DISPATCH_ARGUMENT_PURE_RETURN_AND_PRIVATE_FIELD_FLOW",
         "assurance": "STATIC_ARGUMENT_FLOW_CANDIDATES_ONLY_NO_RUNTIME_VERIFICATION",
         "coverage": {
             **coverage,
@@ -196,10 +217,10 @@ def analyze(sources):
         "lead_count": len(results["leads"]),
         "engine_does_not_execute_target_classes": True,
         "limitations": [
-            "ordered local Java variables and conditional assignment joins only",
+            "ordered local Java variables, private this.fields and conditional joins only",
             "only statically dispatched intra/inter-file Java method calls (three hops maximum)",
             "complex conditions, branch bodies, loops and try/catch clear taint rather than speculate",
-            "no method returns, field flow, object alias analysis or true value provenance",
+            "pure direct returns only; no cross-method fields, aliases or full provenance",
             "Android Intent source and sink names are syntax cues, not verified APIs",
             "not Kotlin, Swift, native code, Smali or runtime callback dispatch",
             "no proof of authorization, user control, exploitability or harm",

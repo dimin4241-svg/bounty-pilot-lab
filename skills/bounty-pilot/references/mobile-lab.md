@@ -321,6 +321,38 @@ This stage is verified only with local synthetic Java fixtures; actual
 APK attacks, production app reachability and authorization bypasses
 must be established independently on permitted test systems.
 
+## Phase 9: Pure Java return summaries and private current-object fields
+
+The `flow-java` analyzer now follows two additional **strictly bounded**
+static dataflow patterns:
+
+- **Pure returns:** a compiler-resolved fixed-dispatch helper may return
+  one of its arguments (including through straightforward local copies).
+  Its complete body must consist solely of local declarations and direct
+  assignments followed by one final return. Branches, field access, side
+  effects, unknown method calls, and virtual dispatch reject this summary.
+  Return provenance is explicit: the report records a METHOD_CALL edge
+  into the helper and RETURN_TO_CALLER edge back to the original method,
+  validated as a balanced stack before subsequent calls.
+- **Private current-object fields:** the analyzer can follow direct writes
+  and reads of `this.privateField` or an unqualified private instance field
+  in the **same method invocation**, with compiler-resolved field symbols.
+  Unknown top-level method calls invalidate the field map. Arbitrary receiver
+  fields such as `other.payload`, public/static fields, object aliases,
+  arrays, cross-method field persistence, and concurrent mutations are
+  **not** analyzed. This is not general heap or alias analysis.
+
+The overall provenance budget is still three edges, including both directions
+of a return and any additional call into a sink. Backward return edges are
+**not** actual Java method invocations. Older 8-column hop records remain
+parser-compatible, while new records name their edge kind explicitly.
+
+This stage is a conservative offline static review, not Android API binding,
+entrypoint reachability, an external attacker primitive, a proven protected
+sink effect, or a validated vulnerability. `impact` remains
+`NOT_ESTABLISHED`, severity remains unassessed, and no target application
+is run by the JDK analysis.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
@@ -365,11 +397,12 @@ analysis, no production target execution and no independently authenticated rece
 
 ## Next implementation stages
 
-1. Extend bounded Java AST argument-flow review to method returns, fields,
-   nested expressions and carefully reviewed CFG edges; add separate Kotlin,
-   Smali and Swift analyzers, and Android framework SDK bindings.
-   Dynamic dispatch, precise permissions and callback reachability remain
-   unmodeled; no current static flow proves real-app exploitability.
+1. Extend bounded Java AST analysis beyond pure direct returns and
+   same-method private fields toward validated object identity, inter-method
+   heap summaries, nested expressions and carefully reviewed CFG edges.
+   Add separate Kotlin, Smali and Swift analyzers and Android SDK type
+   bindings. Dynamic dispatch, permissions and callback reachability remain
+   unmodeled; no static flow proves real-app exploitability.
 2. Deep-link / App Link / OAuth callback protocol checks with actual origin
    binding and app-claimant validation, not keyword matching.
 3. Ship and test a maintained Android/iOS synthetic fixture app, and expand
