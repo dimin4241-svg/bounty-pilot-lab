@@ -162,8 +162,9 @@ class KotlinJvmEvidenceTests(unittest.TestCase):
                 for name in ("Entry.kt", "Router.kt")
             },
             "class_sha256": {
-                name: hashlib.sha256((self.classes / "fixture" /
-                                     (name + ".class")).read_bytes()).hexdigest()
+                "fixture/" + name: hashlib.sha256(
+                    (self.classes / "fixture" / (name + ".class")).read_bytes()
+                ).hexdigest()
                 for name in ("Entry", "Router")
             },
         }
