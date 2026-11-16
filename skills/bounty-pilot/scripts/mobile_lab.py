@@ -558,6 +558,11 @@ def main(argv=None):
     flow.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
     flow.add_argument("--max-leads", type=int, default=120)
     flow.add_argument("--out", required=True)
+    smali = cmds.add_parser("smali-crossfile",
+                            help="exact Smali descriptor static call review; no target execution")
+    smali.add_argument("--sources", required=True)
+    smali.add_argument("--max-leads", type=int, default=120)
+    smali.add_argument("--out", required=True)
     jflow = cmds.add_parser("flow-java", help="bounded JDK AST Java argument-flow review; no target execution")
     jflow.add_argument("--sources", required=True)
     jflow.add_argument("--out", required=True)
@@ -592,6 +597,10 @@ def main(argv=None):
         elif args.action == "flow":
             import mobile_flow
             report = mobile_flow.analyze(args.sources, args.platform, args.max_leads)
+            _write_private(args.out, report, args.sources)
+        elif args.action == "smali-crossfile":
+            import mobile_smali_crossfile
+            report = mobile_smali_crossfile.analyze(args.sources, args.max_leads)
             _write_private(args.out, report, args.sources)
         elif args.action == "flow-java":
             import mobile_java_flow
