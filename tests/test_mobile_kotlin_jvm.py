@@ -213,7 +213,7 @@ class KotlinJvmEvidenceTests(unittest.TestCase):
 
     def test_snapshot_lock_missing_callee_digest_fails_closed(self):
         snapshot = self.snapshot_lock()
-        snapshot["class_sha256"].pop("Router")
+        snapshot["class_sha256"].pop("fixture/Router")
         result = self.locked_scan(snapshot)
         self.assertEqual(result["lead_count"], 1)
         self.assertEqual(result["leads"][0]["kotlin_jvm_alignment"]["status"],
