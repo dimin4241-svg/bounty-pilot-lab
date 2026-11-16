@@ -558,10 +558,14 @@ def main(argv=None):
     flow.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
     flow.add_argument("--max-leads", type=int, default=120)
     flow.add_argument("--out", required=True)
+    jgraph = cmds.add_parser("compiler-java", help="JDK AST resolved Java call edges; no target execution")
+    jgraph.add_argument("--sources", required=True)
+    jgraph.add_argument("--out", required=True)
     cross = cmds.add_parser("crossfile", help="bounded explicit class cross-file lexical review leads")
     cross.add_argument("--sources", required=True)
     cross.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
     cross.add_argument("--max-leads", type=int, default=120)
+    cross.add_argument("--compiler-graph", help="optional pinned JDK AST edge report to align lexical hops")
     cross.add_argument("--out", required=True)
     reach = cmds.add_parser("reachability", help="annotate cross-file leads with static Android manifest exposure and permission gates")
     reach.add_argument("--sources", required=True)
@@ -586,9 +590,22 @@ def main(argv=None):
             import mobile_flow
             report = mobile_flow.analyze(args.sources, args.platform, args.max_leads)
             _write_private(args.out, report, args.sources)
+        elif args.action == "compiler-java":
+            import mobile_java_compiler
+            report = mobile_java_compiler.analyze(args.sources)
+            _write_private(args.out, report, args.sources)
         elif args.action == "crossfile":
             import mobile_crossfile
-            report = mobile_crossfile.analyze(args.sources, args.platform, args.max_leads)
+            compiler_graph = None
+            if args.compiler_graph:
+                candidate = Path(args.compiler_graph)
+                if (candidate.is_symlink() or not candidate.is_file()
+                        or candidate.stat().st_size > 6 * 1024 * 1024):
+                    raise ValueError("compiler graph must be a bounded regular JSON file")
+                compiler_graph = json.loads(
+                    _regular_file(candidate, 6 * 1024 * 1024).decode("utf-8"))
+            report = mobile_crossfile.analyze(args.sources, args.platform, args.max_leads,
+                                              compiler_graph)
             _write_private(args.out, report, args.sources)
         elif args.action == "reachability":
             import mobile_reachability

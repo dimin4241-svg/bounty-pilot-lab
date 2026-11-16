@@ -233,13 +233,105 @@ def _trace_ordered(fn, owner, symbols, platform, initial, trail=(), depth=0):
                 child["hops"].insert(0, {
                     "caller_file": owner["path"], "caller_line": line,
                     "caller_method": fn["name"], "callee_file": target["path"],
-                    "callee_method": helper["name"], "resolution": resolution,
+                    "callee_method": helper["name"],
+                    "callee_declaration_line": helper["line"],
+                    "resolution": resolution,
                 })
                 found.append(child)
     return found
 
 
-def analyze(sources, platform, max_leads=MAX_LEADS):
+
+def _compiler_support(report, compiler_graph, root):
+    """Compare independent Java AST method targets to lexical taint *leads*.
+
+    Caller/callee declarations, invocation line, source digest and method names
+    must agree. Compiler binding never validates caller inputs, taint or effects.
+    """
+    if (not isinstance(compiler_graph, dict)
+            or compiler_graph.get("schema_version") != 1
+            or compiler_graph.get("engine") != "mobile-java-compiler-graph"
+            or compiler_graph.get("platform") != "android"):
+        raise ValueError("expected mobile-java-compiler-graph JSON, schema version 1")
+    digests = compiler_graph.get("source_digests")
+    edges = compiler_graph.get("edges")
+    coverage = compiler_graph.get("coverage")
+    if (not isinstance(digests, dict) or len(digests) > 350
+            or not isinstance(edges, list) or len(edges) > 3000
+            or not isinstance(coverage, dict)
+            or type(coverage.get("diagnostic_errors")) is not int
+            or coverage["diagnostic_errors"] < 0):
+        raise ValueError("malformed Java compiler graph")
+    for relative, digest in digests.items():
+        if (not isinstance(relative, str) or not relative
+                or Path(relative).is_absolute()
+                or ".." in Path(relative).parts
+                or not isinstance(digest, str) or len(digest) != 64):
+            raise ValueError("unsafe Java source fingerprint")
+        path = root / relative
+        if (path.is_symlink()
+                or any(p.is_symlink() for p in path.parents if p != root)):
+            raise ValueError("compiler source points through a symlink")
+        data = mobile_lab._regular_file(path, MAX_FILE_BYTES)
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError("compiler graph has stale Java source hashes")
+    supported = set()
+    for edge in edges:
+        if not isinstance(edge, dict):
+            raise ValueError("invalid compiler edge")
+        a, b = edge.get("caller_file"), edge.get("callee_file")
+        if (a not in digests or b not in digests
+                or edge.get("caller_sha256") != digests[a]
+                or edge.get("callee_sha256") != digests[b]
+                or edge.get("binding_source") != "JDK_COMPILER_SYMBOL"):
+            raise ValueError("compiler edge has inconsistent source fingerprint")
+        key = (a, edge.get("caller_method"), edge.get("call_line"),
+               b, edge.get("callee_method"), edge.get("callee_declaration_line"))
+        supported.add(key)
+    matched = 0
+    unaligned = 0
+    non_java = 0
+    for lead in report["leads"]:
+        hops = lead["hops"]
+        if any(not (h["caller_file"].endswith(".java")
+                    and h["callee_file"].endswith(".java")) for h in hops):
+            status = "JAVA_ONLY_NOT_APPLICABLE"
+            count = 0
+            non_java += 1
+        else:
+            count = sum(
+                (h["caller_file"], h["caller_method"], h["caller_line"],
+                 h["callee_file"], h["callee_method"],
+                 h["callee_declaration_line"]) in supported
+                for h in hops)
+            status = ("ALL_HOPS_AST_SYMBOL_ALIGNED" if count == len(hops)
+                      else "SOME_HOPS_NOT_AST_ALIGNED")
+            if count == len(hops):
+                matched += 1
+            else:
+                unaligned += 1
+        lead["compiler_alignment"] = {
+            "status": status, "matched_hops": count,
+            "total_hops": len(hops),
+            "compilation_errors": coverage["diagnostic_errors"],
+            "compiler_edge_truncated": bool(
+                coverage.get("compiler_edge_truncated", False)),
+            "runtime_effect_verified": False,
+            "taint_validated_by_compiler": False,
+        }
+    report["compiler_comparison"] = {
+        "aligned_leads": matched, "unaligned_java_leads": unaligned,
+        "non_java_leads": non_java,
+        "compiler_diagnostic_errors": coverage["diagnostic_errors"],
+        "symbol_graph_complete": bool(
+            coverage.get("complete_file_coverage")
+            and coverage["diagnostic_errors"] == 0),
+        "meaning": "compiled call-target alignment only; no taint or runtime proof",
+    }
+    return report
+
+
+def analyze(sources, platform, max_leads=MAX_LEADS, compiler_graph=None):
     if platform not in FILE_TYPES:
         raise ValueError("cross-file analysis supports android or ios")
     if type(max_leads) is not int or not 1 <= max_leads <= MAX_LEADS:
@@ -308,7 +400,7 @@ def analyze(sources, platform, max_leads=MAX_LEADS):
                                 "call_line": hop["caller_line"],
                                 "resolution": hop["resolution"],
                                 "verified_runtime": False}
-    return {
+    result = {
         "schema_version": 1,
         "engine": "mobile-crossfile",
         "mode": "offline-explicit-unique-symbol-lexical",
@@ -330,3 +422,8 @@ def analyze(sources, platform, max_leads=MAX_LEADS):
                                 "ObjC message dispatch", "native runtime proof"],
         },
     }
+    if compiler_graph is not None:
+        if platform != "android":
+            raise ValueError("Java compiler graph is supported only with android")
+        return _compiler_support(result, compiler_graph, root)
+    return result

@@ -190,6 +190,58 @@ Provider reviews preserve operation-specific readPermission and writePermission,
 
 The framework_callback_review_priority field is a queue-order hint, **not** a severity or exploitability assessment. All detected findings remain unverified.
 
+## Phase 6: Java compiler-backed call-target alignment
+
+This stage introduces a separate **JDK 17+ compiler AST** inventory for
+Java sources. It fixes a major limitation of purely text-based call matching:
+overloaded methods and same-named methods in separate packages can be
+distinguished by the compiler's resolved method symbol. The shipped helper
+is compiled with JDK javac and asks the Java compiler to parse/analyze the
+operator's Java source under an empty, isolated project classpath with
+annotation processing disabled; it does **not** compile the target app to
+classes, run its methods or install an APK.
+
+First, extract sources from a lawfully obtained, in-scope APK using the
+separate operator-approved decompiler adapter, or supply an existing Java
+source tree. Then run:
+
+    python3 skills/bounty-pilot/scripts/bounty.py mobile-lab compiler-java \
+      --sources /private/decompiled-application \
+      --out /private/reports/java-symbols.json
+
+To compare the compiler-backed source-call map with the existing lexical
+source-to-sink **hypotheses**, optionally pass the produced graph:
+
+    python3 skills/bounty-pilot/scripts/bounty.py mobile-lab crossfile \
+      --sources /private/decompiled-application --platform android \
+      --compiler-graph /private/reports/java-symbols.json \
+      --out /private/reports/java-crossfile-comparison.json
+
+Every candidate receives a separate compiler_alignment status:
+ALL_HOPS_AST_SYMBOL_ALIGNED, SOME_HOPS_NOT_AST_ALIGNED, or
+JAVA_ONLY_NOT_APPLICABLE. Every hop is matched on both source files,
+caller/callee method names, the call line, target declaration line, and
+current source SHA-256. A stale or changed source hash fails closed.
+The original candidate's impact and severity **do not change**, because
+matching a call target does not prove the value flowing into that call,
+branch feasibility, authorization, export reachability or app runtime.
+
+The symbol extractor limits Java files to 350, input source to 8 MiB,
+individual files to 350 KiB, emitted edges to 3,000 and Java heap to
+384 MiB. Source files are neither executed nor loaded as annotation
+processors; third-party build scripts, Gradle, Maven and target classes
+are not launched. A source path through a symlink is refused. Compiler
+diagnostic counts and truncated coverage are included in the report;
+absence of a resolved call is **not** evidence that a call is impossible
+when the project has missing Android SDK dependencies or other errors.
+
+The JDK code is a shipped trusted helper. It runs with a stripped
+environment and isolated compilation classpath, but this is **not**
+an operating-system network sandbox. For untrusted target source, use
+a disposable no-network VM and a trusted local JDK. Native Kotlin,
+Swift, Smali, reflection, interface dispatch at runtime, and Android
+permission models remain outside compiler-backed coverage.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
@@ -234,10 +286,11 @@ analysis, no production target execution and no independently authenticated rece
 
 ## Next implementation stages
 
-1. Compiler-backed Java/Kotlin/Smali and Swift symbol resolution with full
-   cross-file data-flow, control-flow guards, callback/caller semantics and
-   SDK/targetSdk dependent permission models. The Phase 2 lexical helper is
-   deliberately narrower than this.
+1. Extend the shipped Java AST call-target alignment to Kotlin/Smali and
+   Swift; develop compiler-resolved cross-file taint, branch/callback flows,
+   precise Android runtime permissions and dynamic-dispatch modelling.
+   This stage currently proves call-target binding only for eligible Java
+   method calls, not dataflow or exploit reachability.
 2. Deep-link / App Link / OAuth callback protocol checks with actual origin
    binding and app-claimant validation, not keyword matching.
 3. Ship and test a maintained Android/iOS synthetic fixture app, and expand
