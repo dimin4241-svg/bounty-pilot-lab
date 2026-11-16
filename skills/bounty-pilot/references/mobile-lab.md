@@ -242,6 +242,53 @@ a disposable no-network VM and a trusted local JDK. Native Kotlin,
 Swift, Smali, reflection, interface dispatch at runtime, and Android
 permission models remain outside compiler-backed coverage.
 
+## Phase 7: Bounded JDK AST Java argument-flow reviewer
+
+This stage adds an additional **compiler-symbol-backed** Java-only
+straight-line argument/dataflow reviewer. It is separate from the existing
+lexical crossfile engine and from the JDK AST call graph introduced in Phase 6.
+
+    python3 skills/bounty-pilot/scripts/bounty.py mobile-lab flow-java \
+      --sources /private/decompiled-app \
+      --out /private/reports/java-argument-flow.json
+
+The shipped Java 17 helper parses/analyzes source with annotation processing
+disabled, an empty application classpath and no execution of target classes.
+The helper follows a **small subset** of explicit program behavior:
+
+- Direct local assignments and copies, with overwrite invalidation.
+- An Intent-source expression shaped like getIntent().getDataString(),
+  getIntent().getStringExtra(), etc. The claimed Android origin is only a
+  **syntax cue**, not a proven Android SDK method or attacker input.
+- The first onNewIntent method parameter is a **method-name cue**, not a
+  verified framework callback.
+- Actual Java compiler ExecutableElement target binding at inter-file calls,
+  carrying only directly tainted identifiers or the explicitly recognized
+  source expression to the callee's corresponding formal parameters.
+- Up to three resolved inter-file method calls, then a **sink-name cue**
+  such as loadUrl or setResult. It is not an Android/WebView type check.
+
+To avoid fabricating paths, the helper **does not** traverse conditional
+branches, loops or try/catch. Encountering these clears the local taint
+state, so false negatives are expected. Method returns, fields, dynamic
+dispatch, lambdas, captures, Kotlin and Smali are not analyzed as dataflow
+sources. An expression such as sanitize(value) is not assumed to return
+tainted input; the analyzer may miss vulnerable variants behind wrappers.
+
+The JSON report records pinned SHA-256 files, exact compiler-bound
+inter-file method symbols, source and sink code lines, diagnostic errors,
+unsupported control-flow statements, budget limits and evidence caveats.
+Every finding is a **static review candidate** with unassessed severity,
+unknown external reachability and impact NOT_ESTABLISHED. Runtime tests and
+independent caller/permission validation remain separate.
+
+A syntactically named getIntent method can be an unrelated user-defined
+helper; likewise, a user-defined loadUrl may not be a real WebView sink.
+Future versions should bind Android framework SDK stubs and extend the
+abstract interpretation model. The JDK process is not OS-network-sandboxed;
+use a trusted local JDK within an isolated, no-network environment for
+untrusted applications.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
