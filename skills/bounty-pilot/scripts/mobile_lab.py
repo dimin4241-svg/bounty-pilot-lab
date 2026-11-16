@@ -574,6 +574,7 @@ def main(argv=None):
     cross.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
     cross.add_argument("--max-leads", type=int, default=120)
     cross.add_argument("--compiler-graph", help="optional pinned JDK AST edge report to align lexical hops")
+    cross.add_argument("--jvm-classes", help="optional read-only compiled Kotlin JVM classfiles for unattested bytecode alignment")
     cross.add_argument("--out", required=True)
     reach = cmds.add_parser("reachability", help="annotate cross-file leads with static Android manifest exposure and permission gates")
     reach.add_argument("--sources", required=True)
@@ -620,8 +621,9 @@ def main(argv=None):
                     raise ValueError("compiler graph must be a bounded regular JSON file")
                 compiler_graph = json.loads(
                     _regular_file(candidate, 6 * 1024 * 1024).decode("utf-8"))
-            report = mobile_crossfile.analyze(args.sources, args.platform, args.max_leads,
-                                              compiler_graph)
+            report = mobile_crossfile.analyze(
+                args.sources, args.platform, args.max_leads, compiler_graph,
+                jvm_classes=args.jvm_classes)
             _write_private(args.out, report, args.sources)
         elif args.action == "reachability":
             import mobile_reachability

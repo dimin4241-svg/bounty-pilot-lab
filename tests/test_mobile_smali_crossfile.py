@@ -217,5 +217,115 @@ class SmaliDescriptorFlowTests(unittest.TestCase):
         self.assertNotEqual(p2.returncode, 0)
 
 
+    def add_pure_identity(self):
+        self.put("Identity.smali", """.class public Lfixture/Identity;
+.super Ljava/lang/Object;
+.method public static identity(Ljava/lang/String;)Ljava/lang/String;
+    .locals 1
+    move-object v0, p0
+    return-object v0
+.end method
+""")
+        self.rewrite(
+            "Entry.smali",
+            "invoke-static {v1}, Lfixture/Router;->forward(Ljava/lang/String;)V",
+            "invoke-static {v1}, Lfixture/Identity;->identity(Ljava/lang/String;)Ljava/lang/String;\n"
+            "    move-result-object v2\n"
+            "    invoke-static {v2}, Lfixture/Router;->forward(Ljava/lang/String;)V"
+        )
+
+    def test_invoke_static_range_one_string_parameter(self):
+        self.rewrite("Entry.smali", "invoke-static {v1}, Lfixture/Router;",
+                     "invoke-static/range {v1 .. v1}, Lfixture/Router;")
+        self.assertEqual(self.scan()["lead_count"], 1)
+
+    def test_invoke_virtual_range_webview_two_registers(self):
+        self.rewrite("Router.smali",
+                     "invoke-virtual {v0, p0}, Landroid/webkit/WebView;",
+                     "move-object v1, p0\n"
+                     "    invoke-virtual/range {v0 .. v1}, Landroid/webkit/WebView;")
+        self.assertEqual(self.scan()["lead_count"], 1)
+
+    def test_range_invalid_register_interval_rejected(self):
+        self.rewrite("Entry.smali", "invoke-static {v1}",
+                     "invoke-static/range {v3 .. v1}")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_range_mixed_register_banks_rejected(self):
+        self.rewrite("Entry.smali", "invoke-static {v1}",
+                     "invoke-static/range {v1 .. p1}")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_range_does_not_assume_multiple_args_are_one(self):
+        self.rewrite("Entry.smali", "invoke-static {v1}",
+                     "invoke-static/range {v1 .. v2}")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_pure_return_object_propagates_across_two_static_edges(self):
+        self.add_pure_identity()
+        report = self.scan()
+        self.assertEqual(report["lead_count"], 1, report)
+        item = report["leads"][0]
+        self.assertEqual([edge["edge_kind"] for edge in item["hops"]],
+                         ["STATIC_CALL", "RETURN_TO_CALLER", "STATIC_CALL"])
+        self.assertEqual(item["sink"]["kind"], "WEBVIEW_LOAD")
+        self.assertEqual(item["impact"], "NOT_ESTABLISHED")
+
+    def test_pure_return_object_supports_static_range(self):
+        self.add_pure_identity()
+        self.rewrite("Entry.smali",
+                     "invoke-static {v1}, Lfixture/Identity;",
+                     "invoke-static/range {v1 .. v1}, Lfixture/Identity;")
+        self.assertEqual(self.scan()["lead_count"], 1)
+
+    def test_pure_return_can_feed_receiver_register_move(self):
+        self.add_pure_identity()
+        self.rewrite("Entry.smali",
+                     "invoke-static {v2}, Lfixture/Router;",
+                     "move-object v1, v2\n    invoke-static {v1}, Lfixture/Router;")
+        self.assertEqual(self.scan()["lead_count"], 1)
+
+    def test_pure_return_constant_does_not_propagate(self):
+        self.add_pure_identity()
+        self.rewrite("Identity.smali", "move-object v0, p0",
+                     'const-string v0, "safe"')
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_pure_return_unknown_call_blocks_summary(self):
+        self.add_pure_identity()
+        self.rewrite("Identity.smali", "move-object v0, p0",
+                     "invoke-static {p0}, Lfixture/Unknown;->log(Ljava/lang/String;)V\n"
+                     "    move-object v0, p0")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_pure_return_branch_blocks_summary(self):
+        self.add_pure_identity()
+        self.rewrite("Identity.smali", "move-object v0, p0",
+                     "if-eqz p0, :fail\n    move-object v0, p0")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_pure_return_missing_move_result_drops_data(self):
+        self.add_pure_identity()
+        self.rewrite("Entry.smali", "move-result-object v2",
+                     "nop\n    move-result-object v2")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_pure_return_wrong_descriptor_not_matched(self):
+        self.add_pure_identity()
+        self.rewrite("Entry.smali", "identity(Ljava/lang/String;)Ljava/lang/String;",
+                     "identity(Ljava/lang/String;)Ljava/lang/Object;")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_pure_return_object_with_ambiguous_class_refused(self):
+        self.add_pure_identity()
+        self.put("duplicated/Identity.smali",
+                 (self.source / "Identity.smali").read_text(encoding="utf-8"))
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_return_path_is_deterministic(self):
+        self.add_pure_identity()
+        self.assertEqual(self.scan(), self.scan())
+
+
 if __name__ == "__main__":
     unittest.main()
