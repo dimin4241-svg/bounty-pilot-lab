@@ -221,7 +221,7 @@ def analyze(sources):
         "engine_does_not_execute_target_classes": True,
         "limitations": [
             "ordered local Java variables, private this.fields and conditional joins only",
-            "only statically dispatched intra/inter-file Java method calls (three hops maximum)",
+            "fixed-dispatch Java call nesting bounded to three, provenance to six edges",
             "complex conditions, branch bodies, loops and try/catch clear taint rather than speculate",
             "pure direct returns plus no-escape final-class setter/getter summaries only",
             "no general cross-method heap, escaped object or dynamic alias provenance",
