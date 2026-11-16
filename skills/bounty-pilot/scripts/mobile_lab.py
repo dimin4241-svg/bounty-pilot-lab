@@ -558,6 +558,9 @@ def main(argv=None):
     flow.add_argument("--platform", choices=sorted(VALID_PLATFORMS), required=True)
     flow.add_argument("--max-leads", type=int, default=120)
     flow.add_argument("--out", required=True)
+    jflow = cmds.add_parser("flow-java", help="bounded JDK AST Java argument-flow review; no target execution")
+    jflow.add_argument("--sources", required=True)
+    jflow.add_argument("--out", required=True)
     jgraph = cmds.add_parser("compiler-java", help="JDK AST resolved Java call edges; no target execution")
     jgraph.add_argument("--sources", required=True)
     jgraph.add_argument("--out", required=True)
@@ -589,6 +592,10 @@ def main(argv=None):
         elif args.action == "flow":
             import mobile_flow
             report = mobile_flow.analyze(args.sources, args.platform, args.max_leads)
+            _write_private(args.out, report, args.sources)
+        elif args.action == "flow-java":
+            import mobile_java_flow
+            report = mobile_java_flow.analyze(args.sources)
             _write_private(args.out, report, args.sources)
         elif args.action == "compiler-java":
             import mobile_java_compiler
