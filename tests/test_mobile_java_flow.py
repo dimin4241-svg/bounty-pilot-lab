@@ -512,5 +512,32 @@ class Entry {
             mobile_java_flow._parse(payload, {
                 "fixture/Entry.java": "a" * 64, "fixture/Router.java": "b" * 64})
 
+
+    def test_join_must_reject_different_wrapper_provenance(self):
+        self.prepare(body="""String viaHelper = Helper.identity(raw);
+String direct = raw;
+String selected = "";
+boolean flag = true;
+if (flag) { selected = viaHelper; } else { selected = direct; }
+Router.forward(selected);""")
+        self.put("fixture/Helper.java", """package fixture;
+class Helper { static String identity(String x) { return x; } }""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 0, report)
+
+    def test_join_retains_identical_return_provenance(self):
+        self.prepare(body="""String copy = Helper.identity(raw);
+String selected = "";
+boolean flag = true;
+if (flag) { selected = copy; } else { selected = copy; }
+Router.forward(selected);""")
+        self.put("fixture/Helper.java", """package fixture;
+class Helper { static String identity(String x) { return x; } }""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+        self.assertEqual(len(report["leads"][0]["hops"]), 3)
+
 if __name__ == "__main__":
     unittest.main()
