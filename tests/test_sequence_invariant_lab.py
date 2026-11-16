@@ -61,6 +61,32 @@ class InvariantReviewTest(unittest.TestCase):
             "armed": ["lend_upper", "range_lower"], "disabled": ["range_lower"],
             "allowed_actions": ["range", "lend"], "executed_mode": "exit"}}, 3)
 
+    def test_trigger_wrong_numeric_threshold(self):
+        self.check("trigger_integrity", {"trigger": {"active": True,
+            "required": ["range_upper"], "armed": ["range_upper"],
+            "expected_ticks": {"range_upper": "660"},
+            "armed_ticks": {"range_upper": "60"}}})
+
+    def test_trigger_correct_numeric_threshold(self):
+        self.check("trigger_integrity", {"trigger": {"active": True,
+            "required": ["range_upper"], "armed": ["range_upper"],
+            "expected_ticks": {"range_upper": "660"},
+            "armed_ticks": {"range_upper": "660"}}}, 0)
+
+    def test_mode_matrix_four_subsets(self):
+        d = {"source_revision": SHA, "modes": [
+            {"name": "AUTO_LEND", "bit": 8}, {"name": "AUTO_RANGE", "bit": 2}]}
+        result = lab.mode_matrix(d)
+        self.assertEqual(result["count"], 3)
+        self.assertEqual({c["mode_mask"] for c in result["cases"]}, {2, 8, 10})
+        self.assertEqual(result["classification"], "PLANNED_FLAG_COMBINATIONS_NOT_EXECUTED")
+
+    def test_mode_matrix_duplicate_bit_blocked(self):
+        d = {"source_revision": SHA, "modes": [
+            {"name": "AUTO_LEND", "bit": 8}, {"name": "AUTO_RANGE", "bit": 8}]}
+        with self.assertRaises(ValueError):
+            lab.mode_matrix(d)
+
     def test_trigger_failure_not_rearmed(self):
         self.check("trigger_integrity", {"trigger": {"active": True, "required": [], "armed": [],
             "action_failed": True, "consumed": ["stop_loss"], "rearmed": False, "must_survive_failure": True}})
