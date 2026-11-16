@@ -451,6 +451,61 @@ Smali and Kotlin reports remain **unverified static leads** with
 Smali symbols into a single verified call graph, and does not claim to
 reproduce a bug on any third-party app.
 
+## Phase 12: Smali range calls, pure return routes, and optional Kotlin JVM alignment
+
+The independent Smali descriptor review additionally recognizes explicit
+`invoke-static/range {v3 .. v3}` and `invoke-virtual/range {v0 .. v1}`
+**only** when all registers share one register bank, the bounded range
+expands exactly to the signature's required narrow reference parameters
+and the method descriptor is already among supported cases. Wide types,
+mixed `v`/`p` banks, dynamic/interface dispatch, nontrivial ranges and
+unknown instructions still fail closed.
+
+A one-argument `invoke-static` with an exact
+`(Ljava/lang/String;)Ljava/lang/String;` descriptor may return input taint
+through a source-visible **pure method** consisting only of direct
+`move-object` copies or constant assignments and a final `return-object`.
+No calls, object fields, `check-cast`, arithmetic, branches, catches,
+exception edges or side effects are summarized. The flow report explicitly
+records `STATIC_CALL` and `RETURN_TO_CALLER` edges; these must form a
+balanced method-descriptor route. The overall provenance is limited to six
+edges, and forward static calls to three nested frames. `move-result-object`
+must immediately follow the producer instruction, except non-executable
+source directives; even `nop` invalidates the pending result.
+
+For a **separately provided** Kotlin JVM class tree, optionally compare
+lexical Kotlin cross-file candidates to actual JVM callsite metadata:
+
+```sh
+python3 skills/bounty-pilot/scripts/bounty.py mobile-lab crossfile \
+  --sources /private/decompiled/kotlin \
+  --platform android \
+  --jvm-classes /private/compiled-jvm-classes \
+  --out /private/reports/kotlin-jvm-review.json
+```
+
+The bounded read-only classfile parser checks exact JVM class owner, Kotlin
+metadata marker, `SourceFile`, caller method, bytecode callsite source line,
+unique invocation and the callee's exact JVM `(String):void` descriptor.
+Only explicitly identified Kotlin singleton or final-instance invocation
+candidates are eligible. Classfile and source SHA-256 fingerprints are
+reported; classes are never loaded or executed.
+
+**Critical limitation:** provided classfiles are *not cryptographically
+proven* to have been built from the current `.kt` files. A matching
+bytecode callsite is only `ALL_HOPS_JVM_BYTECODE_ALIGNED_UNATTESTED_SOURCE_BUILD`.
+The report explicitly records `source_build_freshness_verified: false`,
+`compiler_provenance_authenticated: false` and
+`runtime_effect_verified: false`. Stale, substituted or malicious
+classfiles can mislead this comparison. For actual source-to-bytecode
+attestation, the build needs pinned inputs, compiler version, dependencies
+and independently verified reproducible outputs.
+
+The Kotlin matcher remains lexical when no classfiles are provided. Smali
+and Kotlin findings remain `reachability: UNKNOWN`,
+`severity: unassessed`, `impact: NOT_ESTABLISHED` and never prove
+exploitation of an Android application.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
@@ -495,12 +550,13 @@ analysis, no production target execution and no independently authenticated rece
 
 ## Next implementation stages
 
-1. Extend conservative Kotlin and Smali handling to exact compiler/DEX
-   metadata binding across languages, robust Smali register-range and return
-   modeling, Kotlin CFG and receiver types, and Android SDK type checks.
-   The present Kotlin review is lexical and the Smali review handles only
-   static string-to-void calls; neither proves real-app exploitability.
-   Add Swift and Android permission/callback models independently.
+1. Add reproducible Kotlin compiler build attestation linking exact source
+   digests, compiler/dependency versions and classfile outputs; broaden JVM
+   signatures and Kotlin CFG/receiver provenance. Extend Smali beyond
+   side-effect-free string-return helpers to carefully bounded branch
+   joins, exception edges and verified DEX class resolution.
+   Neither current approach proves third-party exploitability; integrate
+   Android SDK permissions/callbacks and Swift separately.
 2. Deep-link / App Link / OAuth callback protocol checks with actual origin
    binding and app-claimant validation, not keyword matching.
 3. Ship and test a maintained Android/iOS synthetic fixture app, and expand
