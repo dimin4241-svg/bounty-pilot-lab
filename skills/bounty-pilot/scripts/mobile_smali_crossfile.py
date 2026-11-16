@@ -488,7 +488,11 @@ def analyze(sources, max_leads=MAX_LEADS):
                                             next_state if prior is None
                                             else _must_join(prior, next_state))
                                     continue
-                            registers.clear()
+                        # Static calls without a verified summary may have
+                        # unknown effects, even when their target or current
+                        # argument cannot be resolved. Kill facts on EVERY
+                        # unmodeled path, not only inside the target branch.
+                        registers.clear()
                     else:
                         # Any unmodeled invoked method may mutate state.
                         registers.clear()
