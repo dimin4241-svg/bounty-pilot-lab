@@ -366,7 +366,7 @@ def _compiler_support(report, compiler_graph, root):
 
 
 def analyze(sources, platform, max_leads=MAX_LEADS, compiler_graph=None,
-            jvm_classes=None):
+            jvm_classes=None, jvm_snapshot_lock=None):
     if platform not in FILE_TYPES:
         raise ValueError("cross-file analysis supports android or ios")
     if type(max_leads) is not int or not 1 <= max_leads <= MAX_LEADS:
@@ -461,9 +461,12 @@ def analyze(sources, platform, max_leads=MAX_LEADS, compiler_graph=None,
         if platform != "android":
             raise ValueError("Java compiler graph is supported only with android")
         result = _compiler_support(result, compiler_graph, root)
+    if jvm_snapshot_lock is not None and jvm_classes is None:
+        raise ValueError("Kotlin JVM snapshot lock requires --jvm-classes")
     if jvm_classes is not None:
         if platform != "android":
             raise ValueError("Kotlin JVM alignment is supported only with android")
         import mobile_kotlin_jvm
-        result = mobile_kotlin_jvm.align_kotlin_leads(result, entries, jvm_classes)
+        result = mobile_kotlin_jvm.align_kotlin_leads(
+            result, entries, jvm_classes, snapshot_lock=jvm_snapshot_lock)
     return result

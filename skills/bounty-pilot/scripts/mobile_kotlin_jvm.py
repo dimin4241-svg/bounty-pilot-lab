@@ -7,6 +7,8 @@ A compiled JVM callsite is stronger than a guessed lexical class name, but
 cannot prove source/build freshness, taint, reachability or Android behavior.
 """
 import hashlib
+import json
+import re
 import struct
 from pathlib import Path
 
@@ -292,12 +294,64 @@ def _index_classes(root):
                      "truncated": truncated}
 
 
-def align_kotlin_leads(report, entries, class_root):
+
+def _locked_fingerprints(lock):
+    """Validate an OPERATOR-controlled byte-hash lock, not build provenance."""
+    if lock is None:
+        return None
+    if (not isinstance(lock, dict)
+            or set(lock) != {"schema_version", "kind",
+                            "source_sha256", "class_sha256"}
+            or lock.get("schema_version") != 1
+            or lock.get("kind") != "operator-pinned-kotlin-jvm-snapshot"):
+        raise ValueError("invalid Kotlin JVM operator snapshot lock")
+    sources, classes = lock["source_sha256"], lock["class_sha256"]
+    if (not isinstance(sources, dict) or not isinstance(classes, dict)
+            or not 0 < len(sources) <= 800 or not 0 < len(classes) <= 350):
+        raise ValueError("invalid Kotlin JVM lock digest maps")
+    for name, digest in sources.items():
+        if (not isinstance(name, str) or not name or len(name) > 512
+                or Path(name).is_absolute() or "\\" in name
+                or any(p in ("", ".", "..") for p in name.split("/"))
+                or Path(name).suffix.lower() not in (".kt", ".kts")
+                or not isinstance(digest, str)
+                or re.fullmatch("[0-9a-f]{64}", digest) is None):
+            raise ValueError("unsafe Kotlin source snapshot digest")
+    for name, digest in classes.items():
+        if (not isinstance(name, str) or len(name) > 300
+                or re.fullmatch("[A-Za-z_$][A-Za-z0-9_$/]*", name) is None
+                or ".." in name or "//" in name
+                or not isinstance(digest, str)
+                or re.fullmatch("[0-9a-f]{64}", digest) is None):
+            raise ValueError("unsafe Kotlin JVM class snapshot digest")
+    return {"source_sha256": sources, "class_sha256": classes,
+            "lock_sha256": hashlib.sha256(json.dumps(
+                lock, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
+
+
+def _pair_lock_status(lock, caller, callee, caller_class, callee_class,
+                      caller_owner, callee_owner):
+    """Evaluate exact current bytes against an UNSIGNED operator lock."""
+    if lock is None:
+        return "NOT_PROVIDED"
+    for source in (caller, callee):
+        if (lock["source_sha256"].get(source["path"]) != source["sha256"]):
+            return "MISMATCH_OR_MISSING"
+    if caller_class is None or callee_class is None:
+        return "MISMATCH_OR_MISSING"
+    if (lock["class_sha256"].get(caller_owner) != caller_class["sha256"]
+            or lock["class_sha256"].get(callee_owner) != callee_class["sha256"]):
+        return "MISMATCH_OR_MISSING"
+    return "OPERATOR_PINNED_BYTES_MATCH_UNATTESTED_BUILD"
+
+
+def align_kotlin_leads(report, entries, class_root, snapshot_lock=None):
     """Compare lexical Kotlin-only callsites to independent JVM invokes.
 
     Classfiles are NOT rebuild-attested to the current Kotlin source.
     """
     indexed, coverage = _index_classes(class_root)
+    lock = _locked_fingerprints(snapshot_lock)
     by_path = {entry["path"]: entry for entry in entries}
     aligned = missing = non_kotlin = 0
     for lead in report["leads"]:
@@ -313,6 +367,7 @@ def align_kotlin_leads(report, entries, class_root):
             non_kotlin += 1
             continue
         edges = []
+        locks = []
         for hop in hops:
             caller = by_path[hop["caller_file"]]
             callee = by_path[hop["callee_file"]]
@@ -321,6 +376,8 @@ def align_kotlin_leads(report, entries, class_root):
             callee_owner = (callee["package"].replace(".", "/") + "/"
                             if callee["package"] else "") + callee["class"]
             a, b = indexed.get(caller_owner), indexed.get(callee_owner)
+            locks.append(_pair_lock_status(
+                lock, caller, callee, a, b, caller_owner, callee_owner))
             matched = []
             if (a and b and a["source_name"] == Path(caller["path"]).name
                     and b["source_name"] == Path(callee["path"]).name
@@ -352,12 +409,29 @@ def align_kotlin_leads(report, entries, class_root):
         status = ("ALL_HOPS_JVM_BYTECODE_ALIGNED_UNATTESTED_SOURCE_BUILD"
                   if all(e["status"] == "EXACT_JVM_INVOKE_ALIGNED" for e in edges)
                   else "SOME_HOPS_NOT_JVM_ALIGNED")
+        if lock is not None and any(x != "OPERATOR_PINNED_BYTES_MATCH_UNATTESTED_BUILD"
+                                    for x in locks):
+            # Never present a mismatched user-supplied lock as aligned evidence.
+            status = "JVM_SNAPSHOT_LOCK_MISMATCH_OR_MISSING"
+        lock_status = ("NOT_PROVIDED" if lock is None
+                       else ("OPERATOR_PINNED_BYTES_MATCH_UNATTESTED_BUILD"
+                             if all(x == "OPERATOR_PINNED_BYTES_MATCH_UNATTESTED_BUILD"
+                                    for x in locks)
+                             else "MISMATCH_OR_MISSING"))
         if status.startswith("ALL_HOPS"):
             aligned += 1
         else:
             missing += 1
         lead["kotlin_jvm_alignment"] = {
             "status": status, "edges": edges,
+            "snapshot_lock": {
+                "status": lock_status,
+                "operator_lock_sha256": lock["lock_sha256"] if lock else None,
+                "source_and_class_bytes_match_operator_lock": (
+                    lock_status == "OPERATOR_PINNED_BYTES_MATCH_UNATTESTED_BUILD"),
+                "independently_signed": False,
+                "reproducible_build_verified": False,
+            },
             "source_build_freshness_verified": False,
             "compiler_provenance_authenticated": False,
             "runtime_effect_verified": False,
@@ -367,6 +441,9 @@ def align_kotlin_leads(report, entries, class_root):
         "aligned_leads": aligned, "unaligned_kotlin_leads": missing,
         "non_kotlin_leads": non_kotlin, "coverage": coverage,
         "source_build_freshness_verified": False,
-        "meaning": "JVM callsite matches pinned class bytes, not source rebuild or runtime proof",
+        "operator_snapshot_lock_provided": lock is not None,
+        "operator_lock_sha256": lock["lock_sha256"] if lock else None,
+        "reproducible_build_verified": False,
+        "meaning": "Optional unsigned byte-hash lock is not independent source-build attestation or runtime proof",
     }
     return report

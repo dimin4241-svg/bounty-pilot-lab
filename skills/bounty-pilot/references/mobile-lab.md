@@ -506,6 +506,62 @@ and Kotlin findings remain `reachability: UNKNOWN`,
 `severity: unassessed`, `impact: NOT_ESTABLISHED` and never prove
 exploitation of an Android application.
 
+## Phase 13: Smali forward-only CFG joins and Kotlin operator hash locks
+
+The `smali-crossfile` reviewer now builds a strictly forward-only,
+acyclic control-flow graph for `if-eqz`, `if-nez`, `goto`,
+`goto/16`, `goto/32` and unique in-method labels. All branch targets
+must resolve to later instructions. At a join, a register retains origin
+only if **every reachable predecessor** carries the identical origin
+and full call/return provenance. The analysis limits method length,
+branch count, call depth and total visited instruction steps.
+
+Loops/backward edges, try/catch, exception handlers, switches, monitors,
+unrecognized instructions and malformed labels remain unsupported. The
+review retains `branch_feasibility_verified: false`, unknown runtime
+reachability, unassessed severity and `impact: NOT_ESTABLISHED`.
+
+For separately compiled Kotlin JVM classfiles, an optional **unsigned
+operator-supplied snapshot lock** compares exact current `.kt` source
+and `.class` owner SHA-256 digests against a JSON manifest. For each
+Kotlin-only cross-file hop, both caller/callee source and class digests
+must match. Missing or changed bytes downgrade otherwise matching
+bytecode evidence to `JVM_SNAPSHOT_LOCK_MISMATCH_OR_MISSING`. Invalid
+hashes, path traversal, duplicate JSON keys and wrong schema are
+rejected.
+
+Example operator-created lock (replace placeholders with observed hashes):
+
+```json
+{
+  "schema_version": 1,
+  "kind": "operator-pinned-kotlin-jvm-snapshot",
+  "source_sha256": {
+    "app/Entry.kt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "class_sha256": {
+    "app/Entry": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}
+```
+
+```sh
+python3 skills/bounty-pilot/scripts/bounty.py mobile-lab crossfile \\
+  --sources /private/source --platform android \\
+  --jvm-classes /private/classes \\
+  --jvm-snapshot-lock /private/operator-lock.json \\
+  --out /private/reports/kotlin-jvm-locked-review.json
+```
+
+A matching snapshot is `OPERATOR_PINNED_BYTES_MATCH_UNATTESTED_BUILD`,
+**NOT a verified source-to-compiler-to-bytecode build**. The manifest
+may itself be stale or forged. The report always sets
+`independently_signed: false`, `reproducible_build_verified: false`
+and `source_build_freshness_verified: false`. Truly reproducible builds
+require an independently trusted version-pinned compiler, dependencies,
+isolated build inputs and byte-for-byte rebuild comparison. These remain
+unimplemented. No target app classes or Gradle scripts are executed.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
@@ -550,13 +606,12 @@ analysis, no production target execution and no independently authenticated rece
 
 ## Next implementation stages
 
-1. Add reproducible Kotlin compiler build attestation linking exact source
-   digests, compiler/dependency versions and classfile outputs; broaden JVM
-   signatures and Kotlin CFG/receiver provenance. Extend Smali beyond
-   side-effect-free string-return helpers to carefully bounded branch
-   joins, exception edges and verified DEX class resolution.
-   Neither current approach proves third-party exploitability; integrate
-   Android SDK permissions/callbacks and Swift separately.
+1. Implement independent Kotlin byte-for-byte reproducible builds with
+   a trusted immutable compiler and dependencies, not just an unsigned
+   operator SHA-256 lock. Extend JVM signatures and Kotlin CFG/receiver
+   provenance; add explicitly modeled loop/exception effects and DEX class
+   resolution to Smali without guessing. Add Android permission/callback
+   and Swift review separately. Static paths do not prove exploitability.
 2. Deep-link / App Link / OAuth callback protocol checks with actual origin
    binding and app-claimant validation, not keyword matching.
 3. Ship and test a maintained Android/iOS synthetic fixture app, and expand

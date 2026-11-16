@@ -575,6 +575,7 @@ def main(argv=None):
     cross.add_argument("--max-leads", type=int, default=120)
     cross.add_argument("--compiler-graph", help="optional pinned JDK AST edge report to align lexical hops")
     cross.add_argument("--jvm-classes", help="optional read-only compiled Kotlin JVM classfiles for unattested bytecode alignment")
+    cross.add_argument("--jvm-snapshot-lock", help="optional unsigned JSON lock of operator-pinned source and class SHA-256 bytes; not build attestation")
     cross.add_argument("--out", required=True)
     reach = cmds.add_parser("reachability", help="annotate cross-file leads with static Android manifest exposure and permission gates")
     reach.add_argument("--sources", required=True)
@@ -621,9 +622,25 @@ def main(argv=None):
                     raise ValueError("compiler graph must be a bounded regular JSON file")
                 compiler_graph = json.loads(
                     _regular_file(candidate, 6 * 1024 * 1024).decode("utf-8"))
+            jvm_lock = None
+            if args.jvm_snapshot_lock:
+                candidate = Path(args.jvm_snapshot_lock)
+                if (candidate.is_symlink() or not candidate.is_file()
+                        or candidate.stat().st_size > 512 * 1024):
+                    raise ValueError("JVM snapshot lock must be a small regular JSON file")
+                def unique_json_pairs(pairs):
+                    data = {}
+                    for key, value in pairs:
+                        if key in data:
+                            raise ValueError("duplicate key in JVM snapshot lock")
+                        data[key] = value
+                    return data
+                jvm_lock = json.loads(
+                    _regular_file(candidate, 512 * 1024).decode("utf-8"),
+                    object_pairs_hook=unique_json_pairs)
             report = mobile_crossfile.analyze(
                 args.sources, args.platform, args.max_leads, compiler_graph,
-                jvm_classes=args.jvm_classes)
+                jvm_classes=args.jvm_classes, jvm_snapshot_lock=jvm_lock)
             _write_private(args.out, report, args.sources)
         elif args.action == "reachability":
             import mobile_reachability
