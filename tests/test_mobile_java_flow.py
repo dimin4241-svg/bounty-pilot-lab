@@ -154,13 +154,15 @@ class Router {
         self.prepare(body='String comment = "getIntent().getDataString()"; Router.forward(comment);')
         self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
 
-    def test_nested_wrapper_expression_is_not_assumed_to_forward(self):
+    def test_pure_nested_wrapper_is_now_bound_with_return_evidence(self):
         self.prepare(body="Router.forward(Router.clean(raw));",
                      helper="""static String clean(String s) { return s; }
 static void forward(String x) { web.loadUrl(x); }""")
         result = mobile_java_flow.analyze(self.sources)
         self.assertEqual(result["coverage"]["diagnostic_errors"], 0)
-        self.assertEqual(result["lead_count"], 0)
+        self.assertEqual(result["lead_count"], 1, result)
+        self.assertEqual([edge["edge_kind"] for edge in result["leads"][0]["hops"]],
+                         ["METHOD_CALL", "RETURN_TO_CALLER", "METHOD_CALL"])
 
     def test_target_static_initializer_does_not_run(self):
         self.prepare()
