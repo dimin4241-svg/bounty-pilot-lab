@@ -298,5 +298,217 @@ if (flag) { Router.forward(raw); }""")
         report = mobile_java_flow.analyze(self.sources)
         self.assertEqual(report["lead_count"], 0, report)
 
+
+    def test_pure_return_helper_propagates_with_balanced_edges(self):
+        self.prepare(body="String copy = Helper.identity(raw); Router.forward(copy);")
+        self.put("fixture/Helper.java", """package fixture;
+final class Helper {
+    static String identity(String value) { return value; }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+        edges = report["leads"][0]["hops"]
+        self.assertEqual([hop["edge_kind"] for hop in edges],
+                         ["METHOD_CALL", "RETURN_TO_CALLER", "METHOD_CALL"])
+        self.assertEqual(edges[1]["method_binding"], "JDK_BOUND_RETURN_TO_CALLER")
+        self.assertEqual(report["leads"][0]["impact"], "NOT_ESTABLISHED")
+
+    def test_pure_return_helper_as_nested_sink_argument(self):
+        self.prepare(body="Router.forward(Helper.identity(raw));")
+        self.put("fixture/Helper.java", """package fixture;
+class Helper { static String identity(String x) { return x; } }""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 1, report)
+        self.assertEqual(len(report["leads"][0]["hops"]), 3)
+
+    def test_same_file_private_static_return_helper(self):
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "sample"; } }
+    Intent getIntent() { return new Intent(); }
+    private static String identity(String s) { return s; }
+    void run() {
+        String raw = getIntent().getDataString();
+        Router.forward(identity(raw));
+    }
+}""")
+        self.put("fixture/Router.java", """package fixture;
+class Router {
+    static void forward(String s) { new Web().loadUrl(s); }
+    static class Web { void loadUrl(String s) {} }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+        self.assertEqual([h["edge_kind"] for h in report["leads"][0]["hops"]],
+                         ["METHOD_CALL", "RETURN_TO_CALLER", "METHOD_CALL"])
+
+    def test_literal_return_is_not_considered_propagation(self):
+        self.prepare(body="String clean = Helper.clean(raw); Router.forward(clean);")
+        self.put("fixture/Helper.java", """package fixture;
+class Helper { static String clean(String s) { return "fixed"; } }""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 0)
+
+    def test_mutation_before_return_invalidates_propagation(self):
+        self.prepare(body="String clean = Helper.clean(raw); Router.forward(clean);")
+        self.put("fixture/Helper.java", """package fixture;
+class Helper {
+    static String clean(String s) { s = "fixed"; return s; }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 0)
+
+    def test_side_effecting_helper_cannot_be_summarized_as_pure(self):
+        self.prepare(body="Router.forward(Helper.notPure(raw));")
+        self.put("fixture/Helper.java", """package fixture;
+class Helper {
+    static void effect() {}
+    static String notPure(String value) { effect(); return value; }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 0)
+
+    def test_return_from_branch_does_not_qualify(self):
+        self.prepare(body="Router.forward(Helper.maybe(raw));")
+        self.put("fixture/Helper.java", """package fixture;
+class Helper {
+    static String maybe(String value) {
+        if (value == null) return "";
+        return value;
+    }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 0)
+
+    def test_virtual_overridden_return_must_not_propagate(self):
+        self.prepare(body="""Helper helper = new Derived();
+Router.forward(helper.identity(raw));""")
+        self.put("fixture/Helper.java", """package fixture;
+class Helper { String identity(String s) { return s; } }""")
+        self.put("fixture/Derived.java", """package fixture;
+class Derived extends Helper {
+    @Override String identity(String s) { return "fixed"; }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 0)
+
+    def test_private_this_field_tracks_same_method(self):
+        self.prepare()
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "sample"; } }
+    Intent getIntent() { return new Intent(); }
+    private String payload;
+    void run() {
+        String raw = getIntent().getDataString();
+        this.payload = raw;
+        Router.forward(this.payload);
+    }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+
+    def test_private_unqualified_field_tracks_same_method(self):
+        self.prepare()
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "sample"; } }
+    Intent getIntent() { return new Intent(); }
+    private String payload;
+    void run() {
+        String raw = getIntent().getDataString();
+        payload = raw;
+        Router.forward(payload);
+    }
+}""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 1, report)
+
+    def test_private_field_literal_overwrite_clears_origin(self):
+        self.prepare()
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "sample"; } }
+    Intent getIntent() { return new Intent(); }
+    private String payload;
+    void run() {
+        String raw = getIntent().getDataString();
+        this.payload = raw;
+        this.payload = "fixed";
+        Router.forward(this.payload);
+    }
+}""")
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_unknown_method_call_invalidates_private_field(self):
+        self.prepare()
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "sample"; } }
+    Intent getIntent() { return new Intent(); }
+    private String payload;
+    void modify() { this.payload = "fixed"; }
+    void run() {
+        String raw = getIntent().getDataString();
+        this.payload = raw;
+        modify();
+        Router.forward(this.payload);
+    }
+}""")
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_public_fields_do_not_acquire_heap_provenance(self):
+        self.prepare()
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "sample"; } }
+    Intent getIntent() { return new Intent(); }
+    public String payload;
+    void run() {
+        String raw = getIntent().getDataString();
+        this.payload = raw;
+        Router.forward(this.payload);
+    }
+}""")
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_arbitrary_object_field_is_not_assumed_to_alias_this(self):
+        self.prepare()
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "sample"; } }
+    Intent getIntent() { return new Intent(); }
+    static class Holder { private String payload; }
+    void run() {
+        String raw = getIntent().getDataString();
+        Holder a = new Holder();
+        Holder b = new Holder();
+        a.payload = raw;
+        Router.forward(b.payload);
+    }
+}""")
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_unmatched_reverse_provenance_is_rejected(self):
+        import base64
+        def encode(value):
+            return base64.urlsafe_b64encode(str(value).encode()).rstrip(b"=").decode()
+        values = ["fixture/Entry.java", "3", "ANDROID_INTENT_SOURCE_SYNTAX_CUE",
+                  "fixture/Router.java", "7", "forward", "fixture.Router#forward(java.lang.String)",
+                  "loadUrl", "1",
+                  "fixture/Entry.java", "run", "fixture.Entry#run()", "5",
+                  "fixture/Router.java", "forward", "6",
+                  "fixture.Router#forward(java.lang.String)", "RETURN_TO_CALLER"]
+        payload = "META\\t2\\t0\\t2\\t1\\t0\\t0\\nFLOW\\t" + "\\t".join(map(encode, values))
+        with self.assertRaisesRegex(ValueError, "return does not match"):
+            mobile_java_flow._parse(payload, {
+                "fixture/Entry.java": "a" * 64, "fixture/Router.java": "b" * 64})
+
 if __name__ == "__main__":
     unittest.main()
