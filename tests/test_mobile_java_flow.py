@@ -94,10 +94,12 @@ class Target {
         self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 1)
 
     def test_safe_helper_assignment_is_not_assumed_tainted(self):
-        self.prepare(body="String copy = clean(raw); Router.forward(copy);",
+        self.prepare(body="String copy = Router.clean(raw); Router.forward(copy);",
                      helper="""static String clean(String s) { return "safe"; }
 static void forward(String x) { web.loadUrl(x); }""")
-        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+        result = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(result["coverage"]["diagnostic_errors"], 0)
+        self.assertEqual(result["lead_count"], 0)
 
     def test_branch_invalidates_taint_for_fail_closed_analysis(self):
         self.prepare(body='if (System.currentTimeMillis() > 0) { raw = "safe"; } Router.forward(raw);')
@@ -153,10 +155,12 @@ class Router {
         self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
 
     def test_nested_wrapper_expression_is_not_assumed_to_forward(self):
-        self.prepare(body="Router.forward(clean(raw));",
+        self.prepare(body="Router.forward(Router.clean(raw));",
                      helper="""static String clean(String s) { return s; }
 static void forward(String x) { web.loadUrl(x); }""")
-        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+        result = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(result["coverage"]["diagnostic_errors"], 0)
+        self.assertEqual(result["lead_count"], 0)
 
     def test_target_static_initializer_does_not_run(self):
         self.prepare()
