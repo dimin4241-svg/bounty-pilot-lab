@@ -397,6 +397,60 @@ alias copies, literal overwrites, escaped aliases, constructor effects,
 unknown receiver mutations and unsupported branches. Every finding stays
 `impact: NOT_ESTABLISHED`, `reachability: UNKNOWN` and severity unassessed.
 
+## Phase 11: Kotlin receiver guards and exact Smali static descriptors
+
+The cross-file Kotlin *lexical* path matcher now distinguishes two receiver
+forms instead of treating all class qualifiers as equivalent:
+
+- Calls like `Router.forward(value)` require a uniquely indexed Kotlin
+  `object Router` declaration. An ordinary `class Router` is not a valid
+  static receiver and is rejected.
+- Calls through a locally created instance (`val router = Router()`;
+  `router.forward(value)`) require a uniquely indexed Kotlin **final class**
+  rather than `open`, `abstract` or `sealed` classes.
+- Java/Kotlin cross-language call guesses are not promoted to Kotlin edges.
+  The Kotlin edges are still *lexical* and not bound by the Kotlin compiler.
+  Inline functions, generated bridges, companion objects, constructors with
+  arguments, extension functions, type aliases, runtime overrides, implicit
+  receivers, nested calls, lambdas, coroutines and Android framework types
+  remain outside this narrow model.
+
+The new **Smali cross-file descriptor** analyzer is an independent optional
+offline command:
+
+```sh
+python3 skills/bounty-pilot/scripts/bounty.py mobile-lab smali-crossfile \
+  --sources /private/decompiled/smali \
+  --out /private/reports/smali-descriptor-review.json
+```
+
+Its bounded parser indexes exact DEX class descriptors, and matches
+`invoke-static {vN}, Lpackage/Class;->method(Ljava/lang/String;)V` only
+to a **unique exact static declaration** with that full class, method,
+parameter and return descriptor. It propagates a string provenance register
+via `move-result-object` and `move-object`, up to three inter-file calls.
+An Intent-source syntax cue requires a local
+`Activity.getIntent():Intent` return followed by a matching
+`Intent.getDataString():String` or `getStringExtra(String):String`.
+A supported sink cue is the exact
+`WebView.loadUrl(String):void` descriptor. Exact names are still *bytecode
+syntax*, not authenticated Android SDK provenance, caller control or actual
+network navigation.
+
+Unknown operations, branching, exception instructions, range invokes,
+result or heap aliases and dynamic dispatch do not create positive
+chains. Duplicate class descriptors, signature/arity mismatches, register
+overwrites, unrelated same-named methods and missing move-results are
+negative controls. The parser never executes or loads a target dex/Smali
+method, app or build script. Source files are hashed and bounded, and JSON
+report paths are private/no-overwrite.
+
+Smali and Kotlin reports remain **unverified static leads** with
+`reachability: UNKNOWN`, `severity: unassessed` and
+`impact: NOT_ESTABLISHED`. This stage does **not** unify Java, Kotlin and
+Smali symbols into a single verified call graph, and does not claim to
+reproduce a bug on any third-party app.
+
 ## Trust boundaries and evidence model
 
 The review families correspond to patterns in published research, but
@@ -441,12 +495,12 @@ analysis, no production target execution and no independently authenticated rece
 
 ## Next implementation stages
 
-1. Extend Java beyond synthetic final-class object capsules to verified
-   non-escaping receiver identity and field summaries with complex, real-world
-   constructors, nested expressions and carefully reviewed CFG edges.
-   Create separate Kotlin/Smali and Swift analyzers and Android SDK type
-   bindings. Dynamic dispatch, effective permissions and callback reachability
-   remain unmodeled; no static flow proves real-app exploitability.
+1. Extend conservative Kotlin and Smali handling to exact compiler/DEX
+   metadata binding across languages, robust Smali register-range and return
+   modeling, Kotlin CFG and receiver types, and Android SDK type checks.
+   The present Kotlin review is lexical and the Smali review handles only
+   static string-to-void calls; neither proves real-app exploitability.
+   Add Swift and Android permission/callback models independently.
 2. Deep-link / App Link / OAuth callback protocol checks with actual origin
    binding and app-claimant validation, not keyword matching.
 3. Ship and test a maintained Android/iOS synthetic fixture app, and expand
