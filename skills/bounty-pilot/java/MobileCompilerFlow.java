@@ -21,7 +21,9 @@ import javax.tools.*;
 
 public final class MobileCompilerFlow {
     private static final int MAX_FILES = 350;
-    private static final int MAX_HOPS = 3;
+    // Return/field summaries include a call and a return for each accessor.
+    private static final int MAX_HOPS = 6;
+    private static final int MAX_CALL_DEPTH = 3;
     private static final int MAX_FLOWS = 120;
     private static final int MAX_VISITS = 12000;
     private static final Set<String> SINK_CUES = Set.of(
@@ -33,17 +35,26 @@ public final class MobileCompilerFlow {
         final long line;
         final String kind;
         final List<Hop> route;
+        final boolean capsuleDerived;
         Origin(String file, long line, String kind) {
-            this(file, line, kind, List.of());
+            this(file, line, kind, List.of(), false);
         }
         Origin(String file, long line, String kind, List<Hop> route) {
+            this(file, line, kind, route, false);
+        }
+        Origin(String file, long line, String kind, List<Hop> route,
+               boolean capsuleDerived) {
             this.file = file; this.line = line; this.kind = kind;
             this.route = List.copyOf(route);
+            this.capsuleDerived = capsuleDerived;
         }
         Origin through(Hop hop) {
             List<Hop> next = new ArrayList<>(route);
             next.add(hop);
-            return new Origin(file, line, kind, next);
+            return new Origin(file, line, kind, next, capsuleDerived);
+        }
+        Origin fromCapsule() {
+            return new Origin(file, line, kind, route, true);
         }
     }
 
@@ -254,7 +265,7 @@ public final class MobileCompilerFlow {
         Origin resolveReturn(Method caller, MethodInvocationTree call, TreePath path,
                              Map<Element, Origin> callerState, Set<String> active,
                              int depth) {
-            if (depth >= MAX_HOPS || attemptedCalls++ >= MAX_VISITS) {
+            if (depth >= MAX_CALL_DEPTH || attemptedCalls++ >= MAX_VISITS) {
                 truncated = true;
                 return null;
             }
@@ -390,7 +401,7 @@ public final class MobileCompilerFlow {
                         }
                     }
                 }
-                if (depth >= MAX_HOPS || attemptedCalls++ >= MAX_VISITS) {
+                if (depth >= MAX_CALL_DEPTH || attemptedCalls++ >= MAX_VISITS) {
                     truncated = true;
                     return;
                 }
@@ -504,6 +515,7 @@ public final class MobileCompilerFlow {
         boolean sameOrigin(Origin a, Origin b) {
             if (a == null || b == null || !a.file.equals(b.file)
                     || a.line != b.line || !a.kind.equals(b.kind)
+                    || a.capsuleDerived != b.capsuleDerived
                     || a.route.size() != b.route.size()) return false;
             for (int i = 0; i < a.route.size(); i++) {
                 Hop x = a.route.get(i), y = b.route.get(i);
@@ -627,6 +639,407 @@ public final class MobileCompilerFlow {
         }
     }
 
+
+    // This is deliberately not a general Java heap analysis. A Capsule is
+    // freshly allocated by the current method, cannot escape, and is tracked
+    // only while all aliases and operations remain explicitly understood.
+    private static final class Capsule {
+        final TypeElement type;
+        final Map<Element, Origin> fields = new HashMap<>();
+        boolean escaped;
+        Capsule(TypeElement type) { this.type = type; }
+        void escape() { escaped = true; fields.clear(); }
+    }
+
+    private static final class CapsuleEngine {
+        final Engine engine;
+        final Trees trees;
+        final Map<ExecutableElement, Method> methods;
+        final Map<TypeElement, Boolean> safeTypes = new HashMap<>();
+        private static final int MAX_CAPSULES_PER_METHOD = 24;
+
+        CapsuleEngine(Engine engine) {
+            this.engine = engine;
+            this.trees = engine.trees;
+            this.methods = engine.methods;
+        }
+
+        boolean safeType(TypeElement type) {
+            Boolean cached = safeTypes.get(type);
+            if (cached != null) return cached;
+            boolean valid = false;
+            // Require an isolated, final, no-arg type whose allocation cannot
+            // run a user-defined constructor or escaping initializer.
+            if (type.getModifiers().contains(Modifier.FINAL)
+                    && (type.getNestingKind() == NestingKind.TOP_LEVEL
+                        || (type.getNestingKind() == NestingKind.MEMBER
+                            && type.getModifiers().contains(Modifier.STATIC)))) {
+                Tree tree = trees.getTree(type);
+                if (tree instanceof ClassTree) {
+                    ClassTree clazz = (ClassTree) tree;
+                    valid = clazz.getExtendsClause() == null;
+                    for (Tree member : clazz.getMembers()) {
+                        if (!valid) break;
+                        if (member instanceof BlockTree) {
+                            if (!((BlockTree) member).isStatic()) valid = false;
+                        } else if (member instanceof VariableTree) {
+                            VariableTree field = (VariableTree) member;
+                            Element symbol = trees.getElement(new TreePath(
+                                trees.getPath(type), field));
+                            if (symbol != null &&
+                                    !symbol.getModifiers().contains(Modifier.STATIC) &&
+                                    field.getInitializer() != null &&
+                                    !(field.getInitializer() instanceof LiteralTree)) {
+                                valid = false;
+                            }
+                        } else if (member instanceof MethodTree) {
+                            MethodTree method = (MethodTree) member;
+                            if (method.getReturnType() == null) {
+                                // Javac injects a default constructor during
+                                // analyze() without an actual source span.
+                                // Explicit constructors have source end offsets.
+                                CompilationUnitTree unit =
+                                    trees.getPath(type).getCompilationUnit();
+                                long ctorEnd = trees.getSourcePositions()
+                                    .getEndPosition(unit, member);
+                                // The injected default constructor has no
+                                // source end position. A constructor written
+                                // by the developer has a source span even if
+                                // its body is empty.
+                                if (ctorEnd >= 0) valid = false;
+                            }
+                        }
+                    }
+                }
+            }
+            safeTypes.put(type, valid);
+            return valid;
+        }
+
+        Capsule allocated(ExpressionTree expr, TreePath path) {
+            if (!(expr instanceof NewClassTree)) return null;
+            NewClassTree constructor = (NewClassTree) expr;
+            if (constructor.getClassBody() != null ||
+                    !constructor.getArguments().isEmpty() ||
+                    constructor.getEnclosingExpression() != null) return null;
+            Element ctor = trees.getElement(path);
+            if (ctor == null || ctor.getKind() != ElementKind.CONSTRUCTOR ||
+                    !(ctor.getEnclosingElement() instanceof TypeElement)) return null;
+            TypeElement type = (TypeElement) ctor.getEnclosingElement();
+            return safeType(type) ? new Capsule(type) : null;
+        }
+
+        // No casts, array receivers, dynamic field lookups or arbitrary
+        // 'this' aliases: only identifiers compiler-resolved to local refs.
+        Capsule receiver(MethodInvocationTree call, TreePath path,
+                         Map<Element, Capsule> refs) {
+            if (!(call.getMethodSelect() instanceof MemberSelectTree)) return null;
+            MemberSelectTree select = (MemberSelectTree) call.getMethodSelect();
+            ExpressionTree recv = select.getExpression();
+            if (!(recv instanceof IdentifierTree)) return null;
+            Element symbol = trees.getElement(new TreePath(
+                new TreePath(path, select), recv));
+            Capsule capsule = refs.get(symbol);
+            return capsule != null && !capsule.escaped ? capsule : null;
+        }
+
+        Method bound(MethodInvocationTree call, TreePath path,
+                     Capsule capsule) {
+            Element target = trees.getElement(new TreePath(
+                path, call.getMethodSelect()));
+            if (!(target instanceof ExecutableElement) ||
+                    !fixedDispatch(call, (ExecutableElement) target)) return null;
+            Method method = methods.get(target);
+            if (method == null || method.tree.getBody() == null) return null;
+            Element owner = target.getEnclosingElement();
+            return owner.equals(capsule.type) ? method : null;
+        }
+
+        Element directPrivateField(Method method, ExpressionTree expr,
+                                   TreePath path, Capsule capsule) {
+            if (!engine.fieldOnThis(path, expr)) return null;
+            Element field = trees.getElement(path);
+            if (field == null || !field.getEnclosingElement().equals(capsule.type)
+                    || !field.asType().toString().equals("java.lang.String")) return null;
+            return field;
+        }
+
+        static final class Access {
+            final Capsule capsule;
+            final Method method;
+            final Element field;
+            final long anchor;
+            Access(Capsule capsule, Method method, Element field, long anchor) {
+                this.capsule = capsule; this.method = method;
+                this.field = field; this.anchor = anchor;
+            }
+        }
+
+        Access setter(MethodInvocationTree call, TreePath path,
+                      Map<Element, Capsule> refs) {
+            Capsule capsule = receiver(call, path, refs);
+            if (capsule == null || call.getArguments().size() != 1) return null;
+            Method method = bound(call, path, capsule);
+            if (method == null || method.params.size() != 1 ||
+                    method.tree.getBody().getStatements().size() != 1) return null;
+            StatementTree stmt = method.tree.getBody().getStatements().get(0);
+            if (!(stmt instanceof ExpressionStatementTree)) return null;
+            ExpressionTree expr = ((ExpressionStatementTree) stmt).getExpression();
+            if (!(expr instanceof AssignmentTree)) return null;
+            TreePath bodyPath = new TreePath(method.path, method.tree.getBody());
+            TreePath stmtPath = new TreePath(bodyPath, stmt);
+            TreePath exprPath = new TreePath(stmtPath, expr);
+            AssignmentTree assignment = (AssignmentTree) expr;
+            Element field = directPrivateField(method, assignment.getVariable(),
+                new TreePath(exprPath, assignment.getVariable()), capsule);
+            ExpressionTree rhs = assignment.getExpression();
+            Element source = trees.getElement(new TreePath(exprPath, rhs));
+            if (field == null || !(rhs instanceof IdentifierTree) ||
+                    !method.params.get(0).equals(source)) return null;
+            return new Access(capsule, method, field, engine.line(method, stmt));
+        }
+
+        Access getter(MethodInvocationTree call, TreePath path,
+                      Map<Element, Capsule> refs) {
+            Capsule capsule = receiver(call, path, refs);
+            if (capsule == null || !call.getArguments().isEmpty()) return null;
+            Method method = bound(call, path, capsule);
+            if (method == null || !method.params.isEmpty() ||
+                    method.tree.getBody().getStatements().size() != 1) return null;
+            StatementTree stmt = method.tree.getBody().getStatements().get(0);
+            if (!(stmt instanceof ReturnTree)) return null;
+            ExpressionTree expr = ((ReturnTree) stmt).getExpression();
+            if (expr == null) return null;
+            TreePath bodyPath = new TreePath(method.path, method.tree.getBody());
+            TreePath stmtPath = new TreePath(bodyPath, stmt);
+            Element field = directPrivateField(method, expr,
+                new TreePath(stmtPath, expr), capsule);
+            return field == null ? null :
+                new Access(capsule, method, field, engine.line(method, stmt));
+        }
+
+        Origin read(Method caller, MethodInvocationTree call, TreePath path,
+                    Map<Element, Capsule> refs) {
+            Access access = getter(call, path, refs);
+            if (access == null) return null;
+            Origin stored = access.capsule.fields.get(access.field);
+            if (stored == null || stored.route.size() + 2 > MAX_HOPS) return null;
+            Hop callEdge = new Hop(caller, access.method,
+                engine.line(caller, call));
+            Hop returnEdge = new Hop(access.method, caller,
+                access.anchor, "RETURN_TO_CALLER");
+            return stored.through(callEdge).through(returnEdge).fromCapsule();
+        }
+
+        Origin value(Method method, ExpressionTree expr, TreePath path,
+                     Map<Element, Origin> locals,
+                     Map<Element, Capsule> refs) {
+            if (expr == null) return null;
+            if (expr instanceof MethodInvocationTree) {
+                MethodInvocationTree call = (MethodInvocationTree) expr;
+                if (getter(call, path, refs) != null)
+                    return read(method, call, path, refs);
+            }
+            if (expr instanceof ParenthesizedTree) {
+                ExpressionTree inner = ((ParenthesizedTree) expr).getExpression();
+                return value(method, inner, new TreePath(path, inner), locals, refs);
+            }
+            if (expr instanceof TypeCastTree) {
+                ExpressionTree inner = ((TypeCastTree) expr).getExpression();
+                return value(method, inner, new TreePath(path, inner), locals, refs);
+            }
+            // Leverage the prior precise local/pure-return summaries.
+            return engine.value(method, expr, path, locals, new HashSet<>(), 0);
+        }
+
+        // A getter returning a String is not an object escape. Every other
+        // expression mentioning a tracked object is conservatively treated
+        // as a possible escape; no implicit alias recovery through casts.
+        void escapeReferenced(TreePath path, Map<Element, Capsule> refs) {
+            if (path == null || refs.isEmpty()) return;
+            new TreePathScanner<Void, Void>() {
+                @Override
+                public Void visitIdentifier(IdentifierTree id, Void unused) {
+                    Capsule capsule = refs.get(trees.getElement(getCurrentPath()));
+                    if (capsule != null) capsule.escape();
+                    return super.visitIdentifier(id, unused);
+                }
+            }.scan(path, null);
+        }
+
+        boolean isAllowedGetterArg(ExpressionTree expr, TreePath path,
+                                   Map<Element, Capsule> refs) {
+            if (expr instanceof MethodInvocationTree) {
+                return getter((MethodInvocationTree) expr, path, refs) != null;
+            }
+            if (expr instanceof ParenthesizedTree) {
+                ExpressionTree child = ((ParenthesizedTree) expr).getExpression();
+                return isAllowedGetterArg(child, new TreePath(path, child), refs);
+            }
+            return false;
+        }
+
+        void applySetter(Method caller, MethodInvocationTree call, TreePath path,
+                         Access access, Map<Element, Origin> locals,
+                         Map<Element, Capsule> refs) {
+            ExpressionTree arg = call.getArguments().get(0);
+            TreePath argPath = new TreePath(path, arg);
+            // This capsule model only stores strings, not other capsules.
+            escapeReferenced(argPath, refs);
+            if (access.capsule.escaped) return;
+            Origin source = value(caller, arg, argPath, locals, refs);
+            if (source == null || source.route.size() + 2 > MAX_HOPS) {
+                access.capsule.fields.remove(access.field);
+                return;
+            }
+            Hop callEdge = new Hop(caller, access.method,
+                engine.line(caller, call));
+            Hop returnEdge = new Hop(access.method, caller,
+                access.anchor, "RETURN_TO_CALLER");
+            access.capsule.fields.put(access.field,
+                source.through(callEdge).through(returnEdge));
+        }
+
+        void flowCall(Method caller, MethodInvocationTree call, TreePath path,
+                      Map<Element, Origin> locals,
+                      Map<Element, Capsule> refs) {
+            Access setter = setter(call, path, refs);
+            if (setter != null) {
+                applySetter(caller, call, path, setter, locals, refs);
+                return;
+            }
+            if (getter(call, path, refs) != null) return; // read-only
+            List<Origin> inputs = new ArrayList<>();
+            boolean heapInput = false;
+            for (ExpressionTree arg : call.getArguments()) {
+                TreePath argPath = new TreePath(path, arg);
+                Origin origin = value(caller, arg, argPath, locals, refs);
+                inputs.add(origin);
+                if (origin != null && origin.capsuleDerived) heapInput = true;
+                if (!isAllowedGetterArg(arg, argPath, refs))
+                    escapeReferenced(argPath, refs);
+            }
+            if (call.getMethodSelect() instanceof MemberSelectTree) {
+                MemberSelectTree select = (MemberSelectTree) call.getMethodSelect();
+                escapeReferenced(new TreePath(new TreePath(path, select),
+                    select.getExpression()), refs);
+            }
+            if (!heapInput) return;
+            if (SINK_CUES.contains(methodName(call))) {
+                for (Origin origin : inputs) {
+                    if (origin != null && origin.capsuleDerived) {
+                        engine.write(origin, caller, call, methodName(call), List.of());
+                        break;
+                    }
+                }
+            }
+            Element target = trees.getElement(new TreePath(path, call.getMethodSelect()));
+            if (!(target instanceof ExecutableElement)
+                    || !fixedDispatch(call, (ExecutableElement) target)) return;
+            Method callee = methods.get(target);
+            if (callee == null || callee.params.size() != inputs.size()
+                    || callee.tree.getBody() == null) return;
+            Hop hop = new Hop(caller, callee, engine.line(caller, call));
+            Map<Element, Origin> inherited = new HashMap<>();
+            for (int i = 0; i < inputs.size(); i++) {
+                Origin origin = inputs.get(i);
+                if (origin != null && origin.capsuleDerived &&
+                        origin.route.size() + 1 <= MAX_HOPS) {
+                    inherited.put(callee.params.get(i), origin.through(hop));
+                }
+            }
+            if (inherited.isEmpty()) return;
+            engine.process(callee, inherited, List.of(hop), new HashSet<>(), 1);
+        }
+
+        void process(Method method) {
+            if (method.tree.getBody() == null || engine.truncated) return;
+            Map<Element, Origin> locals = new HashMap<>();
+            Map<Element, Capsule> refs = new HashMap<>();
+            int allocations = 0;
+            if (method.name.equals("onNewIntent") &&
+                    !method.params.isEmpty() && method.params.get(0) != null) {
+                long at = engine.line(method, method.tree.getParameters().get(0));
+                if (at > 0) locals.put(method.params.get(0), new Origin(
+                    method.file, at, "ONNEWINTENT_PARAMETER_NAME_CUE"));
+            }
+            BlockTree body = method.tree.getBody();
+            TreePath bodyPath = new TreePath(method.path, body);
+            for (StatementTree stmt : body.getStatements()) {
+                if (++engine.visits >= MAX_VISITS || engine.results.size() >= MAX_FLOWS) {
+                    engine.truncated = true; return;
+                }
+                TreePath stmtPath = new TreePath(bodyPath, stmt);
+                if (stmt instanceof EmptyStatementTree) continue;
+                if (stmt instanceof ReturnTree || stmt instanceof ThrowTree) return;
+                if (stmt instanceof VariableTree) {
+                    VariableTree variable = (VariableTree) stmt;
+                    Element symbol = trees.getElement(stmtPath);
+                    ExpressionTree init = variable.getInitializer();
+                    TreePath initPath = init == null ? null : new TreePath(stmtPath, init);
+                    Origin origin = value(method, init, initPath, locals, refs);
+                    Capsule alias = null;
+                    if (init instanceof IdentifierTree)
+                        alias = refs.get(trees.getElement(initPath));
+                    else if (init instanceof NewClassTree &&
+                            allocations < MAX_CAPSULES_PER_METHOD) {
+                        alias = allocated(init, initPath);
+                        if (alias != null) allocations++;
+                    } else if (initPath != null && !isAllowedGetterArg(init, initPath, refs))
+                        escapeReferenced(initPath, refs);
+                    if (engine.localSymbol(symbol)) {
+                        if (origin == null) locals.remove(symbol);
+                        else locals.put(symbol, origin);
+                        if (alias == null) refs.remove(symbol);
+                        else refs.put(symbol, alias);
+                    }
+                    continue;
+                }
+                if (stmt instanceof ExpressionStatementTree) {
+                    ExpressionTree expr = ((ExpressionStatementTree) stmt).getExpression();
+                    TreePath exprPath = new TreePath(stmtPath, expr);
+                    if (expr instanceof MethodInvocationTree) {
+                        flowCall(method, (MethodInvocationTree) expr, exprPath,
+                            locals, refs);
+                        continue;
+                    }
+                    if (expr instanceof AssignmentTree) {
+                        AssignmentTree assignment = (AssignmentTree) expr;
+                        ExpressionTree lhs = assignment.getVariable();
+                        ExpressionTree rhs = assignment.getExpression();
+                        TreePath lhsPath = new TreePath(exprPath, lhs);
+                        TreePath rhsPath = new TreePath(exprPath, rhs);
+                        Element symbol = trees.getElement(lhsPath);
+                        Origin origin = value(method, rhs, rhsPath, locals, refs);
+                        Capsule alias = null;
+                        if (rhs instanceof IdentifierTree)
+                            alias = refs.get(trees.getElement(rhsPath));
+                        else if (rhs instanceof NewClassTree &&
+                                allocations < MAX_CAPSULES_PER_METHOD) {
+                            alias = allocated(rhs, rhsPath);
+                            if (alias != null) allocations++;
+                        } else if (!isAllowedGetterArg(rhs, rhsPath, refs))
+                            escapeReferenced(rhsPath, refs);
+                        if (engine.localSymbol(symbol) && lhs instanceof IdentifierTree) {
+                            if (origin == null) locals.remove(symbol);
+                            else locals.put(symbol, origin);
+                            if (alias == null) refs.remove(symbol);
+                            else refs.put(symbol, alias);
+                        } else {
+                            escapeReferenced(lhsPath, refs);
+                            escapeReferenced(rhsPath, refs);
+                        }
+                        continue;
+                    }
+                }
+                // No paths through unknown statements or mutations are inferred.
+                locals.clear();
+                refs.clear();
+                engine.unknownBranches++;
+            }
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         if (args.length < 3 || args.length > MAX_FILES + 2) {
             throw new IllegalArgumentException("root, empty classpath and bounded Java files required");
@@ -676,9 +1089,11 @@ public final class MobileCompilerFlow {
                 }.scan(unit, null);
             }
             Engine engine = new Engine(trees, methods);
+            CapsuleEngine capsules = new CapsuleEngine(engine);
             for (Method method : methods.values()) {
                 if (engine.truncated) break;
                 engine.process(method, Map.of(), new ArrayList<>(), new HashSet<>(), 0);
+                if (!engine.truncated) capsules.process(method);
             }
             long errors = diagnostics.getDiagnostics().stream()
                 .filter(d -> d.getKind() == Diagnostic.Kind.ERROR).count();

@@ -342,8 +342,10 @@ static dataflow patterns:
   arrays, cross-method field persistence, and concurrent mutations are
   **not** analyzed. This is not general heap or alias analysis.
 
-The overall provenance budget is still three edges, including both directions
-of a return and any additional call into a sink. Backward return edges are
+The Phase 9 baseline used three provenance edges. Phase 10 increases the
+shared provenance ceiling to six edges (while retaining a separate
+three-call interprocedural traversal limit) to represent setter and getter
+call/return pairs plus the final sink entry. Backward return edges are
 **not** actual Java method invocations. Older 8-column hop records remain
 parser-compatible, while new records name their edge kind explicitly.
 
@@ -352,6 +354,48 @@ entrypoint reachability, an external attacker primitive, a proven protected
 sink effect, or a validated vulnerability. `impact` remains
 `NOT_ESTABLISHED`, severity remains unassessed, and no target application
 is run by the JDK analysis.
+
+## Phase 10: Fresh-object aliases and bounded setter/getter heap summaries
+
+The Java-only `flow-java` reviewer includes one deliberately narrow heap
+model, implemented in the shipped, trusted JDK helper:
+
+- Track freshly allocated `final` Java classes with source-visible, no-arg
+  default construction and **no user-defined constructors, inheriting classes,
+  escaping instance initializer, or dynamic allocation body**. Eligible member
+  classes must be `static`.
+- Recognize exact compiler-resolved copies/reassignments of *local object
+  reference variables*; two `new Box()` occurrences are separate identities
+  and `Box alias = original` keeps identity.
+- Summarize only compiler-bound, fixed-dispatch direct setter methods whose
+  entire body assigns one `String` parameter to a **private instance String
+  field of that same class**, and direct getters whose entire body returns
+  that same field. The setter and getter must be called through tracked
+  local receivers. No arbitrary return value, call, branch, sanitizer,
+  callback, array or object field receiver is accepted.
+- Record call and return edges for each setter/getter, and retain evidence
+  only while the object has **not escaped**. An unknown receiver method,
+  passing the reference to another function, storing it into an array/field,
+  unsupported statement or unknown alias invalidates the tracked object
+  and its stored origins. An escaped object is not re-certified by a later
+  setter.
+- A read may subsequently flow through an independently compiler-bound
+  local/cross-file helper to an existing sink-name cue. Each provenance
+  route is validated using balanced typed METHOD_CALL and
+  RETURN_TO_CALLER edges; maximum 6 edges, maximum 3 nested call frames.
+
+This is **not** whole-program points-to analysis, global/inter-thread heap
+analysis, accurate Android framework API binding, real execution, or a
+bypass/exfiltration finding. Constructors, non-final classes, complex
+accessors, public/static/non-String fields, escaped objects, reflection,
+serializers, coroutines, callbacks and non-identity object transformations
+remain outside the model. The limitation is intentional, and false
+negatives are expected.
+
+Synthetic differential controls cover distinct allocations, reassignments,
+alias copies, literal overwrites, escaped aliases, constructor effects,
+unknown receiver mutations and unsupported branches. Every finding stays
+`impact: NOT_ESTABLISHED`, `reachability: UNKNOWN` and severity unassessed.
 
 ## Trust boundaries and evidence model
 
@@ -397,12 +441,12 @@ analysis, no production target execution and no independently authenticated rece
 
 ## Next implementation stages
 
-1. Extend bounded Java AST analysis beyond pure direct returns and
-   same-method private fields toward validated object identity, inter-method
-   heap summaries, nested expressions and carefully reviewed CFG edges.
-   Add separate Kotlin, Smali and Swift analyzers and Android SDK type
-   bindings. Dynamic dispatch, permissions and callback reachability remain
-   unmodeled; no static flow proves real-app exploitability.
+1. Extend Java beyond synthetic final-class object capsules to verified
+   non-escaping receiver identity and field summaries with complex, real-world
+   constructors, nested expressions and carefully reviewed CFG edges.
+   Create separate Kotlin/Smali and Swift analyzers and Android SDK type
+   bindings. Dynamic dispatch, effective permissions and callback reachability
+   remain unmodeled; no static flow proves real-app exploitability.
 2. Deep-link / App Link / OAuth callback protocol checks with actual origin
    binding and app-claimant validation, not keyword matching.
 3. Ship and test a maintained Android/iOS synthetic fixture app, and expand
