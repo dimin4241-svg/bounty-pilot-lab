@@ -6,7 +6,6 @@ contacts a target, runs a PoC, or asserts that a model violation is exploitable.
 Python stdlib only. See references/sequence-invariant-lab.md.
 """
 import argparse
-import hashlib
 import json
 import os
 import re
