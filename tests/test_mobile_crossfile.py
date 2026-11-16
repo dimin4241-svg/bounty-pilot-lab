@@ -223,5 +223,90 @@ class Router {static void forward(String x){webView.loadUrl(x);}}""")
             mobile_crossfile.analyze(str(self.root), "android", 0)
 
 
+    def test_kotlin_constructed_final_receiver(self):
+        self.put("Entry.kt", """package fixture
+class Entry {
+fun open() {
+val raw = getIntent().getDataString()
+val relay = Router()
+relay.forward(raw)
+}
+}""")
+        self.put("Router.kt", """package fixture
+class Router { fun forward(value: String) { web.loadUrl(value) } }""")
+        report = self.inspect()
+        self.assertEqual(report["lead_count"], 1, report)
+        self.assertEqual(report["leads"][0]["hops"][0]["resolution"],
+                         "kotlin-explicit-final-instance")
+
+    def test_kotlin_class_qualified_instance_method_rejected(self):
+        self.put("Entry.kt", """package fixture
+class Entry {
+fun open() {
+val raw = getIntent().getDataString()
+Router.forward(raw)
+}
+}""")
+        self.put("Router.kt", """package fixture
+class Router { fun forward(value: String) { web.loadUrl(value) } }""")
+        self.assertEqual(self.inspect()["lead_count"], 0)
+
+    def test_kotlin_open_class_receiver_is_not_fixed(self):
+        self.put("Entry.kt", """package fixture
+class Entry {
+fun open() {
+val raw = getIntent().getDataString()
+val router = Router()
+router.forward(raw)
+}
+}""")
+        self.put("Router.kt", """package fixture
+open class Router { open fun forward(value: String) { web.loadUrl(value) } }""")
+        self.assertEqual(self.inspect()["lead_count"], 0)
+
+    def test_kotlin_object_cannot_be_constructed_as_class_receiver(self):
+        self.put("Entry.kt", """package fixture
+class Entry {
+fun open() {
+val raw = getIntent().getDataString()
+val router = Router()
+router.forward(raw)
+}
+}""")
+        self.put("Router.kt", """package fixture
+object Router { fun forward(value: String) { web.loadUrl(value) } }""")
+        self.assertEqual(self.inspect()["lead_count"], 0)
+
+    def test_kotlin_object_singleton_evidence_label(self):
+        self.put("Entry.kt", """package fixture
+class Entry {
+fun open() {
+val raw = getIntent().getDataString()
+Router.forward(raw)
+}
+}""")
+        self.put("Router.kt", """package fixture
+object Router { fun forward(value: String) { web.loadUrl(value) } }""")
+        r = self.inspect()
+        self.assertEqual(r["lead_count"], 1, r)
+        self.assertEqual(r["leads"][0]["hops"][0]["resolution"],
+                         "kotlin-explicit-object-singleton")
+        self.assertEqual(r["leads"][0]["impact"], "NOT_ESTABLISHED")
+
+    def test_kotlin_cross_language_guess_disabled(self):
+        self.put("Entry.kt", """package fixture
+class Entry {
+fun open() {
+val raw = getIntent().getDataString()
+Router.forward(raw)
+}
+}""")
+        self.put("Router.java", """package fixture;
+class Router {
+static void forward(String value){ web.loadUrl(value); }
+}""")
+        self.assertEqual(self.inspect()["lead_count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
