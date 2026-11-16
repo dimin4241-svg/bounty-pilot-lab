@@ -696,16 +696,17 @@ public final class MobileCompilerFlow {
                             MethodTree method = (MethodTree) member;
                             if (method.getReturnType() == null) {
                                 // Javac injects a default constructor during
-                                // analyze() at the class start position.
-                                // Explicit constructors have their own offsets.
+                                // analyze() without an actual source span.
+                                // Explicit constructors have source end offsets.
                                 CompilationUnitTree unit =
                                     trees.getPath(type).getCompilationUnit();
-                                long ctorStart = trees.getSourcePositions()
-                                    .getStartPosition(unit, member);
-                                long classStart = trees.getSourcePositions()
-                                    .getStartPosition(unit, clazz);
-                                if (ctorStart < 0 || ctorStart != classStart)
-                                    valid = false;
+                                long ctorEnd = trees.getSourcePositions()
+                                    .getEndPosition(unit, member);
+                                // The injected default constructor has no
+                                // source end position. A constructor written
+                                // by the developer has a source span even if
+                                // its body is empty.
+                                if (ctorEnd >= 0) valid = false;
                             }
                         }
                     }
