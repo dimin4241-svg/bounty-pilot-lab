@@ -12009,6 +12009,7 @@ def build_parser():
 
 # Standalone helpers reachable as `bounty.py <command> ...`: each owns its argument parser.
 HELPER_COMMANDS = {
+    'sequence-invariants': ('sequence_invariant_lab', 'offline source cues, cross-actor sequences, native evidence preflight and Cantina calibration'),
     'research-run': ('research_run_hub', 'one-command offline private multi-engine reviewer with scope snapshot'),
     'mobile-decompile': ('mobile_decompile', 'opt-in offline local JADX/Apktool APK extraction with provenance'),
     'historical-paired-eval': ('historical_paired_eval', 'offline vulnerable/fixed paired evaluator; blinding not attested'),
