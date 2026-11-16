@@ -498,6 +498,26 @@ public final class MobileCompilerFlow {
             return true;
         }
 
+        // A join must preserve the same *provenance route*, not only the
+        // same source anchor. Two wrappers from the same input are not
+        // interchangeable evidence of one confirmed method chain.
+        boolean sameOrigin(Origin a, Origin b) {
+            if (a == null || b == null || !a.file.equals(b.file)
+                    || a.line != b.line || !a.kind.equals(b.kind)
+                    || a.route.size() != b.route.size()) return false;
+            for (int i = 0; i < a.route.size(); i++) {
+                Hop x = a.route.get(i), y = b.route.get(i);
+                if (!x.kind.equals(y.kind) || x.line != y.line
+                        || !x.caller.file.equals(y.caller.file)
+                        || !x.caller.signature.equals(y.caller.signature)
+                        || !x.callee.file.equals(y.callee.file)
+                        || !x.callee.signature.equals(y.callee.signature)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         boolean joinConditional(Method method, IfTree tree, TreePath path,
                                 Map<Element, Origin> state) {
             if (!simpleCondition(tree.getCondition())) return false;
@@ -513,8 +533,7 @@ public final class MobileCompilerFlow {
             for (Map.Entry<Element, Origin> entry : onTrue.entrySet()) {
                 Origin a = entry.getValue();
                 Origin b = onFalse.get(entry.getKey());
-                if (b != null && a.file.equals(b.file) && a.line == b.line
-                    && a.kind.equals(b.kind)) state.put(entry.getKey(), a);
+                if (sameOrigin(a, b)) state.put(entry.getKey(), a);
             }
             return true;
         }
