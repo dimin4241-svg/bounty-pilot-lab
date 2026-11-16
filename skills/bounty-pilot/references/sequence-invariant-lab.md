@@ -120,7 +120,7 @@ Use a separate private holdout corpus, not this calibration catalog.
 ## Test command
 
 ```sh
-python3 -m unittest discover -s skills/bounty-pilot/tests \
+python3 -m unittest discover -s tests \
   -p 'test_sequence_invariant_lab.py' -v
 ```
 
