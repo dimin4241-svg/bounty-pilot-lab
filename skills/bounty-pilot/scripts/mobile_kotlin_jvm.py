@@ -7,7 +7,6 @@ A compiled JVM callsite is stronger than a guessed lexical class name, but
 cannot prove source/build freshness, taint, reachability or Android behavior.
 """
 import hashlib
-import re
 import struct
 from pathlib import Path
 
