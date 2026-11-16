@@ -539,5 +539,221 @@ class Helper { static String identity(String x) { return x; } }""")
         self.assertEqual(report["lead_count"], 1, report)
         self.assertEqual(len(report["leads"][0]["hops"]), 3)
 
+
+    def capsule_fixture(self, body, box=None):
+        self.put("fixture/Entry.java", """package fixture;
+class Entry {
+    static class Intent { String getDataString() { return "sample"; } }
+    Intent getIntent() { return new Intent(); }
+    void run() {
+        String raw = getIntent().getDataString();
+        %s
+    }
+}""" % body)
+        self.put("fixture/Box.java", box or """package fixture;
+final class Box {
+    private String payload;
+    void put(String s) { this.payload = s; }
+    String read() { return payload; }
+}""")
+        self.put("fixture/Router.java", """package fixture;
+class Router {
+    static class Web { void loadUrl(String s) {} }
+    static Web web = new Web();
+    static void forward(String s) { web.loadUrl(s); }
+}""")
+
+    def test_fresh_object_alias_through_setter_and_getter(self):
+        self.capsule_fixture("""Box first = new Box();
+Box alias = first;
+first.put(raw);
+Router.forward(alias.read());""")
+        result = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(result["coverage"]["diagnostic_errors"], 0, result)
+        self.assertEqual(result["lead_count"], 1, result)
+        lead = result["leads"][0]
+        self.assertEqual(lead["impact"], "NOT_ESTABLISHED")
+        self.assertEqual(lead["reachability"], "UNKNOWN")
+        self.assertEqual([h["edge_kind"] for h in lead["hops"]], [
+            "METHOD_CALL", "RETURN_TO_CALLER", "METHOD_CALL",
+            "RETURN_TO_CALLER", "METHOD_CALL"])
+        self.assertEqual(lead["hops"][0]["callee_file"], "fixture/Box.java")
+        self.assertEqual(lead["sink"]["file"], "fixture/Router.java")
+
+    def test_transitive_alias_across_three_names(self):
+        self.capsule_fixture("""Box first = new Box();
+Box second = first;
+Box third = second;
+first.put(raw);
+String result = third.read();
+Router.forward(result);""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+
+    def test_two_fresh_objects_do_not_share_private_state(self):
+        self.capsule_fixture("""Box first = new Box();
+Box second = new Box();
+first.put(raw);
+Router.forward(second.read());""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 0, report)
+
+    def test_alias_reassignment_detaches_original_object(self):
+        self.capsule_fixture("""Box first = new Box();
+Box second = first;
+second = new Box();
+first.put(raw);
+Router.forward(second.read());""")
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_literal_setter_overwrite_clears_old_data(self):
+        self.capsule_fixture("""Box a = new Box();
+Box b = a;
+a.put(raw);
+b.put("known");
+Router.forward(a.read());""")
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_setter_also_supports_unqualified_private_field(self):
+        box = """package fixture;
+final class Box {
+    private String payload;
+    void put(String s) { payload = s; }
+    String read() { return this.payload; }
+}"""
+        self.capsule_fixture("""Box a = new Box();
+a.put(raw);
+Router.forward(a.read());""", box=box)
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 1, report)
+
+    def test_unknown_receiver_method_invalidates_object_state(self):
+        box = """package fixture;
+final class Box {
+    private String payload;
+    void put(String s) { payload = s; }
+    void reset() { payload = "fixed"; }
+    String read() { return payload; }
+}"""
+        self.capsule_fixture("""Box a = new Box();
+a.put(raw);
+a.reset();
+Router.forward(a.read());""", box=box)
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_escaped_object_not_reacquired_even_after_new_setter(self):
+        self.capsule_fixture("""Box a = new Box();
+Escaper.hold(a);
+a.put(raw);
+Router.forward(a.read());""")
+        self.put("fixture/Escaper.java", """package fixture;
+class Escaper { static Box hidden; static void hold(Box a) { hidden = a; } }""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["coverage"]["diagnostic_errors"], 0, report)
+        self.assertEqual(report["lead_count"], 0, report)
+
+    def test_unknown_expression_storing_object_invalidates_it(self):
+        self.capsule_fixture("""Box a = new Box();
+Object[] array = new Object[] { a };
+a.put(raw);
+Router.forward(a.read());""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 0, report)
+
+    def test_nonfinal_class_does_not_get_capsule_identity(self):
+        box = """package fixture;
+class Box {
+    private String payload;
+    void put(String s) { payload = s; }
+    String read() { return payload; }
+}"""
+        self.capsule_fixture("""Box a = new Box();
+a.put(raw);
+Router.forward(a.read());""", box=box)
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_explicit_constructor_cannot_be_assumed_side_effect_free(self):
+        box = """package fixture;
+final class Box {
+    private String payload;
+    Box() { External.leak(this); }
+    void put(String s) { payload = s; }
+    String read() { return payload; }
+}
+class External { static Object leaked; static void leak(Object x) { leaked = x; } }"""
+        self.capsule_fixture("""Box a = new Box();
+a.put(raw);
+Router.forward(a.read());""", box=box)
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_mutating_instance_initializer_is_not_treated_as_fresh(self):
+        box = """package fixture;
+final class Box {
+    private String payload;
+    { payload = "initial"; }
+    void put(String s) { payload = s; }
+    String read() { return payload; }
+}"""
+        self.capsule_fixture("""Box a = new Box();
+a.put(raw);
+Router.forward(a.read());""", box=box)
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_public_field_accessor_is_not_private_heap_summary(self):
+        box = """package fixture;
+final class Box {
+    public String payload;
+    void put(String s) { payload = s; }
+    String read() { return payload; }
+}"""
+        self.capsule_fixture("""Box a = new Box();
+a.put(raw);
+Router.forward(a.read());""", box=box)
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_complex_accessor_is_not_summarized(self):
+        box = """package fixture;
+final class Box {
+    private String payload;
+    void put(String s) { payload = s; }
+    String read() { if (payload == null) return "safe"; return payload; }
+}"""
+        self.capsule_fixture("""Box a = new Box();
+a.put(raw);
+Router.forward(a.read());""", box=box)
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_incomplete_branch_drops_capsule_facts(self):
+        self.capsule_fixture("""Box a = new Box();
+a.put(raw);
+boolean flag = false;
+if (flag) { a.put("fixed"); }
+Router.forward(a.read());""")
+        report = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(report["lead_count"], 0, report)
+
+    def test_object_field_alias_not_mistaken_for_local_variable(self):
+        self.capsule_fixture("""Box a = new Box();
+Holder holder = new Holder();
+holder.box = a;
+a.put(raw);
+Router.forward(holder.box.read());""")
+        self.put("fixture/Holder.java", """package fixture;
+class Holder { Box box; }""")
+        self.assertEqual(mobile_java_flow.analyze(self.sources)["lead_count"], 0)
+
+    def test_local_alias_and_source_snapshot_is_deterministic(self):
+        self.capsule_fixture("""Box a = new Box();
+Box b = a;
+a.put(raw);
+Router.forward(b.read());""")
+        a = mobile_java_flow.analyze(self.sources)
+        b = mobile_java_flow.analyze(self.sources)
+        self.assertEqual(a, b)
+        self.assertEqual(a["lead_count"], 1)
+
 if __name__ == "__main__":
     unittest.main()
