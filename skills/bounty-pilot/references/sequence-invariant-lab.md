@@ -18,6 +18,10 @@ python3 "$BP" sequence-invariants scan \
   --repo /private/pinned-repo --revision "$REV" --max-files 120 \
   --out /private/new-source-leads.json
 
+# Enumerate all 2^N - 1 combinations of up to 8 mode flags (plan only).
+python3 "$BP" sequence-invariants mode-matrix --input /private/modes.json \
+  --out /private/new-mode-matrix.json
+
 # Compare saved, human-reviewed candidate data with invariant specifications.
 python3 "$BP" sequence-invariants review --input /private/trace.json \
   --out /private/new-review.json
@@ -43,14 +47,24 @@ create-only, owner-private (0600). Use private directories outside the repo.
 | `transfer_isolation` | Compare who owns an outflow and who receives it | Fund attribution is supplied, not inferred |
 | `obligation_coverage` | Track held funds, recoverable claims and obligations across nested callbacks | Only checks a supplied simplified accounting identity |
 | `callback_stack` | Reproduce nested A→B→A action sequence with a protected control | Nested calls are normal; a `REVIEW_NEEDED` result is not a bug |
-| `trigger_integrity` | Mode combinations, lost thresholds and consumed-but-unrearmed triggers | Expected trigger labels are researcher-reviewed, not sourced automatically |
+| `trigger_integrity` | Mode combinations, wrong numeric tick thresholds, lost triggers, consumed-but-unrearmed protection | Expected trigger labels/ticks are researcher-reviewed, not sourced automatically |
 | `lifecycle_authority` | Check successor NFT/object permissions after remint or migration | A missing capability name alone doesn't prove reachability |
 | `temporal_accrual` | Contrast checkpoint time-weighted interest against actual interest | Rates, units, interest policy and rounding must be established independently |
 | `asset_identity` | Compare asset aliases along different protocol paths | Never assume `ETH == WETH`; aliases are explicitly supplied |
 
+For `mode-matrix` use e.g.
+`{"source_revision":"<40-hex-sha>","modes":[{"name":"AUTO_RANGE","bit":2},{"name":"AUTO_LEND","bit":8}]}`.
+It returns masks 2, 8 and 10 and **test obligations**, not valid/invalid
+configurations or observed deployment behavior. Compare each accepted
+combination to standalone controls. For `trigger_integrity`, supply
+`expected_ticks` and `armed_ticks` keyed by the same named trigger to detect
+**wrong trigger positions**, not just missing labels. Asset identity remains
+policy-specific and never infers wrapping.
+
 The `scan` command identifies pairs of lexical signals in bounded `.sol`
 files. Its line numbers are approximate, comment stripping is heuristic, and
-no source revision is independently authenticated. The input digest and
+a real local Git checkout HEAD is checked against the requested revision;
+non-Git input is explicitly marked unverified. The input digest and
 code should be verified through Bounty Pilot's existing pinned checkout and
 source-anchored native run before filing.
 
@@ -120,7 +134,7 @@ Use a separate private holdout corpus, not this calibration catalog.
 ## Test command
 
 ```sh
-python3 -m unittest discover -s tests \
+python3 -m unittest discover -s skills/bounty-pilot/tests \
   -p 'test_sequence_invariant_lab.py' -v
 ```
 
