@@ -327,5 +327,154 @@ class SmaliDescriptorFlowTests(unittest.TestCase):
         self.assertEqual(self.scan(), self.scan())
 
 
+    def router_branch(self, instructions):
+        self.put("Router.smali", """.class public Lfixture/Router;
+.super Ljava/lang/Object;
+.method public static forward(Ljava/lang/String;)V
+    .locals 3
+""" + instructions + """
+.end method
+""")
+
+    def test_cfg_forward_join_preserves_same_origin_on_both_paths(self):
+        self.router_branch("""    if-eqz p0, :otherwise
+    move-object v1, p0
+    goto :join
+    :otherwise
+    move-object v1, p0
+    :join
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, v1}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        report = self.scan()
+        self.assertEqual(report["lead_count"], 1, report)
+        self.assertGreater(report["coverage"]["acyclic_cfg_join_nodes"], 0)
+        self.assertFalse(report["leads"][0]["branch_feasibility_verified"])
+
+    def test_cfg_one_branch_sanitizes_must_join_blocks_lead(self):
+        self.router_branch("""    if-eqz p0, :otherwise
+    move-object v1, p0
+    goto :join
+    :otherwise
+    const-string v1, "fixed"
+    :join
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, v1}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        report = self.scan()
+        self.assertEqual(report["lead_count"], 0, report)
+        self.assertGreater(report["coverage"]["acyclic_cfg_join_nodes"], 0)
+
+    def test_cfg_conditional_overwrites_the_input_register(self):
+        self.router_branch("""    if-nez p0, :otherwise
+    const-string p0, "fixed"
+    :otherwise
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, p0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_cfg_forward_branch_preserves_definite_unmodified_origin(self):
+        self.router_branch("""    if-nez p0, :otherwise
+    nop
+    :otherwise
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, p0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan()["lead_count"], 1)
+
+    def test_cfg_only_forward_goto_is_accepted(self):
+        self.router_branch("""    goto/16 :join
+    const-string p0, "unused"
+    :join
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, p0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan()["lead_count"], 1)
+
+    def test_cfg_backward_goto_loop_is_rejected(self):
+        self.router_branch("""    :loop
+    move-object v1, p0
+    goto :loop
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, v1}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        report = self.scan()
+        self.assertEqual(report["lead_count"], 0)
+        self.assertGreater(report["coverage"]["unsupported_method_visits"], 0)
+
+    def test_cfg_backward_if_loop_is_rejected(self):
+        self.router_branch("""    :loop
+    if-eqz p0, :loop
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, p0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_cfg_missing_target_label_is_rejected(self):
+        self.router_branch("""    if-eqz p0, :missing
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, p0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_cfg_duplicate_label_is_rejected(self):
+        self.router_branch("""    :repeat
+    nop
+    :repeat
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, p0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_cfg_catch_handler_and_exception_directive_are_rejected(self):
+        self.router_branch("""    :try_start_0
+    nop
+    :try_end_0
+    .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
+    :catch_0
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, p0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_cfg_branch_with_unknown_side_effect_cannot_create_flow(self):
+        self.router_branch("""    if-eqz p0, :other
+    invoke-static {p0}, Lfixture/Unknown;->mutate(Ljava/lang/String;)V
+    goto :join
+    :other
+    nop
+    :join
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, p0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_cfg_label_between_source_call_and_move_result_invalidates(self):
+        self.rewrite("Entry.smali",
+                     "invoke-virtual {v0}, Landroid/content/Intent;->getDataString()Ljava/lang/String;\n    move-result-object v1",
+                     "invoke-virtual {v0}, Landroid/content/Intent;->getDataString()Ljava/lang/String;\n    :tag\n    move-result-object v1")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_cfg_rejects_switch_and_monitor_control(self):
+        self.router_branch("""    packed-switch p0, :jump_table
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, p0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_cfg_fingerprint_and_output_are_deterministic(self):
+        self.router_branch("""    if-eqz p0, :else
+    move-object v1, p0
+    goto :join
+    :else
+    move-object v1, p0
+    :join
+    new-instance v0, Landroid/webkit/WebView;
+    invoke-virtual {v0, v1}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
+    return-void""")
+        self.assertEqual(self.scan(), self.scan())
+
+
 if __name__ == "__main__":
     unittest.main()
