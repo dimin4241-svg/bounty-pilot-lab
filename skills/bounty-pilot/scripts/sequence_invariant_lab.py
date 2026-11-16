@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -175,6 +176,17 @@ def _check_triggers(rule, steps):
             res.append(_witness(rule["id"], "trigger_integrity", i, "MODEL_VIOLATION",
                 "explicitly disabled trigger is armed", {"armed_disabled": sorted(disabled & armed)},
                 "Prove trigger activation and corresponding unauthorized native action."))
+        expected_ticks = _asmap(t.get("expected_ticks", {}), "expected_ticks")
+        armed_ticks = _asmap(t.get("armed_ticks", {}), "armed_ticks")
+        for name, expected in expected_ticks.items():
+            if not isinstance(name, str) or not name or name in disabled:
+                raise ValueError("expected ticks must have valid enabled labels")
+            if name in armed_ticks and _dec(expected) != _dec(armed_ticks[name]):
+                res.append(_witness(rule["id"], "trigger_integrity", i, "MODEL_VIOLATION",
+                    "armed trigger tick differs from accepted configuration",
+                    {"trigger": name, "expected_tick": str(_dec(expected)),
+                     "actual_tick": str(_dec(armed_ticks[name]))},
+                    "Prove the on-chain trigger slot/owner, the configured limit and resulting native action."))
         action = t.get("executed_mode")
         if action and action not in set(t.get("allowed_actions", [])):
             res.append(_witness(rule["id"], "trigger_integrity", i, "MODEL_VIOLATION",
@@ -339,6 +351,19 @@ def scan(repo, revision, limit=120):
     root = Path(repo)
     if root.is_symlink() or not root.is_dir():
         raise ValueError("repo must be a directory, not a symlink")
+    verified = False
+    # `rev-parse` is read-only and offline. Do not silently trust a claimed
+    # source SHA when a real Git checkout is available.
+    try:
+        git = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+                             capture_output=True, text=True, timeout=4, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        git = None
+    if git is not None and git.returncode == 0:
+        actual = git.stdout.strip().lower()
+        if actual != revision:
+            raise ValueError("pinned checkout HEAD differs from requested source_revision")
+        verified = True
     out, inspected = [], 0
     for path in sorted(root.rglob("*.sol")):
         if inspected >= limit:
@@ -349,8 +374,9 @@ def scan(repo, revision, limit=120):
             continue
         inspected += 1
         src = path.read_text(encoding="utf-8", errors="replace")
-        # Strip Solidity comments. Regex scanning is deliberately only a cue.
-        src = re.sub(r"/\*.*?\*/|//[^\n]*", "", src, flags=re.S)
+        # Preserve line breaks when removing comments for stable approximate
+        # source anchors. String literals can still mislead this lexer.
+        src = re.sub(r"/\*.*?\*/|//[^\n]*", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.S)
         for kind, pats in PATTERNS.items():
             hits = [list(re.finditer(p, src, re.I)) for p in pats]
             if not all(hits):
@@ -365,9 +391,51 @@ def scan(repo, revision, limit=120):
                                 "review": "Read both operations, authorization, asset owner and failure path; generate native candidate/control."})
                     break
     return {"schema_version": 1, "revision_claim": revision,
-            "revision_verified_by_tool": False, "files_inspected": inspected,
+            "revision_verified_by_tool": verified, "files_inspected": inspected,
             "findings": out[:300], "truncated": inspected == limit,
             "notice": "Bounded lexical source cues; no dataflow, runtime reachability, source pin validation or vulnerability proof."}
+
+
+def mode_matrix(doc):
+    """Enumerate all combinations of user-defined flag bits as test tasks.
+
+    The matrix does not infer protocol intent or call real contracts. The user
+    supplies documented acceptance and expected dispatch rules in review.
+    """
+    _asmap(doc, "mode matrix")
+    rev = _revision(doc)
+    modes = doc.get("modes", [])
+    if not isinstance(modes, list) or not 1 <= len(modes) <= 8:
+        raise ValueError("mode matrix requires 1..8 flag definitions")
+    known, bits = set(), set()
+    for m in modes:
+        _asmap(m, "mode")
+        name, bit = m.get("name"), m.get("bit")
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Z0-9_]{2,40}", name):
+            raise ValueError("mode names must be uppercase identifiers")
+        if type(bit) is not int or bit < 1 or bit > (1 << 30) or bit & (bit - 1):
+            raise ValueError("each bit must be a distinct power of two")
+        if name in known or bit in bits:
+            raise ValueError("duplicate flag name/bit")
+        known.add(name)
+        bits.add(bit)
+    combos = []
+    for idx in range(1, 1 << len(modes)):
+        selected = [m for j, m in enumerate(modes) if idx & (1 << j)]
+        mask = sum(m["bit"] for m in selected)
+        labels = [m["name"] for m in selected]
+        combos.append({"mode_mask": mask, "modes": labels,
+                       "reviewed_acceptance": "UNKNOWN",
+                       "native_tests": ["config validation for combined flags",
+                                        "arm triggers before and after price movement",
+                                        "dispatch to intended mode owner",
+                                        "failed action: preserve or rearm protection",
+                                        "actual balance and permission effects",
+                                        "protected single-mode negative controls"]})
+    return {"schema_version": 1, "source_revision": rev,
+            "classification": "PLANNED_FLAG_COMBINATIONS_NOT_EXECUTED",
+            "cases": sorted(combos, key=lambda c: (len(c["modes"]), c["mode_mask"])),
+            "count": len(combos), "notice": "No valid/invalid modes inferred; consult code and documented intent for each case."}
 
 
 def proof_plan(doc):
@@ -445,23 +513,29 @@ def main(argv=None):
     a.add_argument("--repo", required=True)
     a.add_argument("--revision", required=True)
     a.add_argument("--max-files", type=int, default=120)
+    a.add_argument("--out", help="new private output file")
+    a = sub.add_parser("mode-matrix", help="bounded manual flag-combination coverage plan")
+    a.add_argument("--input", required=True)
+    a.add_argument("--out", help="new private output file")
     for k in ("review", "proof-plan"):
         a = sub.add_parser(k, help="review pinned JSON observations or prepare native test plan")
         a.add_argument("--input", required=True)
+        a.add_argument("--out", help="new private output file")
     a = sub.add_parser("caseforge", help="known Cantina cases for calibration, not blind benchmark")
     a.add_argument("--corpus", required=True)
     a.add_argument("--mode", choices=("inventory", "tasks", "score"), required=True)
     a.add_argument("--predictions")
-    p.add_argument("--out", help="new JSON output path; never overwritten")
+    a.add_argument("--out", help="new private output file")
     args = p.parse_args(argv)
     try:
         if args.action == "scan":
             if not 1 <= args.max_files <= 500:
                 raise ValueError("max-files must be 1..500")
             result = scan(args.repo, args.revision, args.max_files)
-        elif args.action in ("review", "proof-plan"):
+        elif args.action in ("review", "proof-plan", "mode-matrix"):
             doc = _read_json(args.input)
-            result = review(doc) if args.action == "review" else proof_plan(doc)
+            result = (review(doc) if args.action == "review" else
+                      proof_plan(doc) if args.action == "proof-plan" else mode_matrix(doc))
         else:
             if args.mode == "score" and not args.predictions:
                 raise ValueError("score requires --predictions")
