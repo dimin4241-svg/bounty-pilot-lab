@@ -188,7 +188,12 @@ def parse_classfile(data):
         tag = r.u1()
         if tag == 1:
             raw = r.take(r.u2())
-            cp[index] = (1, raw.decode("utf-8"))
+            # JVM CONSTANT_Utf8 uses Modified UTF-8: NUL is encoded as
+            # C0 80 and Kotlin Metadata strings contain it frequently.
+            # Decode these code units without treating classfile bytes as
+            # untrusted text to be evaluated or executed.
+            cp[index] = (1, raw.replace(b"\xc0\x80", b"\x00").decode(
+                "utf-8", errors="surrogatepass"))
         elif tag in (3, 4):
             r.take(4)
             cp[index] = (tag,)
