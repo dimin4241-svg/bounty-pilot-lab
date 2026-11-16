@@ -86,8 +86,27 @@ def _index(root, platform):
         package = PACKAGE.search(masked) if platform == "android" else None
         import_names = {m.group(1) for m in IMPORT.finditer(masked)}
         package_name = package.group(1) if package else ""
+        language = ("kotlin" if path.suffix.lower() in {".kt", ".kts"}
+                    else "java" if path.suffix.lower() == ".java"
+                    else "swift")
+        kotlin_kind = None
+        if language == "kotlin":
+            # An 'object' has a singleton receiver. Ordinary classes are
+            # final by default, but open/abstract/sealed declarations are not
+            # safe to bind as a unique instance implementation.
+            escaped_stem = re.escape(stem)
+            if re.search(r"\bobject\s+" + escaped_stem + r"\b", masked):
+                kotlin_kind = "object"
+            elif (re.search(r"\bclass\s+" + escaped_stem + r"\b", masked)
+                  and not re.search(
+                      r"\b(?:open|abstract|sealed)\s+class\s+" +
+                      escaped_stem + r"\b", masked)):
+                kotlin_kind = "final-class"
+            else:
+                kotlin_kind = "unsupported"
         entry = {
             "path": path.relative_to(root).as_posix(),
+            "language": language, "kotlin_kind": kotlin_kind,
             "sha256": hashlib.sha256(data).hexdigest(),
             "class": stem, "package": package_name,
             "symbol": (package_name + "." + stem if package_name else stem),
@@ -158,15 +177,30 @@ def _calls(statement, owner, symbols, platform, binding):
     for match in QUALIFIED_CALL.finditer(statement):
         receiver, name = match.group("receiver"), match.group("name")
         args = mobile_flow._split_args(match.group("args"))
+        instance = receiver in binding
         target = binding.get(receiver) or _class_lookup(owner, receiver, symbols, platform)
         if target is None:
             continue
+        if owner["language"] == "kotlin":
+            # A Kotlin class name is not an object instance; a Java-like
+            # class-qualified call must not be treated as static without
+            # compiler/bytecode evidence. Instance calls require a visibly
+            # constructed final class, singleton calls an explicit object.
+            if target["language"] != "kotlin":
+                continue
+            if instance and target["kotlin_kind"] != "final-class":
+                continue
+            if not instance and target["kotlin_kind"] != "object":
+                continue
         if target is owner:  # same-file resolution is delegated to mobile_flow.
             continue
         method = _resolve_method(target, name, len(args))
         if method is None:
             continue
-        result.append((target, method, args, "explicit-class-or-local-instance"))
+        resolution = ("kotlin-explicit-final-instance" if instance else
+                      "kotlin-explicit-object-singleton") if owner["language"] == "kotlin" else (
+                      "explicit-class-or-local-instance")
+        result.append((target, method, args, resolution))
     # Unqualified method calls are handled only within the current source file,
     # where the existing bounded lexical engine already has this behavior.
     # No global search by same method name is ever performed.
