@@ -81,8 +81,13 @@ public final class MobileCompilerFlow {
         final Method caller;
         final Method callee;
         final long line;
+        final String kind;
         Hop(Method caller, Method callee, long line) {
-            this.caller = caller; this.callee = callee; this.line = line;
+            this(caller, callee, line, "METHOD_CALL");
+        }
+        Hop(Method caller, Method callee, long line, String kind) {
+            this.caller = caller; this.callee = callee;
+            this.line = line; this.kind = kind;
         }
     }
 
@@ -208,7 +213,7 @@ public final class MobileCompilerFlow {
                     hop.caller.signature, Long.toString(hop.line),
                     hop.callee.file, hop.callee.name,
                     Long.toString(line(hop.callee, hop.callee.tree)),
-                    hop.callee.signature);
+                    hop.callee.signature, hop.kind);
             }
             List<String> encoded = new ArrayList<>();
             for (String field : fields) encoded.add(enc(field));
@@ -276,7 +281,8 @@ public final class MobileCompilerFlow {
             for (int i = 0; i < values.size(); i++) {
                 Origin origin = values.get(i);
                 if (origin != null) {
-                    if (origin.route.size() >= MAX_HOPS) return null;
+                    // A return edge must bring execution back into caller.
+                    if (origin.route.size() + 2 > MAX_HOPS) return null;
                     locals.put(callee.params.get(i), origin.through(hop));
                 }
             }
@@ -296,8 +302,11 @@ public final class MobileCompilerFlow {
                 if (statement instanceof ReturnTree && i == statements.size() - 1) {
                     ExpressionTree result = ((ReturnTree) statement).getExpression();
                     if (result == null || !returnArgumentSimple(result)) return null;
-                    return expression(callee, result,
+                    Origin returned = expression(callee, result,
                         new TreePath(statementPath, result), locals);
+                    return returned == null ? null : returned.through(
+                        new Hop(callee, caller, line(callee, statement),
+                                "RETURN_TO_CALLER"));
                 }
                 if (statement instanceof VariableTree) {
                     VariableTree declaration = (VariableTree) statement;
