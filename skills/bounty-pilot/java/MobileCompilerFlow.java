@@ -694,10 +694,18 @@ public final class MobileCompilerFlow {
                             }
                         } else if (member instanceof MethodTree) {
                             MethodTree method = (MethodTree) member;
-                            if (method.getReturnType() == null &&
-                                    trees.getSourcePositions().getStartPosition(
-                                        trees.getPath(type).getCompilationUnit(), member) >= 0) {
-                                valid = false;
+                            if (method.getReturnType() == null) {
+                                // Javac injects a default constructor during
+                                // analyze() at the class start position.
+                                // Explicit constructors have their own offsets.
+                                CompilationUnitTree unit =
+                                    trees.getPath(type).getCompilationUnit();
+                                long ctorStart = trees.getSourcePositions()
+                                    .getStartPosition(unit, member);
+                                long classStart = trees.getSourcePositions()
+                                    .getStartPosition(unit, clazz);
+                                if (ctorStart < 0 || ctorStart != classStart)
+                                    valid = false;
                             }
                         }
                     }
