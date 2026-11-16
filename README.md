@@ -1,4 +1,14 @@
 <p align="center">
+
+## Cantina-derived inter-operation invariant lab
+
+New offline `bounty.py sequence-invariants` integrates a bounded Solidity cue
+queue, seven cross-operation invariant checks (attributed funds, obligations,
+callbacks, triggers, migrated permissions, temporal interest and asset aliases),
+reviewable candidate/control native PoC tasks, and 13 known public Cantina
+calibration cases. This **does not** execute a target or prove exploitability;
+source and trace evidence must be independently verified. See
+[the runbook](skills/bounty-pilot/references/sequence-invariant-lab.md).
   <img src="docs/assets/banner.svg" alt="Bounty Pilot — Web3 security, backed by evidence" width="100%">
 </p>
 
