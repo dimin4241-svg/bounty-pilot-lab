@@ -357,18 +357,18 @@ is run by the JDK analysis.
 
 ## Phase 10: Fresh-object aliases and bounded setter/getter heap summaries
 
-The Java-only \`flow-java\` reviewer includes one deliberately narrow heap
+The Java-only `flow-java` reviewer includes one deliberately narrow heap
 model, implemented in the shipped, trusted JDK helper:
 
-- Track freshly allocated \`final\` Java classes with source-visible, no-arg
+- Track freshly allocated `final` Java classes with source-visible, no-arg
   default construction and **no user-defined constructors, inheriting classes,
   escaping instance initializer, or dynamic allocation body**. Eligible member
-  classes must be \`static\`.
+  classes must be `static`.
 - Recognize exact compiler-resolved copies/reassignments of *local object
-  reference variables*; two \`new Box()\` occurrences are separate identities
-  and \`Box alias = original\` keeps identity.
+  reference variables*; two `new Box()` occurrences are separate identities
+  and `Box alias = original` keeps identity.
 - Summarize only compiler-bound, fixed-dispatch direct setter methods whose
-  entire body assigns one \`String\` parameter to a **private instance String
+  entire body assigns one `String` parameter to a **private instance String
   field of that same class**, and direct getters whose entire body returns
   that same field. The setter and getter must be called through tracked
   local receivers. No arbitrary return value, call, branch, sanitizer,
@@ -395,7 +395,7 @@ negatives are expected.
 Synthetic differential controls cover distinct allocations, reassignments,
 alias copies, literal overwrites, escaped aliases, constructor effects,
 unknown receiver mutations and unsupported branches. Every finding stays
-\`impact: NOT_ESTABLISHED\`, \`reachability: UNKNOWN\` and severity unassessed.
+`impact: NOT_ESTABLISHED`, `reachability: UNKNOWN` and severity unassessed.
 
 ## Trust boundaries and evidence model
 
