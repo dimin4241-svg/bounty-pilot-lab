@@ -61,9 +61,9 @@ IGNORED = re.compile(r"^\.(?:locals|registers|line|prologue|epilogue|param|end p
                      r"local|end local|restart local|source|annotation|end annotation)\b")
 SAFE_NOP = {"nop", "return-void"}
 # Deliberately no switch, try/catch, arbitrary comparisons or loops.
-CFG_LABEL = re.compile(r"^:([A-Za-z_$][\\w$]*)$")
-CFG_IF = re.compile(r"^if-(?:eqz|nez)\\s+([vp]\\d+),\\s*:([A-Za-z_$][\\w$]*)$")
-CFG_GOTO = re.compile(r"^goto(?:/16|/32)?\\s+:([A-Za-z_$][\\w$]*)$")
+CFG_LABEL = re.compile(r"^:([A-Za-z_$][\w$]*)$")
+CFG_IF = re.compile(r"^if-(?:eqz|nez)\s+([vp]\d+),\s*:([A-Za-z_$][\w$]*)$")
+CFG_GOTO = re.compile(r"^goto(?:/16|/32)?\s+:([A-Za-z_$][\w$]*)$")
 MAX_BRANCHES = 24
 
 
@@ -258,7 +258,8 @@ def _cfg(method):
     for i, (_, op) in enumerate(body):
         label = CFG_LABEL.fullmatch(op)
         if label:
-            if label.group(1) in labels:
+            if (label.group(1) in labels or
+                    label.group(1).startswith(("try_", "catch_", "catchall"))):
                 return None
             labels[label.group(1)] = i
             continue
