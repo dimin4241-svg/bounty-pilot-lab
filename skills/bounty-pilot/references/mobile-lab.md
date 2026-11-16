@@ -508,9 +508,9 @@ exploitation of an Android application.
 
 ## Phase 13: Smali forward-only CFG joins and Kotlin operator hash locks
 
-The \`smali-crossfile\` reviewer now builds a strictly forward-only,
-acyclic control-flow graph for \`if-eqz\`, \`if-nez\`, \`goto\`,
-\`goto/16\`, \`goto/32\` and unique in-method labels. All branch targets
+The `smali-crossfile` reviewer now builds a strictly forward-only,
+acyclic control-flow graph for `if-eqz`, `if-nez`, `goto`,
+`goto/16`, `goto/32` and unique in-method labels. All branch targets
 must resolve to later instructions. At a join, a register retains origin
 only if **every reachable predecessor** carries the identical origin
 and full call/return provenance. The analysis limits method length,
@@ -518,21 +518,21 @@ branch count, call depth and total visited instruction steps.
 
 Loops/backward edges, try/catch, exception handlers, switches, monitors,
 unrecognized instructions and malformed labels remain unsupported. The
-review retains \`branch_feasibility_verified: false\`, unknown runtime
-reachability, unassessed severity and \`impact: NOT_ESTABLISHED\`.
+review retains `branch_feasibility_verified: false`, unknown runtime
+reachability, unassessed severity and `impact: NOT_ESTABLISHED`.
 
 For separately compiled Kotlin JVM classfiles, an optional **unsigned
-operator-supplied snapshot lock** compares exact current \`.kt\` source
-and \`.class\` owner SHA-256 digests against a JSON manifest. For each
+operator-supplied snapshot lock** compares exact current `.kt` source
+and `.class` owner SHA-256 digests against a JSON manifest. For each
 Kotlin-only cross-file hop, both caller/callee source and class digests
 must match. Missing or changed bytes downgrade otherwise matching
-bytecode evidence to \`JVM_SNAPSHOT_LOCK_MISMATCH_OR_MISSING\`. Invalid
+bytecode evidence to `JVM_SNAPSHOT_LOCK_MISMATCH_OR_MISSING`. Invalid
 hashes, path traversal, duplicate JSON keys and wrong schema are
 rejected.
 
 Example operator-created lock (replace placeholders with observed hashes):
 
-\`\`\`json
+```json
 {
   "schema_version": 1,
   "kind": "operator-pinned-kotlin-jvm-snapshot",
@@ -543,21 +543,21 @@ Example operator-created lock (replace placeholders with observed hashes):
     "app/Entry": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   }
 }
-\`\`\`
+```
 
-\`\`\`sh
+```sh
 python3 skills/bounty-pilot/scripts/bounty.py mobile-lab crossfile \\
   --sources /private/source --platform android \\
   --jvm-classes /private/classes \\
   --jvm-snapshot-lock /private/operator-lock.json \\
   --out /private/reports/kotlin-jvm-locked-review.json
-\`\`\`
+```
 
-A matching snapshot is \`OPERATOR_PINNED_BYTES_MATCH_UNATTESTED_BUILD\`,
+A matching snapshot is `OPERATOR_PINNED_BYTES_MATCH_UNATTESTED_BUILD`,
 **NOT a verified source-to-compiler-to-bytecode build**. The manifest
 may itself be stale or forged. The report always sets
-\`independently_signed: false\`, \`reproducible_build_verified: false\`
-and \`source_build_freshness_verified: false\`. Truly reproducible builds
+`independently_signed: false`, `reproducible_build_verified: false`
+and `source_build_freshness_verified: false`. Truly reproducible builds
 require an independently trusted version-pinned compiler, dependencies,
 isolated build inputs and byte-for-byte rebuild comparison. These remain
 unimplemented. No target app classes or Gradle scripts are executed.
