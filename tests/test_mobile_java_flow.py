@@ -505,7 +505,7 @@ class Entry {
                   "fixture/Entry.java", "run", "fixture.Entry#run()", "5",
                   "fixture/Router.java", "forward", "6",
                   "fixture.Router#forward(java.lang.String)", "RETURN_TO_CALLER"]
-        payload = "META\\t2\\t0\\t2\\t1\\t0\\t0\\nFLOW\\t" + "\\t".join(map(encode, values))
+        payload = "META\t2\t0\t2\t1\t0\t0\nFLOW\t" + "\t".join(map(encode, values))
         with self.assertRaisesRegex(ValueError, "return does not match"):
             mobile_java_flow._parse(payload, {
                 "fixture/Entry.java": "a" * 64, "fixture/Router.java": "b" * 64})
