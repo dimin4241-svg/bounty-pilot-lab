@@ -96,8 +96,6 @@ class SmaliDescriptorFlowTests(unittest.TestCase):
     def test_move_object_preserves_origin(self):
         self.rewrite("Router.smali", "new-instance v0, Landroid/webkit/WebView;",
                      "move-object v1, p0\n    new-instance v0, Landroid/webkit/WebView;")
-        self.rewrite("Router.smali", "loadUrl(Ljava/lang/String;)V",
-                     "loadUrl(Ljava/lang/String;)V") # stable placeholder for exact matching
         self.rewrite("Router.smali", "{v0, p0}", "{v0, v1}")
         self.assertEqual(self.scan()["lead_count"], 1)
 
@@ -105,6 +103,31 @@ class SmaliDescriptorFlowTests(unittest.TestCase):
         self.rewrite("Entry.smali",
                      "invoke-static {v1}, Lfixture/Router;->forward",
                      'const-string v1, "fixed"\n    invoke-static {v1}, Lfixture/Router;->forward')
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_exact_getstringextra_descriptor_uses_two_registers(self):
+        self.rewrite(
+            "Entry.smali",
+            "invoke-virtual {v0}, Landroid/content/Intent;->getDataString()Ljava/lang/String;",
+            'const-string v2, "key"\n'
+            "    invoke-virtual {v0, v2}, Landroid/content/Intent;->getStringExtra(Ljava/lang/String;)Ljava/lang/String;"
+        )
+        self.assertEqual(self.scan()["lead_count"], 1)
+
+    def test_getstringextra_missing_key_register_rejected(self):
+        self.rewrite(
+            "Entry.smali",
+            "invoke-virtual {v0}, Landroid/content/Intent;->getDataString()Ljava/lang/String;",
+            "invoke-virtual {v0}, Landroid/content/Intent;->getStringExtra(Ljava/lang/String;)Ljava/lang/String;"
+        )
+        self.assertEqual(self.scan()["lead_count"], 0)
+
+    def test_getdatastring_extra_register_rejected(self):
+        self.rewrite(
+            "Entry.smali",
+            "invoke-virtual {v0}, Landroid/content/Intent;->getDataString()Ljava/lang/String;",
+            "invoke-virtual {v0, v2}, Landroid/content/Intent;->getDataString()Ljava/lang/String;"
+        )
         self.assertEqual(self.scan()["lead_count"], 0)
 
     def test_wrong_target_descriptor_is_not_resolved(self):
