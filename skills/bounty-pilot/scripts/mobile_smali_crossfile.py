@@ -190,7 +190,11 @@ def analyze(sources, max_leads=MAX_LEADS):
             if steps >= MAX_STEPS or len(leads) >= max_leads:
                 coverage["truncated"] = True
                 return
-            if IGNORED.match(op) or op == "nop":
+            if IGNORED.match(op):
+                continue
+            if op == "nop":
+                # NOP is executable; a later move-result is not adjacent.
+                pending = None
                 continue
             if op == "return-void":
                 return
@@ -228,7 +232,9 @@ def analyze(sources, max_leads=MAX_LEADS):
                 pending = ("INTENT", None)
                 continue
             if kind == "virtual" and (callee_class, name, params, ret) in SOURCE_METHODS:
-                if len(args) in (1, 2) and registers.get(args[0], (None,))[0] == "INTENT":
+                required = 1 + (1 if params == "Ljava/lang/String;" else 0)
+                if (len(args) == required
+                        and registers.get(args[0], (None,))[0] == "INTENT"):
                     pending = ("INPUT", (owner["file"], line, owner["sha256"],
                                          "ANDROID_INTENT_DESCRIPTOR_SOURCE_CUE"))
                 continue
