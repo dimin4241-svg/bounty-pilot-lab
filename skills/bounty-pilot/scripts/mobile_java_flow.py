@@ -2,7 +2,8 @@
 """Bounded Java AST flow review; neither runtime verification nor an exploit.
 
 A trusted JDK helper analyzes ordered locals, pure return summaries,
-private current-object fields, and narrow assignment-only joins.
+private current-object fields, bounded fresh-object setter/getter capsules,
+and narrow assignment-only joins.
 Calls require fixed dispatch. Intent sources and sinks remain syntax/name
 cues, not authenticated Android framework objects. No target classes execute.
 """
@@ -15,7 +16,7 @@ import mobile_java_compiler
 import mobile_lab
 
 HELPER = Path(__file__).resolve().parents[1] / "java" / "MobileCompilerFlow.java"
-MAX_HOPS = 3
+MAX_HOPS = 6
 MAX_FLOWS = 120
 MAX_LINE = 10000000
 MAX_OUTPUT_BYTES = 6 * 1024 * 1024
@@ -140,7 +141,9 @@ def _parse(payload, digests):
                 "parameter binding resolved by Java compiler",
                 "pure fixed-dispatch return helpers only; return hops are explicit",
                 "private this.field accesses only within the current method",
-                "unmodeled aliases, cross-method heap, complex branches and virtual dispatch",
+                "fresh final-class getter/setter aliases have strict no-escape constraints",
+                "fresh final-class objects with direct alias and setter/getter rules only",
+                "unmodeled escaped objects, cross-method heap, complex branches and virtual dispatch",
             ],
         }
         identity = (source_file, result["source"]["line"], sink_file,
@@ -199,7 +202,7 @@ def analyze(sources):
         "schema_version": 1,
         "engine": "mobile-java-compiler-flow",
         "platform": "android",
-        "mode": "JDK_AST_FIXED_DISPATCH_ARGUMENT_PURE_RETURN_AND_PRIVATE_FIELD_FLOW",
+        "mode": "JDK_AST_FIXED_DISPATCH_RETURN_PRIVATE_FIELD_AND_FRESH_OBJECT_ALIAS_FLOW",
         "assurance": "STATIC_ARGUMENT_FLOW_CANDIDATES_ONLY_NO_RUNTIME_VERIFICATION",
         "coverage": {
             **coverage,
@@ -220,7 +223,8 @@ def analyze(sources):
             "ordered local Java variables, private this.fields and conditional joins only",
             "only statically dispatched intra/inter-file Java method calls (three hops maximum)",
             "complex conditions, branch bodies, loops and try/catch clear taint rather than speculate",
-            "pure direct returns only; no cross-method fields, aliases or full provenance",
+            "pure direct returns plus no-escape final-class setter/getter summaries only",
+            "no general cross-method heap, escaped object or dynamic alias provenance",
             "Android Intent source and sink names are syntax cues, not verified APIs",
             "not Kotlin, Swift, native code, Smali or runtime callback dispatch",
             "no proof of authorization, user control, exploitability or harm",
