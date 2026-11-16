@@ -4,8 +4,9 @@
  * loading application classpath or invoking annotation processors.
  *
  * This is intentionally NOT a complete taint or control-flow analysis.
- * It handles ordered local assignments, statically dispatched Java method
- * symbols and assignment-only conditional joins. Complex branches still
+ * It handles ordered local assignments, fixed-dispatch Java method calls,
+ * strictly pure local return summaries, private this.field slots, and narrow
+ * assignment-only conditional joins. Unknown branches, aliases and side effects
  * invalidate state rather than create imaginary flows.
  */
 import com.sun.source.tree.*;
@@ -31,8 +32,18 @@ public final class MobileCompilerFlow {
         final String file;
         final long line;
         final String kind;
+        final List<Hop> route;
         Origin(String file, long line, String kind) {
+            this(file, line, kind, List.of());
+        }
+        Origin(String file, long line, String kind, List<Hop> route) {
             this.file = file; this.line = line; this.kind = kind;
+            this.route = List.copyOf(route);
+        }
+        Origin through(Hop hop) {
+            List<Hop> next = new ArrayList<>(route);
+            next.add(hop);
+            return new Origin(file, line, kind, next);
         }
     }
 
@@ -159,9 +170,12 @@ public final class MobileCompilerFlow {
                 return at > 0 ? new Origin(method.file, at,
                     "ANDROID_INTENT_SOURCE_SYNTAX_CUE") : null;
             }
-            if (expr instanceof IdentifierTree) {
+            if (expr instanceof IdentifierTree || expr instanceof MemberSelectTree) {
                 Element symbol = trees.getElement(path);
-                return taint.get(symbol);
+                if (localSymbol(symbol) || fieldOnThis(path, expr)) {
+                    return taint.get(symbol);
+                }
+                return null;
             }
             if (expr instanceof ParenthesizedTree) {
                 ExpressionTree inner = ((ParenthesizedTree) expr).getExpression();
@@ -176,7 +190,9 @@ public final class MobileCompilerFlow {
 
         void write(Origin origin, Method method, MethodInvocationTree call,
                    String sink, List<Hop> hops) {
-            if (hops.isEmpty() || results.size() >= MAX_FLOWS) {
+            List<Hop> route = origin.route.isEmpty() ? hops : origin.route;
+            if (route.isEmpty() || route.size() > MAX_HOPS
+                    || results.size() >= MAX_FLOWS) {
                 if (results.size() >= MAX_FLOWS) truncated = true;
                 return;
             }
@@ -186,8 +202,8 @@ public final class MobileCompilerFlow {
             Collections.addAll(fields,
                 origin.file, Long.toString(origin.line), origin.kind,
                 method.file, Long.toString(sinkLine), method.name,
-                method.signature, sink, Integer.toString(hops.size()));
-            for (Hop hop : hops) {
+                method.signature, sink, Integer.toString(route.size()));
+            for (Hop hop : route) {
                 Collections.addAll(fields, hop.caller.file, hop.caller.name,
                     hop.caller.signature, Long.toString(hop.line),
                     hop.callee.file, hop.callee.name,
@@ -200,49 +216,200 @@ public final class MobileCompilerFlow {
             if (recorded.add(record)) results.add(record);
         }
 
+        // Private fields are tracked only on the current 'this' object.
+        // No receiver aliases, static fields, arrays or field-to-field aliases.
+        boolean fieldOnThis(TreePath path, ExpressionTree expr) {
+            Element symbol = trees.getElement(path);
+            if (symbol == null || symbol.getKind() != ElementKind.FIELD ||
+                    !symbol.getModifiers().contains(Modifier.PRIVATE) ||
+                    symbol.getModifiers().contains(Modifier.STATIC)) return false;
+            if (expr instanceof IdentifierTree) return true;
+            if (!(expr instanceof MemberSelectTree)) return false;
+            ExpressionTree receiver = ((MemberSelectTree) expr).getExpression();
+            return receiver instanceof IdentifierTree &&
+                ((IdentifierTree) receiver).getName().contentEquals("this");
+        }
+
+        void clearFields(Map<Element, Origin> taint) {
+            taint.keySet().removeIf(symbol -> symbol != null &&
+                symbol.getKind() == ElementKind.FIELD);
+        }
+
+        boolean returnArgumentSimple(ExpressionTree expr) {
+            if (simpleValue(expr) || isSource(expr)) return true;
+            if (expr instanceof TypeCastTree) {
+                return returnArgumentSimple(((TypeCastTree) expr).getExpression());
+            }
+            return false;
+        }
+
+        // Summarize ONLY an ordinary Java helper whose complete body consists
+        // of direct local declarations/assignments and one final return.
+        // Unknown calls, field reads/writes, branches and exceptions reject it.
+        Origin resolveReturn(Method caller, MethodInvocationTree call, TreePath path,
+                             Map<Element, Origin> callerState, Set<String> active,
+                             int depth) {
+            if (depth >= MAX_HOPS || attemptedCalls++ >= MAX_VISITS) {
+                truncated = true;
+                return null;
+            }
+            Element target = trees.getElement(new TreePath(path, call.getMethodSelect()));
+            if (!(target instanceof ExecutableElement) ||
+                    !fixedDispatch(call, (ExecutableElement) target)) return null;
+            Method callee = methods.get(target);
+            if (callee == null || callee.tree.getBody() == null ||
+                    callee.params.size() != call.getArguments().size()) return null;
+            String key = callee.signature + "@" + callee.file;
+            if (active.contains(key)) return null;
+            List<Origin> values = new ArrayList<>();
+            boolean anything = false;
+            for (ExpressionTree arg : call.getArguments()) {
+                if (!returnArgumentSimple(arg)) return null;
+                Origin origin = expression(caller, arg, new TreePath(path, arg), callerState);
+                values.add(origin);
+                if (origin != null) anything = true;
+            }
+            if (!anything) return null;
+
+            Hop hop = new Hop(caller, callee, line(caller, call));
+            Map<Element, Origin> locals = new HashMap<>();
+            for (int i = 0; i < values.size(); i++) {
+                Origin origin = values.get(i);
+                if (origin != null) {
+                    if (origin.route.size() >= MAX_HOPS) return null;
+                    locals.put(callee.params.get(i), origin.through(hop));
+                }
+            }
+            Set<String> nextActive = new HashSet<>(active);
+            nextActive.add(key);
+            BlockTree body = callee.tree.getBody();
+            TreePath bodyPath = new TreePath(callee.path, body);
+            List<? extends StatementTree> statements = body.getStatements();
+            for (int i = 0; i < statements.size(); i++) {
+                StatementTree statement = statements.get(i);
+                if (++visits >= MAX_VISITS) {
+                    truncated = true;
+                    return null;
+                }
+                TreePath statementPath = new TreePath(bodyPath, statement);
+                if (statement instanceof EmptyStatementTree) continue;
+                if (statement instanceof ReturnTree && i == statements.size() - 1) {
+                    ExpressionTree result = ((ReturnTree) statement).getExpression();
+                    if (result == null || !returnArgumentSimple(result)) return null;
+                    return expression(callee, result,
+                        new TreePath(statementPath, result), locals);
+                }
+                if (statement instanceof VariableTree) {
+                    VariableTree declaration = (VariableTree) statement;
+                    Element symbol = trees.getElement(statementPath);
+                    if (!localSymbol(symbol)) return null;
+                    ExpressionTree init = declaration.getInitializer();
+                    if (init != null && !simpleValue(init)) return null;
+                    Origin value = init == null ? null : expression(callee, init,
+                        new TreePath(statementPath, init), locals);
+                    if (value == null) locals.remove(symbol);
+                    else locals.put(symbol, value);
+                    continue;
+                }
+                if (statement instanceof ExpressionStatementTree) {
+                    ExpressionTree expr = ((ExpressionStatementTree) statement).getExpression();
+                    if (!(expr instanceof AssignmentTree)) return null;
+                    TreePath expressionPath = new TreePath(statementPath, expr);
+                    AssignmentTree assignment = (AssignmentTree) expr;
+                    ExpressionTree variable = assignment.getVariable();
+                    ExpressionTree rhs = assignment.getExpression();
+                    if (!(variable instanceof IdentifierTree) || !simpleValue(rhs)) return null;
+                    Element symbol = trees.getElement(new TreePath(expressionPath, variable));
+                    if (!localSymbol(symbol)) return null;
+                    Origin value = expression(callee, rhs,
+                        new TreePath(expressionPath, rhs), locals);
+                    if (value == null) locals.remove(symbol);
+                    else locals.put(symbol, value);
+                    continue;
+                }
+                return null;
+            }
+            return null;
+        }
+
+        // A value produced by a known, pure return helper can be used in a
+        // local assignment or directly as a call argument. No other nested
+        // calls are assumed to preserve taint.
+        Origin value(Method method, ExpressionTree expr, TreePath path,
+                     Map<Element, Origin> taint, Set<String> active, int depth) {
+            if (expr == null) return null;
+            Origin direct = expression(method, expr, path, taint);
+            if (direct != null) return direct;
+            if (expr instanceof MethodInvocationTree) {
+                return resolveReturn(method, (MethodInvocationTree) expr, path,
+                    taint, active, depth);
+            }
+            if (expr instanceof ParenthesizedTree) {
+                ExpressionTree inner = ((ParenthesizedTree) expr).getExpression();
+                return value(method, inner, new TreePath(path, inner),
+                    taint, active, depth);
+            }
+            if (expr instanceof TypeCastTree) {
+                ExpressionTree inner = ((TypeCastTree) expr).getExpression();
+                return value(method, inner, new TreePath(path, inner),
+                    taint, active, depth);
+            }
+            return null;
+        }
+
         void invoke(Method method, MethodInvocationTree call, TreePath path,
                     Map<Element, Origin> taint, List<Hop> hops,
                     Set<String> active, int depth) {
-            String name = methodName(call);
-            List<? extends ExpressionTree> args = call.getArguments();
-            List<Origin> passed = new ArrayList<>();
-            for (ExpressionTree arg : args) {
-                passed.add(expression(method, arg, new TreePath(path, arg), taint));
-            }
-            boolean anything = false;
-            for (Origin origin : passed) {
-                if (origin != null) anything = true;
-            }
-            if (!anything) return;
-            if (SINK_CUES.contains(name)) {
+            try {
+                String name = methodName(call);
+                List<? extends ExpressionTree> args = call.getArguments();
+                List<Origin> passed = new ArrayList<>();
+                for (ExpressionTree arg : args) {
+                    passed.add(value(method, arg, new TreePath(path, arg),
+                        taint, active, depth));
+                }
+                boolean anything = false;
                 for (Origin origin : passed) {
-                    if (origin != null) {
-                        write(origin, method, call, name, hops);
-                        break;
+                    if (origin != null) anything = true;
+                }
+                if (!anything) return;
+                if (SINK_CUES.contains(name)) {
+                    for (Origin origin : passed) {
+                        if (origin != null) {
+                            write(origin, method, call, name, hops);
+                            break;
+                        }
                     }
                 }
-            }
-            if (depth >= MAX_HOPS || attemptedCalls++ >= MAX_VISITS) {
-                truncated = true;
-                return;
-            }
-            Element target = trees.getElement(new TreePath(path, call.getMethodSelect()));
-            if (!(target instanceof ExecutableElement)) return;
-            Method callee = methods.get(target);
-            if (callee == null || callee.params.size() != passed.size()
-                || !fixedDispatch(call, (ExecutableElement) target)) return;
-            String key = callee.signature + "@" + callee.file;
-            if (active.contains(key)) return;
-            Map<Element, Origin> inherited = new HashMap<>();
-            for (int i = 0; i < passed.size(); i++) {
-                if (passed.get(i) != null && callee.params.get(i) != null) {
-                    inherited.put(callee.params.get(i), passed.get(i));
+                if (depth >= MAX_HOPS || attemptedCalls++ >= MAX_VISITS) {
+                    truncated = true;
+                    return;
                 }
+                Element target = trees.getElement(new TreePath(path, call.getMethodSelect()));
+                if (!(target instanceof ExecutableElement)) return;
+                Method callee = methods.get(target);
+                if (callee == null || callee.params.size() != passed.size()
+                    || !fixedDispatch(call, (ExecutableElement) target)) return;
+                String key = callee.signature + "@" + callee.file;
+                if (active.contains(key)) return;
+                Map<Element, Origin> inherited = new HashMap<>();
+                List<Hop> next = new ArrayList<>(hops);
+                Hop hop = new Hop(method, callee, line(method, call));
+                next.add(hop);
+                for (int i = 0; i < passed.size(); i++) {
+                    Origin origin = passed.get(i);
+                    if (origin != null && callee.params.get(i) != null
+                            && origin.route.size() < MAX_HOPS) {
+                        inherited.put(callee.params.get(i), origin.through(hop));
+                    }
+                }
+                if (inherited.isEmpty()) return;
+                process(callee, inherited, next, active, depth + 1);
+            } finally {
+                // An unmodeled invoked method may mutate this.privateField.
+                // Drop field provenance after evaluating call arguments.
+                clearFields(taint);
             }
-            if (inherited.isEmpty()) return;
-            List<Hop> next = new ArrayList<>(hops);
-            next.add(new Hop(method, callee, line(method, call)));
-            process(callee, inherited, next, active, depth + 1);
         }
 
 
@@ -373,9 +540,9 @@ public final class MobileCompilerFlow {
                     VariableTree variable = (VariableTree) statement;
                     Element symbol = trees.getElement(statementPath);
                     ExpressionTree init = variable.getInitializer();
-                    Origin value = init == null ? null : expression(
-                        method, init, new TreePath(statementPath, init), taint);
-                    if (symbol != null) {
+                    Origin value = init == null ? null : value(
+                        method, init, new TreePath(statementPath, init), taint, active, depth);
+                    if (localSymbol(symbol)) {
                         if (value != null) taint.put(symbol, value);
                         else taint.remove(symbol);
                     }
@@ -392,9 +559,10 @@ public final class MobileCompilerFlow {
                         ExpressionTree variable = assignment.getVariable();
                         ExpressionTree rhs = assignment.getExpression();
                         Element symbol = trees.getElement(new TreePath(exprPath, variable));
-                        Origin source = expression(method, rhs,
-                            new TreePath(exprPath, rhs), taint);
-                        if (symbol != null) {
+                        Origin source = value(method, rhs,
+                            new TreePath(exprPath, rhs), taint, active, depth);
+                        if (symbol != null && (localSymbol(symbol) ||
+                                fieldOnThis(new TreePath(exprPath, variable), variable))) {
                             if (source != null) taint.put(symbol, source);
                             else taint.remove(symbol);
                         }
