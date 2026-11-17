@@ -12009,6 +12009,9 @@ def build_parser():
 
 # Standalone helpers reachable as `bounty.py <command> ...`: each owns its argument parser.
 HELPER_COMMANDS = {
+    'native-poc': ('native_poc_pipeline', 'generate paired source-pinned Foundry candidate/control tests without executing target code'),
+    'business-intent': ('business_intent_contract', 'extract and verify source-anchored expected protocol behavior from pinned local docs'),
+    'novelty-mechanism': ('novelty_mechanism_gate', 'offline root-cause duplicate risk grouping across reviewed local known findings'),
     'sequence-invariants': ('sequence_invariant_lab', 'offline source cues, cross-actor sequences, native evidence preflight and Cantina calibration'),
     'research-run': ('research_run_hub', 'one-command offline private multi-engine reviewer with scope snapshot'),
     'mobile-decompile': ('mobile_decompile', 'opt-in offline local JADX/Apktool APK extraction with provenance'),

@@ -129,7 +129,7 @@ for available native tools read `references/web-native-phase4.md`.
 
 ### C. Advanced cross-component/Web3 differential investigation
 
-Choose references by hypothesis (cross-operation: `references/sequence-invariant-lab.md`; manual native proof required), not tool count:
+Choose references by hypothesis (cross-operation: `references/sequence-invariant-lab.md`; native proof, intent and dedup: `references/proof-intent-novelty-pipeline.md`), not tool count:
 - AVRE, native execution and failure triage:
   `references/lab-050-research-loop.md`,
   `references/lab-055-productivity.md`,
@@ -144,7 +144,6 @@ Choose references by hypothesis (cross-operation: `references/sequence-invariant
 - Agent bundles and independent reviewer roles:
   `references/agent-dispatch.md`,
   `references/full-workflow-legacy.md` (Stage 3–6).
-
 ### Mixed-stack ecosystem attack chains
 
 For multi-repository, relayer, bridge, frontend/backend or cloud-to-contract
