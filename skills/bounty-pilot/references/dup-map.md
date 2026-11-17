@@ -226,6 +226,17 @@ over a collision fails the gate.
 A join against a map that does not validate is never written, so a broken map cannot be certified
 by running the command.
 
+### Re-fetch every source repository before the novelty verdict
+
+Re-fetch immediately before the verdict, and again before the report is written. A vendor actively
+patching the class you found can close it under you in days: on one engagement the fix landed in two
+plugins on days 1-2 and in the remaining ten on day 4, while the run was in progress, and the
+finding went from "duplicate risk" to "the defect no longer exists in any current version". Read
+code and metadata **from the same ref** - `git grep <pattern> origin/HEAD -- <paths>`, never the
+working tree with dates taken from a fresh remote. A clone made mid-campaign plus up-to-date commit
+dates is two instruments, each internally consistent, and their disagreement is invisible: it
+inverted a dedup verdict once already.
+
 ## The limit of this map
 
 No public search proves there is no private duplicate. Another hunter may have filed yours an hour

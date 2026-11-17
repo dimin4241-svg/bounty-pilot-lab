@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.60.2 - four lessons carried out of the installed copy
+
+- `references/intake.md`: the exploitation path must clear the exclusion list,
+  not only the finding class. A predictable identifier whose only use is to be
+  enumerated against an unauthenticated endpoint dies on a brute-force
+  exclusion even though the defect is real, so the step that makes a candidate
+  exploitable is checked against the Stage 0 exclusions, not just its class.
+- `references/web-proof-gates.md`: never impersonate the client to pass a gate.
+  Forging a client `User-Agent`, an app identifier or a signature header is
+  bypass rather than measurement; a gate only the genuine client can pass is
+  recorded as reached-and-closed with the missing capability named.
+- `references/dup-map.md`: re-fetch every source repository before the novelty
+  verdict and again before the report. A vendor patching the class mid-run
+  turned a duplicate risk into a defect that no longer existed anywhere; code
+  and metadata are read from the same ref, because a mid-campaign clone plus
+  fresh remote dates are two instruments whose disagreement is invisible.
+- `references/blind-spots.md` gains section 24, a negative that no control
+  could tell from "ignored". A refused probe proves nothing until a well-formed
+  impossible value built with the real generator separates "no such record"
+  from "malformed input", and a different internal value in the same position
+  proves the parameter is consumed at all. A uniform error across every
+  variation is a wall, not a finding, and request formats are resolved from the
+  client artifact rather than guessed.
+- These four were written into the installed copy at
+  `~/.claude/skills/bounty-pilot-lab` and existed on no branch. Landing them
+  here is the rule in AGENTS.md: a lesson that is not committed is lost.
+
+
 ## 0.60.1 — pinned offline proof gates for argument binding and specifications
 
 - New `web-evidence-gates argument-binding` checks exact pinned Java/Smali

@@ -847,6 +847,41 @@ List every function that creates supply or releases escrow. For each, name the b
 if the caller's key were someone else's. "None" is a design fact worth a sentence in `coverage.md`,
 and on a program that lists the role holder as lower-trust it is a lead.
 
+## 24. A negative that no control could tell from "ignored"
+
+A probe that comes back refused proves nothing until something proves the mechanism was listening.
+Two control shapes decide whether a negative is a result or an artifact, and both are cheap.
+
+**The negative control must be well formed, not merely wrong.** Probing an identifier lookup with a
+value the generator cannot produce — letters outside the alphabet, the wrong length — conflates
+"no such record" with "malformed input". Build the impossible value *with the real generator*: for
+a timestamp-derived identifier, run it on a second that has not happened yet (`md5(4102444800)`),
+and the value is syntactically indistinguishable from a live one while provably belonging to
+nobody. If that returns the same error as the malformed one, the error really does mean absence,
+and only then does a differing response on another value become an oracle.
+
+**The positive control must fire, or the refusal is unreadable.** Sending a foreign host into a
+redirect parameter and landing back on an internal page looks like validation — and looks exactly
+the same when the parameter is ignored entirely. Send a *different internal* value in the same
+position: if the flow follows it, the mechanism is live and the foreign refusal is a real check; if
+it does not, the parameter was never consumed and the whole probe measured nothing. One extra
+request separates "validated" from "dead parameter", and without it a negative is not reportable in
+either direction.
+
+**A uniform error across every variation is a wall, not a finding.** When an endpoint answers the
+same way to a valid credential and to garbage, to a real identifier and to an impossible one, to
+present and absent optional headers, the response is being produced before anything you control is
+examined. Record the sweep and stop: the uniformity is the measurement. Keep one route control in
+the sweep (a sibling path that does not exist) — if it answers differently, you are reaching the
+handler; if it answers the same, you never were.
+
+**Resolve request formats from the artifact.** The shape a gate expects is in the client, not in
+your intuition: an interceptor class whose constant pool carries `okhttp3/Credentials` next to the
+header name settles `Basic` versus `Bearer` in one read, after guessing had already spent two
+requests on the wrong scheme. The same applies to enum wire values (`Single`, not `SINGLE`) and to
+required companion fields — the server names the next missing parameter itself, so walk its
+complaints rather than inventing a body.
+
 ## Recording a clean result
 
 For each item above, write the surface, the method, and the readings — not "checked". A closed
