@@ -174,6 +174,33 @@ observed broken model state, not proven source-level cause.
 receipts and negative controls; never claims deployed exploitability
 or patch safety.
 
+### C2. Proof, protocol intent, and root-cause novelty (offline)
+
+For a strong multi-operation hypothesis, read
+`references/proof-intent-novelty-pipeline.md` alongside
+`references/sequence-invariant-lab.md`. Use the existing experimental and
+submission gates; these are additive helpers, not substitutes.
+
+- `bounty.py business-intent extract` identifies possible requirements in
+  source-pinned local documentation. Verify file SHA/source line and have an
+  operator approve actual semantics before treating text as a requirement.
+  Marketing language and tests do not automatically prove a guarantee.
+- `bounty.py native-poc` generates paired candidate and negative-control
+  Foundry tests from a **reviewed typed action spec** and an existing
+  researcher-owned local fixture. The enabler-omitting control is provisional;
+  choose an independent control manually for difficult cases. No code runs
+  until the existing `scenario_runner` is explicitly invoked with an
+  isolated, disposable checkout, and test success is not exploitation proof.
+- `bounty.py novelty-mechanism` compares structured root cause fields,
+  not report titles. `NO_LOCAL_MATCH_REMOTE_UNCHECKED` forbids claiming
+  novelty from absent local matches. Confirm all possible collisions with
+  original reports and official contest decisions before submitting.
+
+Never report generated source, a source-anchored specification, or a
+same-project mechanism match as an independently verified vulnerability.
+Use private redacted bundles and reviewed native receipts, including
+repeatability and controls.
+
 ### D. Measuring whether the lab actually finds bugs
 
 Use `references/benchmark-protocol.md`,
