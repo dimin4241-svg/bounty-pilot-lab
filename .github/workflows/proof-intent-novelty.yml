@@ -1,0 +1,43 @@
+name: Proof Intent Novelty (offline)
+on:
+  push:
+    paths:
+      - 'skills/bounty-pilot/scripts/native_poc_pipeline.py'
+      - 'skills/bounty-pilot/scripts/business_intent_contract.py'
+      - 'skills/bounty-pilot/scripts/novelty_mechanism_gate.py'
+      - 'tests/test_proof_intent_novelty.py'
+      - '.github/workflows/proof-intent-novelty.yml'
+  pull_request:
+    paths:
+      - 'skills/bounty-pilot/scripts/native_poc_pipeline.py'
+      - 'skills/bounty-pilot/scripts/business_intent_contract.py'
+      - 'skills/bounty-pilot/scripts/novelty_mechanism_gate.py'
+      - 'tests/test_proof_intent_novelty.py'
+      - '.github/workflows/proof-intent-novelty.yml'
+permissions:
+  contents: read
+jobs:
+  offline-unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile Python helpers
+        run: |
+          python -m py_compile \
+            skills/bounty-pilot/scripts/native_poc_pipeline.py \
+            skills/bounty-pilot/scripts/business_intent_contract.py \
+            skills/bounty-pilot/scripts/novelty_mechanism_gate.py
+      - name: Run offline regression tests
+        run: python -m unittest discover -s tests -p 'test_proof_intent_novelty.py' -v
+      - name: Verify CLI router sees commands
+        run: |
+          python skills/bounty-pilot/scripts/bounty.py native-poc --help
+          python skills/bounty-pilot/scripts/bounty.py business-intent --help
+          python skills/bounty-pilot/scripts/bounty.py novelty-mechanism --help
