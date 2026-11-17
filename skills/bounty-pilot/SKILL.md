@@ -144,7 +144,6 @@ Choose references by hypothesis (cross-operation: `references/sequence-invariant
 - Agent bundles and independent reviewer roles:
   `references/agent-dispatch.md`,
   `references/full-workflow-legacy.md` (Stage 3–6).
-
 ### Mixed-stack ecosystem attack chains
 
 For multi-repository, relayer, bridge, frontend/backend or cloud-to-contract
