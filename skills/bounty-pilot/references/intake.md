@@ -55,6 +55,16 @@ its workspace list (`blind-spots.md` §8).
   `capabilities.json` answers all three, and `--deep` is what makes the last one a recorded exit
   code rather than a claim.
 
+### The exploitation path must clear the exclusion list, not only the finding class
+
+Read the exclusions at Stage 0 and write down in `scope.md` which of your usual shapes each one
+removes. Then, when a candidate takes form, check the **step that makes it exploitable** against
+that same list. A predictable identifier whose only use is to be enumerated against an
+unauthenticated endpoint is not reportable where the program excludes brute force on unauthenticated
+resources: the defect is real and the path to impact is forbidden, so the report dies on the ladder
+rather than on the merits. A clause you quoted yourself at Stage 0 is the one you are most likely to
+walk into.
+
 ### Before claiming a rule, an audit or a program does not exist
 
 A negative claim about a *document* needs the same evidence standard as a negative claim about code,

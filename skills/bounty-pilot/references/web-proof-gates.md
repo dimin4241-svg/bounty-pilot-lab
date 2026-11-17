@@ -149,6 +149,13 @@ confirmed or submission-ready.
 - Independent native candidate and negative control, exact deployed-version
   correspondence, authorized scope, source integrity, and adversarial review
   are still required for actual severity or report readiness.
+- **Never impersonate the client to pass a gate.** Supplying a credential the
+  owner gave you is testing; forging the shape a gate checks - a client
+  `User-Agent`, an app identifier, a signature header - so that a server treats
+  you as its own client is bypass, not a measurement. Where a gate can only be
+  passed by the genuine client, record it as reached-and-closed and state what
+  would be needed (a real SDK run on a device, the owner's session) instead of
+  fabricating the token the check looks for.
 - Neither a green `--gate` nor a model confidence score establishes a flaw.
 
 Run synthetic regression tests with:
