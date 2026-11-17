@@ -129,7 +129,7 @@ for available native tools read `references/web-native-phase4.md`.
 
 ### C. Advanced cross-component/Web3 differential investigation
 
-Choose a reference by the actual hypothesis, not by tool count:
+Choose references by hypothesis (cross-operation: `references/sequence-invariant-lab.md`; manual native proof required), not tool count:
 - AVRE, native execution and failure triage:
   `references/lab-050-research-loop.md`,
   `references/lab-055-productivity.md`,
