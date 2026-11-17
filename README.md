@@ -106,6 +106,27 @@ requests, account access, real payments, verified exploits or bounty
 discovery claims are involved. See the
 [Web Business Lab guide](skills/bounty-pilot/references/web-business-lab.md).
 
+## Proof, intent and novelty pipeline — offline extension
+
+Three additive helpers now connect strong multi-step hypotheses to reviewed
+specification anchors, executable (but **not auto-executed**) native pairs,
+and conservative known-mechanism collision checks:
+
+- `bounty.py business-intent extract|verify` verifies pinned documentation and
+  source-line anchors. Operator review is mandatory before a candidate becomes
+  a claimed requirement.
+- `bounty.py native-poc` generates paired Foundry candidate/control tests
+  against an operator-provided local fixture, plus a `scenario_runner` plan.
+  Optional test installation requires a marked, clean disposable checkout
+  at exactly the requested commit. No mainnet tests or exploit broadcasts.
+- `bounty.py novelty-mechanism` compares reviewed root causes across a
+  **local** known-finding corpus rather than report titles. No local match
+  means the remote/hidden-duplicate status is **unknown**, not unique.
+
+30 isolated new tests passed locally; this is **not** evidence of better
+real-world vulnerability discovery or a native Foundry exploit run. See
+[Proof, intent and novelty pipeline](skills/bounty-pilot/references/proof-intent-novelty-pipeline.md).
+
 ## Phase 6 — independent intent-based properties and deterministic mutants
 
 `harness-gen` now supports blind source-only
