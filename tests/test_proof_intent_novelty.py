@@ -6,7 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPTS=Path(__file__).resolve().parents[1]/"scripts"
+ROOT=Path(__file__).resolve().parents[1]
+SCRIPTS=ROOT/"skills"/"bounty-pilot"/"scripts"
+if not SCRIPTS.is_dir():
+    SCRIPTS=ROOT/"scripts"
 sys.path.insert(0,str(SCRIPTS))
 import native_poc_pipeline as poc
 import business_intent_contract as intent
