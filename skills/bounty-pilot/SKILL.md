@@ -129,7 +129,7 @@ for available native tools read `references/web-native-phase4.md`.
 
 ### C. Advanced cross-component/Web3 differential investigation
 
-Choose references by hypothesis (cross-operation: `references/sequence-invariant-lab.md`; manual native proof required), not tool count:
+Choose references by hypothesis (cross-operation: `references/sequence-invariant-lab.md`; native proof, intent and dedup: `references/proof-intent-novelty-pipeline.md`), not tool count:
 - AVRE, native execution and failure triage:
   `references/lab-050-research-loop.md`,
   `references/lab-055-productivity.md`,
@@ -173,12 +173,6 @@ observed broken model state, not proven source-level cause.
 `experimenter causal-review` compares repeated local original/patch
 receipts and negative controls; never claims deployed exploitability
 or patch safety.
-
-### C2. Paired native proof and conservative novelty (offline)
-
-Read `references/proof-intent-novelty-pipeline.md` before using
-`business-intent`, `native-poc` or `novelty-mechanism`. Preserve native
-candidate/control evidence, pinned intent anchors, and remote duplicate review.
 
 ### D. Measuring whether the lab actually finds bugs
 
