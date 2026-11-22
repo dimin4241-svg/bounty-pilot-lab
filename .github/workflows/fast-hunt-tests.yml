@@ -8,6 +8,7 @@ on:
       - skills/bounty-pilot/scripts/bounty.py
       - skills/bounty-pilot/references/fast-hunt.md
       - tests/test_fast_hunt.py
+      - tests/test_web_hunt_loop.py
       - .github/workflows/fast-hunt-tests.yml
 permissions:
   contents: read
@@ -17,6 +18,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
