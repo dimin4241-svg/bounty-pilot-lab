@@ -28,6 +28,24 @@ source and trace evidence must be independently verified. See
 
 ---
 
+### Autonomous Fast Hunt — adaptive two-owned-account experiments
+
+The opt-in `bounty.py fast-hunt-agent` command runs a bounded, real HTTP
+candidate/control sequence against an operator-owned local web app, using
+separate Bearer or cookie session credentials from private environment
+variables. An optional OpenAI-compatible model (including DeepSeek via
+operator-configured Model Gate) chooses from **reviewed case IDs**, using
+sanitized response status/comparison flags. Suspected cross-account reads
+are independently repeated with anonymous and missing-object controls.
+
+A separate `approved-public` read-only mode requires current
+operator-reviewed program rules, exact-host HTTPS with pinned IP, owned test
+accounts/objects, researcher header and pre-approved paths; the model
+cannot add endpoints. These are research observations only, never
+automatically submission-ready or a claim of production exploitability.
+No real bounty targets were touched while implementing this feature.
+[Autonomous runbook](skills/bounty-pilot/references/fast-hunt-agent.md).
+
 ### Fast Hunt — bounded first pass + shared anomaly memory + read-only HTTP observations
 
 New opt-in `bounty.py fast-hunt` supports a small source-anchored review queue
