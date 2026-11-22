@@ -58,12 +58,24 @@ def _http_url(value, own=False):
 def validate(doc):
     required = {"schema_version", "environment", "ownership_attestation", "origin",
                 "actors", "cases", "limits", "decision_engine"}
-    if not isinstance(doc, dict) or set(doc) != required or doc["schema_version"] != 1:
+    if (not isinstance(doc, dict) or not required.issubset(doc) or
+            set(doc) - required - {"auth"} or doc["schema_version"] != 1):
         raise ValueError("exact autonomous research manifest schema required")
     if (doc["environment"] != "researcher_owned_loopback" or
             doc["ownership_attestation"] != "I_CONTROL_BOTH_TEST_IDENTITIES_AND_FIXTURE"):
         raise ValueError("no real-domain or unowned-actor mode")
     _http_url(doc["origin"], own=True)
+    authorization = doc.get("auth", {"mode": "bearer"})
+    if not isinstance(authorization, dict) or authorization.get("mode") not in ("bearer", "cookie"):
+        raise ValueError("supported actor auth modes are bearer or owned-fixture cookie")
+    if authorization["mode"] == "bearer":
+        if set(authorization) != {"mode"}:
+            raise ValueError("bearer auth accepts no additional options")
+    else:
+        if (set(authorization) != {"mode", "cookie_name"} or
+                not isinstance(authorization["cookie_name"], str) or
+                not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,49}", authorization["cookie_name"])):
+            raise ValueError("cookie mode requires a safe fixed cookie name")
     actors = doc["actors"]
     if not isinstance(actors, dict) or set(actors) != {"owner", "outsider"}:
         raise ValueError("two explicit owned actor token env names required")
@@ -147,6 +159,11 @@ def _actor_values(doc, env):
         result[role] = value
     if result["owner"] == result["outsider"]:
         raise ValueError("two actor tokens must be different")
+    if doc.get("auth", {}).get("mode") == "cookie":
+        for value in result.values():
+            if not re.fullmatch(r"[A-Za-z0-9._~+/=-]{12,4096}", value):
+                raise ValueError("unsafe session cookie token")
+
     return result
 
 
@@ -174,7 +191,10 @@ def _request(doc, path, role, values, *, transport=None):
     headers = {"Accept": "application/json", "Accept-Encoding": "identity",
                "User-Agent": "BountyPilot-OwnedAutonomy/1.0"}
     if role is not None:
-        headers["Authorization"] = "Bearer " + values[role]
+        if doc.get("auth", {}).get("mode") == "cookie":
+            headers["Cookie"] = doc["auth"]["cookie_name"] + "=" + values[role]
+        else:
+            headers["Authorization"] = "Bearer " + values[role]
     try:
         conn.request("GET", path, headers=headers)
         resp = conn.getresponse()
