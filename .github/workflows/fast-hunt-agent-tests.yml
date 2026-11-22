@@ -6,6 +6,7 @@ on:
       - skills/bounty-pilot/scripts/fast_hunt_agent.py
       - skills/bounty-pilot/scripts/bounty.py
       - tests/test_fast_hunt_agent.py
+      - tests/test_fast_hunt_agent_model.py
       - .github/workflows/fast-hunt-agent-tests.yml
 permissions:
   contents: read
@@ -25,7 +26,7 @@ jobs:
           set -euo pipefail
           python -m py_compile skills/bounty-pilot/scripts/fast_hunt_agent.py
           python skills/bounty-pilot/scripts/bounty.py fast-hunt-agent --help
-          python -m unittest discover -s tests -p 'test_fast_hunt_agent.py' -v
+          python -m unittest discover -s tests -p 'test_fast_hunt_agent*.py' -v
           python -m unittest discover -s tests -p 'test_fast_hunt.py' -v
           python -m unittest discover -s tests -p 'test_web_hunt_loop.py' -v
           git diff --check HEAD~1 HEAD
