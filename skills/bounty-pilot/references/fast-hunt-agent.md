@@ -14,7 +14,7 @@ scope, discover arbitrary paths, make writes, or produce a bounty report.
    environment-held test credentials, a small list of **explicit owned**
    resource paths and a hard request/model budget.
 2. For each case, read each actor's own synthetic private marker. Markers are
-   hashed immediately and never saved or sent to a model.
+   converted to HMAC-SHA256 with an ephemeral in-memory run key; raw values and the key are never saved or sent to a model.
 3. Choose the next reviewed case ID using a deterministic heuristic or the
    operator's OpenAI-compatible model. The model sees only case IDs, status
    codes and Boolean comparison flags, not raw paths, bodies, cookies or keys.
@@ -23,7 +23,7 @@ scope, discover arbitrary paths, make writes, or produce a bounty report.
 5. Also verify that an anonymous request and a missing synthetic object
    are denied; re-read the owner baseline. Only a repeatable, controlled
    candidate/control difference becomes `OWNED_FIXTURE_CROSS_ACTOR_READ_REPRODUCED`.
-6. Record status codes, SHA-256 witness hashes, counts and limitations.
+6. Record status codes, per-run HMAC-SHA256 equality witnesses, counts and limitations.
    `confirmed_production_vulnerabilities` remains **0** in every outcome.
 
 ## Minimal manifest
@@ -171,7 +171,7 @@ Only sequential GET is supported; no redirects, user-generated paths,
 dynamic fuzzing or query strings. A GET may have side effects: review each
 route before execution. Session bearer/cookie tokens remain local and are
 never passed to DeepSeek. An actual response is recorded only as status and
-private-marker SHA-256, not bodies.
+private-marker ephemeral HMAC-SHA256 equality evidence, not bodies.
 
 Even when two owned accounts reproduce a cross-account response with
 negative controls, public results are labelled
