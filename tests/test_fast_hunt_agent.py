@@ -89,6 +89,13 @@ class OwnedReplayTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             agent.execute(doc,enabled=True,environ=bad)
         self.assertEqual(self.s.count,0)
+    def test_private_marker_witness_changes_between_runs(self):
+        a=agent.execute(manifest(self.s.server_port),enabled=True,environ=TOKENS)
+        b=agent.execute(manifest(self.s.server_port),enabled=True,environ=TOKENS)
+        one=a["cases_checked"][0]["private_marker_hmac_sha256"]
+        two=b["cases_checked"][0]["private_marker_hmac_sha256"]
+        self.assertEqual(len(one),64)
+        self.assertNotEqual(one,two)
     def test_fixed_fixture_not_misreported(self):
         self.s.vulnerable=False
         x=agent.execute(manifest(self.s.server_port),enabled=True,environ=TOKENS)
