@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -58,13 +59,35 @@ def _http_url(value, own=False):
 def validate(doc):
     required = {"schema_version", "environment", "ownership_attestation", "origin",
                 "actors", "cases", "limits", "decision_engine"}
+    optional = {"auth", "pinned_ip", "program_policy", "research_header"}
     if (not isinstance(doc, dict) or not required.issubset(doc) or
-            set(doc) - required - {"auth"} or doc["schema_version"] != 1):
+            set(doc) - required - optional or type(doc["schema_version"]) is not int or
+            doc["schema_version"] != 1):
         raise ValueError("exact autonomous research manifest schema required")
-    if (doc["environment"] != "researcher_owned_loopback" or
-            doc["ownership_attestation"] != "I_CONTROL_BOTH_TEST_IDENTITIES_AND_FIXTURE"):
-        raise ValueError("no real-domain or unowned-actor mode")
-    _http_url(doc["origin"], own=True)
+    environment = doc["environment"]
+    if environment == "researcher_owned_loopback":
+        if (doc["ownership_attestation"] != "I_CONTROL_BOTH_TEST_IDENTITIES_AND_FIXTURE" or
+                any(k in doc for k in ("pinned_ip", "program_policy", "research_header"))):
+            raise ValueError("owned local fixture requires its own unambiguous attestation")
+        _http_url(doc["origin"], own=True)
+    elif environment == "approved-public":
+        if (doc["ownership_attestation"] !=
+                "I_CONTROL_BOTH_ACCOUNTS_AND_OBJECTS_ON_SCOPED_TARGET" or
+                not all(k in doc for k in
+                        ("pinned_ip", "program_policy", "research_header"))):
+            raise ValueError("public mode requires owned accounts and explicit scoped policy")
+        policy._origin(doc["origin"])
+        address = ipaddress.ip_address(doc["pinned_ip"])
+        if not isinstance(address, ipaddress.IPv4Address) or not address.is_global:
+            raise ValueError("public target must use a pinned globally-routable IPv4")
+        research = doc["research_header"]
+        if (not isinstance(research, dict) or set(research) != {"name", "value_env"} or
+                research["name"] != "X-Bug-Bounty" or
+                not isinstance(research["value_env"], str) or
+                not ENV.fullmatch(research["value_env"])):
+            raise ValueError("required research header must come from named environment value")
+    else:
+        raise ValueError("unsupported target environment")
     authorization = doc.get("auth", {"mode": "bearer"})
     if not isinstance(authorization, dict) or authorization.get("mode") not in ("bearer", "cookie"):
         raise ValueError("supported actor auth modes are bearer or owned-fixture cookie")
@@ -108,6 +131,16 @@ def validate(doc):
             raise ValueError("own, outsider and missing references must differ")
         if not isinstance(c["marker_field"], str) or not MARKER.fullmatch(c["marker_field"]):
             raise ValueError("synthetic JSON marker field required")
+    if environment == "approved-public":
+        request_plan = [{"id": "case-%d-%s" % (i, key),
+                         "url": doc["origin"] + case[key],
+                         "action": "read-only",
+                         "provided_header_names": [doc["research_header"]["name"]]}
+                        for i, case in enumerate(cases)
+                        for key in ("owner_path", "outsider_path", "missing_path")]
+        preflight = policy.evaluate(doc["program_policy"], request_plan)
+        if not all(x["allowed_by_saved_preflight"] for x in preflight["checks"]):
+            raise ValueError("public preflight denied one or more exact reviewed paths")
     limits = doc["limits"]
     if not isinstance(limits, dict) or set(limits) != {
             "max_http_requests", "max_llm_calls", "max_cases_checked",
