@@ -1,0 +1,31 @@
+name: Owned Autonomy security regression
+on:
+  push:
+    branches: [feature/fast-hunt-autonomous-owned-20261122]
+    paths:
+      - skills/bounty-pilot/scripts/fast_hunt_agent.py
+      - skills/bounty-pilot/scripts/bounty.py
+      - tests/test_fast_hunt_agent.py
+      - .github/workflows/fast-hunt-agent-tests.yml
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run owned-lab automation and existing fast hunt tests
+        run: |
+          set -euo pipefail
+          python -m py_compile skills/bounty-pilot/scripts/fast_hunt_agent.py
+          python skills/bounty-pilot/scripts/bounty.py fast-hunt-agent --help
+          python -m unittest discover -s tests -p 'test_fast_hunt_agent.py' -v
+          python -m unittest discover -s tests -p 'test_fast_hunt.py' -v
+          python -m unittest discover -s tests -p 'test_web_hunt_loop.py' -v
+          git diff --check HEAD~1 HEAD
