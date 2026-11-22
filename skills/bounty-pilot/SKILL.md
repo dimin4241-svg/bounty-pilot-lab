@@ -95,7 +95,7 @@ observation; do not submit it as a bug.
 
 ### Bounded autonomous owned-fixture verification
 
-For a real, **operator-owned loopback** web app with two independently owned
+For an **operator-owned loopback** web app with two independently owned
 test identities and resources, read `references/fast-hunt-agent.md`.
 `python3 $S fast-hunt-agent --manifest <private-plan.json> --execute-owned
 --out <new-private-output.json>` executes a short candidate/negative-control
@@ -103,7 +103,11 @@ sequence and can use an OpenAI-compatible DeepSeek/Model Gate endpoint to
 choose only among pre-reviewed case IDs. Model text never authorizes paths,
 cookies or network actions. This mode supports bearer or fixed-name session
 cookie credentials supplied through environment variables, not the prompt,
-repository or report. It stays local and is not live production exploitation.
+repository or report. A separate **approved-public** GET-only mode requires a
+fresh manually reviewed exact scope, pinned public IPv4/TLS, researcher header,
+explicit operator ownership of both identities and objects, and independent
+network confinement. The LLM cannot invent or expand live URLs. It never
+submits reports or automatically calls a live observation a confirmed bug.
 A reproduced synthetic marker is a **local observation**, not proof of
 a deployed security issue.
 
