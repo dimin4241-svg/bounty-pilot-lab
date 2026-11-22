@@ -134,7 +134,13 @@ class FastSourceTests(unittest.TestCase):
                 fh.plan(self.path, scope)
         (self.path / "src" / "link.py").symlink_to("/etc/hosts")
         subprocess.run(["git", "-C", str(self.path), "add", "src/link.py"], check=True)
+        subprocess.run(["git", "-C", str(self.path), "-c", "user.name=Test",
+                        "-c", "user.email=test@example.com", "commit", "-qm", "symlink"],
+                       check=True)
         self.assertEqual(fh.plan(self.path, "src")["tracked_source_files"], 2)
+        (self.path / "src" / "account.py").write_text("def changed(): pass\\n")
+        with self.assertRaises(ValueError):
+            fh.plan(self.path, "src")
 
     def test_private_output_and_no_overwrite(self):
         out = Path(self.tmp.name) / "queue.json"
