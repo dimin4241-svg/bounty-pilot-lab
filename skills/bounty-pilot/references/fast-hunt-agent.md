@@ -1,6 +1,6 @@
 # Autonomous Fast Hunt — adaptive two-account local proof
 
-This is a **bounded, experimental owned-lab feature**. It runs a real sequence
+This is a **bounded, experimental two-owned-account feature**. It runs a real sequence
 of HTTP requests with two operator-controlled identities, uses an optional
 OpenAI-compatible LLM (including DeepSeek via an operator-provided endpoint)
 to choose which **pre-approved case ID** to try next, and automatically
@@ -121,6 +121,66 @@ headers, cookies or arbitrary shell commands**. Total LLM calls are capped.
 call-count cap is not a provider-side spend guarantee. Use provider limits
 to enforce spend and avoid sharing any real user data with a model.
 
+## Carefully gated public two-owned-account reads
+
+Public mode is **disabled unless separately requested through an explicit
+manifest**. It is intended solely for an active program permitting targeted
+read-only testing against two operator-owned accounts and two operator-owned
+objects. It never creates accounts, performs writes or guesses object IDs.
+
+In the owned-lab manifest above, replace only these top-level fields:
+
+```json
+"environment": "approved-public",
+"ownership_attestation": "I_CONTROL_BOTH_ACCOUNTS_AND_OBJECTS_ON_SCOPED_TARGET",
+"origin": "https://api.example.test",
+"pinned_ip": "8.8.8.8",
+"research_header": {
+  "name": "X-Bug-Bounty",
+  "value_env": "BP_RESEARCH_HANDLE"
+},
+"program_policy": {
+  "schema_version": 1,
+  "platform": "other",
+  "program_id": "owned-example",
+  "status": "active",
+  "source_url": "https://api.example.test/rules",
+  "rules_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "reviewed_at": "2026-11-20T00:00:00Z",
+  "expires_at": "2026-11-30T00:00:00Z",
+  "include": [{"origin":"https://api.example.test","path_prefix":"/api/test",
+               "actions":["read-only"]}],
+  "exclude": [],
+  "required_headers": ["X-Bug-Bounty"],
+  "operator_reviewed": true
+}
+```
+
+**This is a schema illustration, not an approved target or valid program
+rules.** Replace with fresh rules you independently reviewed, the SHA-256
+digest of those actual rules, a directly permitted exact origin and paths,
+a valid *operator-confirmed* public IPv4 pin and correctly owned test data.
+The URL and `8.8.8.8` are placeholders: **never run** this example.
+Use a real `BP_RESEARCH_HANDLE` value supplied through process environment,
+not in the JSON file. Without it, execution fails closed.
+
+Every exact route is evaluated against `web-program-policy` before network
+access. The HTTP client connects to the pinned IPv4 with TLS certificate/SNI
+verification for the original host, independently of DNS/proxy configuration.
+Only sequential GET is supported; no redirects, user-generated paths,
+dynamic fuzzing or query strings. A GET may have side effects: review each
+route before execution. Session bearer/cookie tokens remain local and are
+never passed to DeepSeek. An actual response is recorded only as status and
+private-marker SHA-256, not bodies.
+
+Even when two owned accounts reproduce a cross-account response with
+negative controls, public results are labelled
+`APPROVED_PUBLIC_TWO_OWNED_ACTORS_OBSERVATION` and
+`confirmed_production_vulnerabilities=0` until an independent reviewer
+verifies authorization policy, target configuration and real harm. This runner
+is **not an operating-system egress firewall**; for public targets run it
+within independently enforced network confinement.
+
 ## Relationship to Fast Hunt and real bug bounty targets
 
 Use `fast-hunt plan` to rank pinned source cues, `fast-hunt merge` to
@@ -128,7 +188,7 @@ carry independent observations, and `fast-hunt-agent` to run the
 owned-fixture candidate/control experiment. For a public program, continue
 using the separate `fast-hunt probe` with a manually reviewed current
 scope, public pinned IP and pre-approved **unauthenticated** GET/HEAD requests.
-The two-actor autonomous runner **deliberately does not target public hosts**.
+Public two-actor mode works only with an explicit fresh scoped policy, pinned HTTPS target, two owned accounts and synthetic marker values; it does not autonomously discover new endpoints.
 
 Treat an owned synthetic reproduction as a local mechanism test, not proof
 that an external deployment is affected. Real on-site IDOR/BOLA verification
