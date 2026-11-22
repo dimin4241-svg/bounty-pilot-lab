@@ -7,6 +7,7 @@ on:
       - skills/bounty-pilot/scripts/bounty.py
       - tests/test_fast_hunt_agent.py
       - tests/test_fast_hunt_agent_model.py
+      - tests/test_fast_hunt_agent_public.py
       - .github/workflows/fast-hunt-agent-tests.yml
 permissions:
   contents: read
