@@ -137,6 +137,30 @@ authenticated multi-actor PoCs, use operator-owned fixtures and existing
 `web-effect-fixture-replay`/native candidate-control flows; any live
 authorization test needs a separately approved and enforced tool boundary.
 
+## 4. Single-command bounded cycle
+
+Run source ranking and an optional approved HTTP observation plan together.
+With no manifest, this is strictly offline. Adding a manifest does not
+enable network access unless `--execute` is also explicitly supplied.
+
+```sh
+python3 "$BP" fast-hunt run \
+  --repo /absolute/pinned-target --scope src \
+  --out /absolute/private/cycle-offline.json
+
+# Only after reviewing the exact manifest and program rules:
+python3 "$BP" fast-hunt run \
+  --repo /absolute/pinned-target --scope src \
+  --manifest /absolute/private/local-probe.json --execute \
+  --out /absolute/private/cycle-observed.json
+```
+
+The output includes both the static queue and the bounded HTTP observations,
+each labeled as unverified. It never sends source-derived endpoints to the
+network automatically; exact URL selection and authorization remain an
+operator decision. This prevents a regex lead or untrusted page from silently
+expanding the live target scope.
+
 ## Evidence tiers and next stage
 
 - `UNVERIFIED_SOURCE_READING_LEAD` — regex cue only
