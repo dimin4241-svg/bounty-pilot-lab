@@ -56,7 +56,7 @@ def _http_url(value, own=False):
     return parts
 
 
-def validate(doc):
+def validate(doc, now=None):
     required = {"schema_version", "environment", "ownership_attestation", "origin",
                 "actors", "cases", "limits", "decision_engine"}
     optional = {"auth", "pinned_ip", "program_policy", "research_header"}
@@ -141,7 +141,7 @@ def validate(doc):
                          "provided_header_names": [doc["research_header"]["name"]]}
                         for i, case in enumerate(cases)
                         for key in ("owner_path", "outsider_path", "missing_path")]
-        preflight = policy.evaluate(doc["program_policy"], request_plan)
+        preflight = policy.evaluate(doc["program_policy"], request_plan, now=now)
         if not all(x["allowed_by_saved_preflight"] for x in preflight["checks"]):
             raise ValueError("public preflight denied one or more exact reviewed paths")
     limits = doc["limits"]
@@ -304,8 +304,8 @@ def _decision(doc, choices, observations, env, chooser=None):
     return choice["case_id"], 1
 
 
-def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None):
-    validate(doc)
+def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None, now=None):
+    validate(doc, now=now)
     if not enabled:
         return {"schema_version": 1, "mode": "owned-autonomous-hunt",
                 "status": "DRY_RUN_NOT_EXECUTED", "network_requests_local": 0,
