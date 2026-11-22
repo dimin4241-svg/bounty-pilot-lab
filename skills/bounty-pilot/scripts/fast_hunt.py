@@ -202,8 +202,9 @@ def merge_anomalies(revision, observations, previous=None):
             raise ValueError("invalid anomaly ledger")
     output = {}
     for row in old + incoming:
-        if not isinstance(row, dict) or set(row) != {
-                "path", "line", "kind", "note", "evidence_sha256", "observed_by"}:
+        if not isinstance(row, dict) or set(row).difference({"id"}) != {
+                "path", "line", "kind", "note", "evidence_sha256", "observed_by"} or (
+                "id" in row and not isinstance(row["id"], str)):
             raise ValueError("anomaly requires exact path/line/kind/note/evidence/observer")
         if (not isinstance(row["path"], str) or len(row["path"]) > 280 or
                 not row["path"] or row["path"].startswith("/") or
@@ -326,14 +327,17 @@ def validate_probe(doc, now=None):
         if not isinstance(row["headers"], dict):
             raise ValueError("headers must be object")
         headers = {}
+        header_names = set()
         for name, val in row["headers"].items():
-            if name.lower() not in ("accept", "x-bug-bounty") or name in headers:
+            if (not isinstance(name, str) or name.lower() not in ("accept", "x-bug-bounty") or
+                    name.lower() in header_names):
                 raise ValueError("only Accept and X-Bug-Bounty headers allowed")
             if (not isinstance(val, str) or not val or len(val) > 128 or
                     any(ord(c) < 33 or ord(c) > 126 for c in val)):
                 raise ValueError("header must be a bounded printable value")
             if name.lower() == "x-bug-bounty" and not ID.fullmatch(val):
                 raise ValueError("X-Bug-Bounty requires simple researcher handle")
+            header_names.add(name.lower())
             headers[name] = val
         preflights.append({"id": row["id"], "url": row["url"], "action": "read-only",
                            "provided_header_names": list(headers)})
