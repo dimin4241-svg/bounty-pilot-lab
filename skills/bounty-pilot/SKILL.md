@@ -76,6 +76,23 @@ Before closing out, run `sibling-finder`: the same mistake is nearly
 always copied, and it leads a structurally near-duplicate function pair
 where only one side has an access-check cue.
 
+### Fast Hunt (optional first pass for a small, pinned source target)
+
+For a short initial queue, read `references/fast-hunt.md` and run
+`python3 $S fast-hunt plan --repo <pinned-checkout> --scope <source-prefix>
+--out <new-private-json>`. Only selected source-anchored candidates enter
+the independent review and candidate/control workflow. Use
+`fast-hunt merge` to retain weak, revision-bound observations from distinct
+lenses for a later composition review.
+
+`fast-hunt probe` can run **at most eight** exact, operator-reviewed
+GET/HEAD requests with `--execute` on an owned loopback fixture or one
+approved public HTTPS origin pinned to an operator-reviewed IPv4 address.
+Dry-run by default, no redirects, cookies, arbitrary headers or logins.
+It is not general-purpose dynamic scanning, a policy authorization
+substitute or an OS sandbox. A live response is only an unverified
+observation; do not submit it as a bug.
+
 ### B. Researcher-owned Web/API, Mobile or Standoff / BI.ZONE preparation
 
 Read `references/web-hunt-loop-phase5.md` and
@@ -121,8 +138,10 @@ For **owned loopback fixtures**:
   certify a deployed bug or produce an auto-submittable finding.
 
 For a **real** Standoff / BI.ZONE target, first confirm the current
-scope and allowed methods independently. This lab does **not**
-autonomously capture or test third-party live workflows. Do not
+scope and allowed methods independently. Only the explicit, bounded,
+read-only `fast-hunt probe --execute` supports operator-approved public
+HTTP requests; the full Web workflow **does not** autonomously capture
+or test third-party authenticated sessions. Do not
 relabel a loopback synthetic finding as a real target vulnerability.
 For static Web source analysis read `references/web-semantic-phase2.md`;
 for available native tools read `references/web-native-phase4.md`.
