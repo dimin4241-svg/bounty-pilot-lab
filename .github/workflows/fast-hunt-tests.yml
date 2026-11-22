@@ -1,0 +1,28 @@
+name: Fast Hunt bounded safety tests
+on:
+  push:
+    branches:
+      - feature/fast-hunt-bounded-probe-20261122
+    paths:
+      - skills/bounty-pilot/scripts/fast_hunt.py
+      - skills/bounty-pilot/scripts/bounty.py
+      - skills/bounty-pilot/references/fast-hunt.md
+      - tests/test_fast_hunt.py
+      - .github/workflows/fast-hunt-tests.yml
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate Fast Hunt CLI and regression tests
+        run: |
+          set -euo pipefail
+          python -m py_compile skills/bounty-pilot/scripts/fast_hunt.py
+          python skills/bounty-pilot/scripts/bounty.py fast-hunt --help
+          python -m unittest discover -s tests -p 'test_fast_hunt.py' -v
