@@ -30,4 +30,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_fast_hunt_agent*.py' -v
           python -m unittest discover -s tests -p 'test_fast_hunt.py' -v
           python -m unittest discover -s tests -p 'test_web_hunt_loop.py' -v
+          python -m unittest discover -s tests -p 'test_web_phase3.py' -v
+          python -m unittest discover -s tests -p 'test_web_business_lab.py' -v
+          python -m unittest discover -s tests -p 'test_sequence_invariant_lab.py' -v
           git diff --check HEAD~1 HEAD
