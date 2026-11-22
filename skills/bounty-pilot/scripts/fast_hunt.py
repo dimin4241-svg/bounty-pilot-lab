@@ -223,7 +223,10 @@ def merge_anomalies(revision, observations, previous=None):
             raise ValueError("observer ID required")
         digest = hashlib.sha256((revision + row["path"] + str(row["line"]) +
                                  row["kind"] + row["evidence_sha256"]).encode()).hexdigest()
-        output["AN-" + digest[:16]] = dict(row)
+        clean = {k: v for k, v in row.items() if k != "id"}
+        if "id" in row and row["id"] != "AN-" + digest[:16]:
+            raise ValueError("stored anomaly ID does not match evidence")
+        output["AN-" + digest[:16]] = clean
     if len(output) > 250:
         raise ValueError("too many shared anomalies")
     entries = [{"id": id_, **v} for id_, v in sorted(output.items())]
@@ -397,6 +400,23 @@ def probe(doc, execute=False, now=None, connector=None):
                             "no authenticated cross-account exploitation or automatic triage"]}
 
 
+def run_cycle(repo_path, scope, manifest=None, execute=False,
+              max_files=80, max_leads=24, anomalies=None, now=None):
+    """One opt-in bounded pass: static triage first, then only an approved exact request plan."""
+    source = plan(repo_path, scope, max_files, max_leads, anomalies)
+    observation = (probe(read_json(manifest), execute=execute, now=now)
+                   if manifest else None)
+    if execute and manifest is None:
+        raise ValueError("--execute requires an explicit pre-reviewed probe manifest")
+    return {"schema_version": 1, "mode": "fast-hunt-bounded-cycle",
+            "source_revision": source["revision"],
+            "source_queue": source, "http_observations": observation,
+            "network_requests": observation["network_requests"] if observation else 0,
+            "real_model_calls": 0, "confirmed_vulnerabilities": 0,
+            "ready_to_submit": False,
+            "next_step": "independent triage and native candidate/control PoC"}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -416,6 +436,15 @@ def main(argv=None):
     q.add_argument("--manifest", required=True)
     q.add_argument("--out", required=True)
     q.add_argument("--execute", action="store_true")
+    c = sub.add_parser("run", help="one bounded source-to-reviewed-HTTP cycle")
+    c.add_argument("--repo", required=True)
+    c.add_argument("--scope", required=True)
+    c.add_argument("--max-files", type=int, default=80)
+    c.add_argument("--max-leads", type=int, default=24)
+    c.add_argument("--anomalies")
+    c.add_argument("--manifest", help="explicit approved read-only HTTP plan")
+    c.add_argument("--execute", action="store_true")
+    c.add_argument("--out", required=True)
     args = ap.parse_args(argv)
     try:
         if args.command == "plan":
@@ -425,6 +454,10 @@ def main(argv=None):
         elif args.command == "merge":
             result = merge_anomalies(args.revision, args.observations, args.previous)
             write_new(args.out, result)
+        elif args.command == "run":
+            result = run_cycle(args.repo, args.scope, args.manifest, args.execute,
+                               args.max_files, args.max_leads, args.anomalies)
+            write_new(args.out, result, repo=Path(args.repo).resolve())
         else:
             result = probe(read_json(args.manifest), execute=args.execute)
             write_new(args.out, result)
