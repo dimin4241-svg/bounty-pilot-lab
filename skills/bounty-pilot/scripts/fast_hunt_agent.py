@@ -354,6 +354,7 @@ def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None):
                      v[0]["marker_sha256"] != v[1]["marker_sha256"]}
                     for key, v in baselines.items()]
     findings = []
+    public_observations = []
     attempted = []
     while remaining and len(attempted) < doc["limits"]["max_cases_checked"]:
         if doc["decision_engine"]["kind"] != "heuristic" and llm >= llm_budget:
@@ -394,18 +395,30 @@ def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None):
                 "replay_status": repeated["status"],
                 "owner_replay_status": owner_again["status"],
                 "private_marker_sha256": first["marker_sha256"],
-                "classification": ("OWNED_FIXTURE_CROSS_ACTOR_READ_REPRODUCED"
-                                   if controls_denied and repeated_equal
-                                   else "UNVERIFIED_CROSS_ACTOR_LEAD")})
+                "classification": (
+                    ("APPROVED_PUBLIC_TWO_OWNED_ACTORS_OBSERVATION" if
+                     doc["environment"] == "approved-public" else
+                     "OWNED_FIXTURE_CROSS_ACTOR_READ_REPRODUCED")
+                    if controls_denied and repeated_equal else
+                    "UNVERIFIED_CROSS_ACTOR_LEAD")})
             if controls_denied and repeated_equal:
-                findings.append({"case_id": chosen, "evidence": dict(attempt),
-                                 "impact_status": "SYNTHETIC_OWNED_FIXTURE_ONLY",
-                                 "production_equivalence": False})
+                evidence = {"case_id": chosen, "evidence": dict(attempt),
+                            "impact_status": (
+                                "UNVERIFIED_LIVE_OWNED_ACCOUNTS" if
+                                doc["environment"] == "approved-public" else
+                                "SYNTHETIC_OWNED_FIXTURE_ONLY"),
+                            "production_equivalence": False}
+                if doc["environment"] == "approved-public":
+                    public_observations.append(evidence)
+                else:
+                    findings.append(evidence)
         attempt["candidate_status"] = candidate["status"]
         attempted.append(attempt)
         observations.append({"case_id": chosen, "cross_actor_same_private_marker": bool(match),
-                             "reproduced_in_owned_fixture":
-                             attempt["classification"] == "OWNED_FIXTURE_CROSS_ACTOR_READ_REPRODUCED"})
+                             "control_sequence_matching":
+                             attempt["classification"] in (
+                                 "OWNED_FIXTURE_CROSS_ACTOR_READ_REPRODUCED",
+                                 "APPROVED_PUBLIC_TWO_OWNED_ACTORS_OBSERVATION")})
     return {"schema_version": 1, "mode": "owned-autonomous-hunt",
             "status": "CONTROLLED_OWNED_LAB_EXECUTED",
             "origin": doc["origin"],
@@ -413,8 +426,11 @@ def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None):
             "cases_checked": attempted,
             "local_reproductions": findings,
             "synthetic_reproduction_count": len(findings),
-            "network_requests_local": count,
-            "external_target_requests": 0, "llm_calls": llm,
+            "owned_public_observations": public_observations,
+            "owned_public_observation_count": len(public_observations),
+            "network_requests_local": count if doc["environment"] != "approved-public" else 0,
+            "external_target_requests": count if doc["environment"] == "approved-public" else 0,
+            "llm_calls": llm,
             "confirmed_production_vulnerabilities": 0, "ready_to_submit": False,
             "limitations": [
                 "Operator-supplied owner-only policy and fixture identities",
@@ -436,6 +452,7 @@ def main(argv=None):
         cli.error(str(exc))
     print(json.dumps({"out": args.out, "status": result["status"],
                       "network_requests_local": result["network_requests_local"],
+                      "external_target_requests": result.get("external_target_requests", 0),
                       "llm_calls": result["llm_calls"],
                       "confirmed_production_vulnerabilities": 0},
                      ensure_ascii=False))
