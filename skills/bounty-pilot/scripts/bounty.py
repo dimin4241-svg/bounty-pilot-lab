@@ -12034,6 +12034,7 @@ HELPER_COMMANDS = {
     'web-http-boundary': ('web_http_boundary', 'compare saved owned-lab HTTP parser observations'),
     'web-bench-ab': ('web_bench_ab', 'paired sealed historical Web benchmark preparation/comparison'),
     'web-workflow-capture': ('web_workflow_capture', 'privacy-preserving owned-loopback HAR workflow import'),
+    'fast-hunt': ('fast_hunt', 'fast source queue, shared cross-lens anomalies and bounded approved HTTP observations'),
     'web-hunt-loop': ('web_hunt_loop', 'scope-to-evidence bounded Web research queue and owned fixture replay'),
     'web-dispatch-prepare': ('web_dispatch_prepare', 'prepare existing independent-blind agent dispatch jobs from Web queue'),
     'web-evidence-packet': ('web_evidence_packet', 'independent reviewer assertion packet; not report-ready'),

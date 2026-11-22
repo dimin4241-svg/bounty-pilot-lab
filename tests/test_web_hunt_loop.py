@@ -8,6 +8,7 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -313,7 +314,12 @@ class EndToEndPlanTests(unittest.TestCase):
             mpath = Path(tmp) / "in.json"
             out = Path(tmp) / "out.json"
             mpath.write_text(json.dumps(m))
-            self.assertEqual(hunt.main(["--input", str(mpath), "--out", str(out)]), 0)
+            # This is a CLI/output contract test, not a wall-clock policy-expiry test.
+            # Freeze the preflight clock at the manifest's pinned scenario date.
+            actual_execute = hunt.execute
+            with mock.patch.object(hunt, "execute", side_effect=lambda doc, flag=False:
+                                   actual_execute(doc, flag, now=NOW)):
+                self.assertEqual(hunt.main(["--input", str(mpath), "--out", str(out)]), 0)
             self.assertEqual(out.stat().st_mode & 0o777, 0o600)
             data = json.loads(out.read_text())
             self.assertEqual(data["real_model_calls"], 0)
