@@ -120,6 +120,14 @@ class FastSourceTests(unittest.TestCase):
         self.assertEqual(limited["uninspected_source_files"], 1)
         self.assertLessEqual(len(limited["candidates"]), 1)
 
+    def test_one_command_cycle_is_offline_without_manifest(self):
+        cycle = fh.run_cycle(self.path, "src")
+        self.assertEqual(cycle["network_requests"], 0)
+        self.assertIsNone(cycle["http_observations"])
+        self.assertTrue(cycle["source_queue"]["candidates"])
+        with self.assertRaises(ValueError):
+            fh.run_cycle(self.path, "src", execute=True)
+
     def test_invalid_scopes_and_untracked_or_symlink_files_not_read(self):
         for scope in ("/src", "../src", ".", "src/../x", ""):
             with self.assertRaises(ValueError):
@@ -159,6 +167,12 @@ class AnomalyTests(unittest.TestCase):
             prior.write_text(json.dumps(first))
             second = fh.merge_anomalies(rev, str(p), str(prior))
             self.assertEqual(first, second)
+            forged = json.loads(json.dumps(first))
+            forged["anomalies"][0]["id"] = "AN-not-the-evidence"
+            prior.write_text(json.dumps(forged))
+            with self.assertRaises(ValueError):
+                fh.merge_anomalies(rev, str(p), str(prior))
+            prior.write_text(json.dumps(first))
             with self.assertRaises(ValueError):
                 fh.merge_anomalies("f"*40, str(p), str(prior))
             self.assertEqual(second["confirmed_vulnerabilities"], 0)
@@ -190,6 +204,24 @@ class BoundedNetworkTests(unittest.TestCase):
         self.assertEqual(result["confirmed_vulnerabilities"], 0)
         self.assertNotIn("NEVER_LOG_THIS", json.dumps(result))
         self.assertNotIn("outside.invalid", json.dumps(result))
+
+    def test_one_command_cycle_respects_owned_probe_plan(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+            (repo / "src").mkdir()
+            (repo / "src" / "app.py").write_text("def withdraw():\\n    transfer(balance)\\n")
+            subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test",
+                            "-c", "user.email=test@example.com", "commit", "-qm", "pin"],
+                           check=True)
+            manifest = Path(d) / "manifest.json"
+            manifest.write_text(json.dumps(local_manifest(self.server.server_port)))
+            cycle = fh.run_cycle(repo, "src", str(manifest), execute=True)
+            self.assertEqual(cycle["network_requests"], 3)
+            self.assertTrue(cycle["source_queue"]["candidates"])
+            self.assertEqual(cycle["confirmed_vulnerabilities"], 0)
 
     def test_refuses_other_host_methods_query_path_encoding_and_extra_headers(self):
         base = local_manifest(self.server.server_port)
