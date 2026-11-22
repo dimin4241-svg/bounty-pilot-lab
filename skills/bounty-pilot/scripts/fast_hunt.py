@@ -72,7 +72,8 @@ def write_new(path, result, repo=None):
 
 
 def git(repo, *args):
-    p = subprocess.run(["git", "-C", str(repo), *args], check=True,
+    p = subprocess.run(["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+                        "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args], check=True,
                        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return p.stdout.strip()
 
@@ -121,6 +122,8 @@ def plan(repo_path, scope, max_files=80, max_leads=24, anomalies=None):
         raise ValueError("checked-out git repository required")
     scope = _scope(scope)
     revision = git(repo, "rev-parse", "HEAD")
+    if git(repo, "status", "--porcelain", "--untracked-files=no"):
+        raise ValueError("tracked checkout must be clean; pin source before source triage")
     if not SHA40.fullmatch(revision):
         raise ValueError("40-hex pinned git revision required")
     files = _source_paths(repo, scope)
