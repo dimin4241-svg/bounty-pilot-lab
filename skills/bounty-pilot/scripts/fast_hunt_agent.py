@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
+import secrets
 import http.client
 import ipaddress
 import json
@@ -203,7 +205,7 @@ def _actor_values(doc, env):
     return result
 
 
-def _marker_digest(raw, name):
+def _marker_digest(raw, name, secret):
     try:
         obj = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
@@ -213,7 +215,7 @@ def _marker_digest(raw, name):
     value = obj[name]
     if not 1 <= len(value) <= 128:
         return None
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return hmac.new(secret, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _request(doc, path, role, values, *, transport=None, research_handle=None):
@@ -325,6 +327,7 @@ def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None, n
     llm_budget = doc["limits"]["max_llm_calls"]
     count = 0
     llm = 0
+    digest_secret = secrets.token_bytes(32)  # ephemeral; never logged or persisted
     def fetch(c, field, role):
         nonlocal count
         if count >= budget:
@@ -333,7 +336,7 @@ def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None, n
                           research_handle=research_handle)
         count += 1
         return {"status": result["status"],
-                "marker_sha256": (_marker_digest(result["body"], c["marker_field"])
+                "marker_sha256": (_marker_digest(result["body"], c["marker_field"], digest_secret)
                                   if result["status"] == 200 else None)}
     baselines = {}
     for c in doc["cases"]:
@@ -394,7 +397,7 @@ def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None, n
                 "nonexistent_object_status": missing["status"],
                 "replay_status": repeated["status"],
                 "owner_replay_status": owner_again["status"],
-                "private_marker_sha256": first["marker_sha256"],
+                "private_marker_hmac_sha256": first["marker_sha256"],
                 "classification": (
                     ("APPROVED_PUBLIC_TWO_OWNED_ACTORS_OBSERVATION" if
                      doc["environment"] == "approved-public" else
