@@ -107,6 +107,9 @@ def validate(doc):
             raise ValueError("actor token environment names must be BP_*")
     if actors["owner"] == actors["outsider"]:
         raise ValueError("actor env names must differ")
+    if (environment == "approved-public" and
+            doc["research_header"]["value_env"] in actors.values()):
+        raise ValueError("research handle must not reuse actor credentials")
     cases = doc["cases"]
     if not isinstance(cases, list) or not 1 <= len(cases) <= MAX_CASES:
         raise ValueError("1..4 pre-reviewed, operator-owned cases required")
@@ -213,16 +216,22 @@ def _marker_digest(raw, name):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _request(doc, path, role, values, *, transport=None):
+def _request(doc, path, role, values, *, transport=None, research_handle=None):
     timeout = doc["limits"]["timeout_seconds"]
     limit = doc["limits"]["max_response_bytes"]
-    port = urllib.parse.urlsplit(doc["origin"]).port
+    parsed = urllib.parse.urlsplit(doc["origin"])
     if transport:
-        conn = transport(port, timeout)
+        conn = transport(parsed.port, timeout)
+    elif doc["environment"] == "approved-public":
+        conn = fh.PinnedHTTPSConnection(parsed.hostname, doc["pinned_ip"], timeout)
     else:
-        conn = http.client.HTTPConnection("127.0.0.1", port=port, timeout=timeout)
+        conn = http.client.HTTPConnection("127.0.0.1", port=parsed.port, timeout=timeout)
     headers = {"Accept": "application/json", "Accept-Encoding": "identity",
                "User-Agent": "BountyPilot-OwnedAutonomy/1.0"}
+    if doc["environment"] == "approved-public":
+        if research_handle is None:
+            raise ValueError("public requests require a reviewed researcher handle")
+        headers["X-Bug-Bounty"] = research_handle
     if role is not None:
         if doc.get("auth", {}).get("mode") == "cookie":
             headers["Cookie"] = doc["auth"]["cookie_name"] + "=" + values[role]
@@ -303,6 +312,12 @@ def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None):
                 "llm_calls": 0, "confirmed_production_vulnerabilities": 0}
     env = os.environ if environ is None else environ
     values = _actor_values(doc, env)
+    research_handle = None
+    if doc["environment"] == "approved-public":
+        research_handle = env.get(doc["research_header"]["value_env"])
+        if (not isinstance(research_handle, str) or
+                not re.fullmatch(r"[A-Za-z0-9._:-]{1,80}", research_handle)):
+            raise ValueError("missing/invalid explicit research handle; no requests sent")
     if doc["decision_engine"]["kind"] == "openai-compatible" and not chooser:
         if not env.get(doc["decision_engine"]["api_key_env"]):
             raise ValueError("missing model key; no requests sent")
@@ -314,7 +329,8 @@ def execute(doc, *, enabled=False, environ=None, chooser=None, transport=None):
         nonlocal count
         if count >= budget:
             raise ValueError("HTTP budget exhausted before full control sequence")
-        result = _request(doc, c[field], role, values, transport=transport)
+        result = _request(doc, c[field], role, values, transport=transport,
+                          research_handle=research_handle)
         count += 1
         return {"status": result["status"],
                 "marker_sha256": (_marker_digest(result["body"], c["marker_field"])
