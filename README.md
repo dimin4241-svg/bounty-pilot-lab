@@ -28,6 +28,19 @@ source and trace evidence must be independently verified. See
 
 ---
 
+### Fast Hunt — bounded first pass + shared anomaly memory + read-only HTTP observations
+
+New opt-in `bounty.py fast-hunt` supports a small source-anchored review queue
+(`plan`), revision-bound shared observations across lenses (`merge`), and
+up to eight explicitly operator-reviewed, exact-origin GET/HEAD requests
+(`probe --execute`). Dry-run is the default. The public HTTPS option requires
+a current reviewed scope snapshot, a literal pinned public IPv4 address,
+certificate verification, and exact path/method review. No auth/cookies,
+redirects, arbitrary shell or autonomous target enumeration; network
+observations do **not** confirm vulnerabilities. This is a constrained
+execution helper, not a fully autonomous AI bounty hunter or OS firewall.
+[Runbook](skills/bounty-pilot/references/fast-hunt.md).
+
 ### Mobile Lab cross-file and synthetic native pair review
 
 The opt-in crossfile command now joins uniquely matched explicit class calls
