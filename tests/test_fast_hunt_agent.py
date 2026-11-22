@@ -28,6 +28,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.count+=1
         auth=self.headers.get("Authorization")
+        if auth is None:
+            cookie=self.headers.get("Cookie","")
+            if cookie=="pilot_session="+TOKENS["BP_TEST_OWNER_TOKEN"]:
+                auth="Bearer "+TOKENS["BP_TEST_OWNER_TOKEN"]
+            elif cookie=="pilot_session="+TOKENS["BP_TEST_OTHER_TOKEN"]:
+                auth="Bearer "+TOKENS["BP_TEST_OTHER_TOKEN"]
         if self.path=="/records/unknown": status, body=404,{"error":"missing"}
         elif self.path=="/records/b":
             status,body=(200,{"canary":"other-marker"}) if auth=="Bearer "+TOKENS["BP_TEST_OTHER_TOKEN"] else (403,{})
@@ -69,6 +75,20 @@ class OwnedReplayTests(unittest.TestCase):
         text=json.dumps(x)
         self.assertNotIn("test-owner-token",text)
         self.assertNotIn("owner-marker",text)
+    def test_owned_cookie_mode_with_two_sessions(self):
+        doc=manifest(self.s.server_port)
+        doc["auth"]={"mode":"cookie","cookie_name":"pilot_session"}
+        outcome=agent.execute(doc,enabled=True,environ=TOKENS)
+        self.assertEqual(outcome["synthetic_reproduction_count"],1)
+        self.assertNotIn(TOKENS["BP_TEST_OWNER_TOKEN"],json.dumps(outcome))
+    def test_unsafe_cookie_value_is_rejected(self):
+        doc=manifest(self.s.server_port)
+        doc["auth"]={"mode":"cookie","cookie_name":"pilot_session"}
+        bad=dict(TOKENS)
+        bad["BP_TEST_OWNER_TOKEN"]="value;extra=1"
+        with self.assertRaises(ValueError):
+            agent.execute(doc,enabled=True,environ=bad)
+        self.assertEqual(self.s.count,0)
     def test_fixed_fixture_not_misreported(self):
         self.s.vulnerable=False
         x=agent.execute(manifest(self.s.server_port),enabled=True,environ=TOKENS)
