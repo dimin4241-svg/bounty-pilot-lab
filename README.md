@@ -1,5 +1,9 @@
 <p align="center">
 
+## Paired benchmark quality scorecard
+
+Opt-in offline reporting for independently reviewed local benchmark receipts: paired solve rates, negative-control performance, failed runs, observed cost and context-token overhead. Missing usage is unknown, not zero. No model or target is executed. [Scorecard guide](skills/bounty-pilot/references/quality-scorecard.md).
+
 ## Cantina-derived inter-operation invariant lab
 
 New offline `bounty.py sequence-invariants` integrates a bounded Solidity cue
