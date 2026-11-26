@@ -51,5 +51,20 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             store(self.root, self.report)
 
+    def test_inconsistent_summary_counts(self):
+        result = store(self.root, self.report)
+        path = self.root / (result["sha256"] + ".json")
+        original = json.loads(path.read_text(encoding="utf-8"))
+        for change in ({"result_count": 1}, {"runs": True}, {"bytes": -1},
+                       {"reported_levels": {"error": 0}}, {"unexpected": "data"},
+                       {"review_status": "approved"}):
+            with self.subTest(change=change):
+                path.write_text(json.dumps(dict(original, **change)), encoding="utf-8")
+                self.assertEqual(inventory(self.root)["invalid_files"], 1)
+                with self.assertRaises(ValueError):
+                    store(self.root, self.report)
+        path.write_text(json.dumps(original), encoding="utf-8")
+        self.assertEqual(inventory(self.root)["summary_files"], 1)
+
 if __name__ == "__main__":
     unittest.main()
