@@ -118,3 +118,13 @@ python3 research_admin/sarif_summary.py "$HOME/private/report.sarif"
 ```
 
 The reader caps input at 16 MiB, refuses final-component symlinks and nonregular files, and does not follow SARIF locations, external references or URLs. Report messages, target paths and evidence are not included in the summary. Counts describe the source's reported levels, not verified findings, unique issues or assessed severity. The fingerprint identifies bytes, not an authenticated author. This is a limited SARIF inventory, not a full schema validator. Tests use synthetic documents. Compatibility with a real Shannon export has not been established. No Shannon code, model integration, automatic execution or target testing is included.
+
+To persist the inventory privately and compare it later with the original file:
+
+```sh
+umask 077
+python3 research_admin/sarif_summary.py "$HOME/private/report.sarif" --save "$HOME/private/report-summary.json"
+python3 research_admin/sarif_summary.py "$HOME/private/report.sarif" --verify "$HOME/private/report-summary.json"
+```
+
+Use an existing private directory controlled by the operator. Export creates a new mode-0600 file and refuses overwrites. Verification compares the entire saved inventory with a newly calculated one; exit 0 means match, 1 means mismatch, 2 means invalid or unreadable input/output. Neither a match nor a report hash establishes authenticity or the technical truth of the report. This does not import report content into the ledger or connect to Shannon.
