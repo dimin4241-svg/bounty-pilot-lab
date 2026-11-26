@@ -1,13 +1,8 @@
 name: Research admin unit tests
 on:
   push:
-    paths:
-      - 'research_admin/**'
-      - '.github/workflows/research-admin-tests.yml'
   pull_request:
-    paths:
-      - 'research_admin/**'
-      - '.github/workflows/research-admin-tests.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
