@@ -13,6 +13,12 @@ This is a maintenance assessment, not a security-research effectiveness claim. B
 - Restrict the self-hosted Mac regression workflow to manual dispatch on main. A workflow-level restriction does not protect against malicious changes by repository writers. Prefer disposable isolated runners; avoid running public-repository workflows on a personal computer containing sensitive files or credentials.
 - Keep the administrative module independent and keep private databases and reports outside the public repository. See [administration documentation](../research_admin/README.md).
 
+## Additional maintenance verification
+
+- [Administrative CI](https://github.com/dimin4241-svg/bounty-pilot-lab/actions/runs/45842983986) passed on Python 3.11 and 3.12 for the database consistency changes.
+- The read-only `research_admin/release_check.py` preflight compares VERSION and plugin metadata, checks the marketplace entry and screens tracked filenames for common private artifacts. It reports counts, not filenames or contents. It does not inspect file contents or Git history and cannot establish absence of secrets.
+- Run the preflight from the repository root with `python3 research_admin/release_check.py`. The administrative CI now includes it. A passing preflight is not a release approval.
+
 ## Release gates
 - [ ] Full synthetic CI and lint succeed on the exact proposed release commit.
 - [ ] Resolve the entrypoint size failure without relaxing the assertion or deleting required safeguards.
