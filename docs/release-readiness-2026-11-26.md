@@ -19,6 +19,22 @@ This is a maintenance assessment, not a security-research effectiveness claim. B
 - The read-only `research_admin/release_check.py` preflight compares VERSION and plugin metadata, checks the marketplace entry and screens tracked filenames for common private artifacts. It reports counts, not filenames or contents. It does not inspect file contents or Git history and cannot establish absence of secrets.
 - Run the preflight from the repository root with `python3 research_admin/release_check.py`. The administrative CI now includes it. A passing preflight is not a release approval.
 
+## Maintenance checkpoint
+
+At commit `9ddf0aa17a06a0fa882064d586aecb97f9b1e01e`, [administrative CI](https://github.com/dimin4241-svg/bounty-pilot-lab/actions/runs/45843394668) completed successfully. The release preflight and administrative tests are separate from the full skill suite.
+
+| Area | Verified status |
+| --- | --- |
+| Administrative Python 3.11 and 3.12 CI | Passed at the commit above |
+| Release preflight on repository changes | Enabled in maintenance branch |
+| Main synthetic suite and lint | Historical failures; no new full-suite result |
+| Skill entrypoint size | Unresolved, 236 lines vs. 200 limit |
+| Local skill installations | Not updated |
+| Main release and deployment | Not performed |
+| Discovery performance or model comparison | Not evaluated |
+
+This checkpoint is not a release tag. Do not treat the maintenance branch as a tested replacement for main. The unresolved gates below remain open.
+
 ## Release gates
 - [ ] Full synthetic CI and lint succeed on the exact proposed release commit.
 - [ ] Resolve the entrypoint size failure without relaxing the assertion or deleting required safeguards.
