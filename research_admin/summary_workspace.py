@@ -6,7 +6,7 @@ import re
 import stat
 from pathlib import Path
 
-from sarif_summary import summarize, read_local, save_summary, verify_summary
+from sarif_summary import LEVELS, MAX_BYTES, summarize, read_local, save_summary
 
 NAME = re.compile(r"^[0-9a-f]{64}\.json$")
 
@@ -33,11 +33,39 @@ def store(root, report):
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                 or stat.S_IMODE(info.st_mode) & 0o077):
             raise ValueError("Existing summary is not private and regular")
-        if not verify_summary(report, destination):
+        existing = load_summary(destination)
+        if json.dumps(existing, sort_keys=True) != json.dumps(summary, sort_keys=True):
             raise ValueError("Existing summary does not match; refusing overwrite")
         status = "already_stored"
     return {"status": status, "sha256": summary["sha256"],
             "technical_validity": "not_assessed"}
+
+def load_summary(path):
+    """Check local inventory structure; not authenticity or finding validity."""
+    raw = read_local(path)
+    if len(raw) > MAX_BYTES:
+        raise ValueError("Oversized summary")
+    record = json.loads(raw)
+    fields = {"format", "sha256", "bytes", "runs", "result_count",
+              "reported_levels", "review_status", "technical_validity", "notice"}
+    if (not isinstance(record, dict) or set(record) != fields
+            or record["sha256"] != path.stem
+            or record["format"] != "SARIF 2.1.0"
+            or record["technical_validity"] != "not_assessed"
+            or record["review_status"] != "pending_manual_review"
+            or record["notice"] != "Counts are unverified report metadata, not confirmed findings."):
+        raise ValueError("Invalid inventory metadata")
+    for key in ("bytes", "runs", "result_count"):
+        if type(record[key]) is not int or not 0 <= record[key] <= MAX_BYTES:
+            raise ValueError("Invalid inventory count")
+    levels = record["reported_levels"]
+    if (not isinstance(levels, dict) or set(levels) != set(LEVELS)
+            or any(type(v) is not int or not 0 <= v <= MAX_BYTES for v in levels.values())
+            or sum(levels.values()) != record["result_count"]
+            or (record["runs"] == 0 and record["result_count"] != 0)
+            or record["bytes"] == 0):
+        raise ValueError("Inconsistent inventory counts")
+    return record
 
 def inventory(root):
     root = workspace(root)
@@ -51,12 +79,7 @@ def inventory(root):
             invalid += 1
             continue
         try:
-            record = json.loads(read_local(path))
-            if (not isinstance(record, dict)
-                    or record.get("sha256") != path.stem
-                    or record.get("format") != "SARIF 2.1.0"
-                    or record.get("technical_validity") != "not_assessed"):
-                raise ValueError("Invalid inventory metadata")
+            load_summary(path)
         except (OSError, ValueError, RecursionError):
             invalid += 1
             continue
