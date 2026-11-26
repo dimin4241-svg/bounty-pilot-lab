@@ -34,3 +34,15 @@ python3 research_admin/workflow.py --db "$DB" dashboard "$HOME/research-status.h
 ```
 
 The HTML is a static local snapshot with no JavaScript, external requests, server, or editing controls. The output must not already exist. Keep the report private because it includes project identifiers and financial data. The previous statement that no dashboard was included applies to the original ledger alone; this second stage adds a static report.
+
+## Manual knowledge and matched quality comparison
+
+The quality module catalogs non-sensitive, manually entered process notes and review decisions, with a required source reference. It does not ingest private reports, discover targets, call models, or infer technical findings. Keep the database private and use non-secret reference identifiers.
+
+```sh
+python3 research_admin/quality.py --db "$DB" record lesson-1 process 'Review notes' 'Require manual sign-off' 'Internal review'
+python3 research_admin/quality.py --db "$DB" catalog all
+python3 research_admin/quality.py --db "$DB" compare generic v1 mock-a v2 mock-b
+```
+
+The comparison requires identical nonempty case IDs and reference labels on both sides, then computes accuracy, precision, recall, false-positive/negative counts, paired improvement/regression counts and cost deltas. Undefined ratios are null. The command consumes existing manually recorded evaluation rows; it does not generate or run benchmarks. No real-world model ranking can be inferred from the synthetic unit tests.
