@@ -62,3 +62,15 @@ python3 -m unittest discover -s research_admin -p 'test_*.py' -v
 ```
 
 The doctor is read-only and validates SQLite integrity, foreign keys and the base ledger tables. The backup uses SQLite's backup API and refuses to overwrite an existing file. Before restoring, close all writers, retain the original separately and verify the backup with doctor; the test suite verifies that a backup opens with matching administrative state. A new reservation for an archived project is rejected. The dedicated GitHub Actions workflow runs only the offline administrative unit tests under Python 3.11 and 3.12. This module is independent of the original research pipeline; CI coverage of this module is not evidence of security research effectiveness or full-project readiness.
+
+## Manual review journal
+
+The journal records observations, assumptions, questions, controls and limitations as manually entered documentation with a required source reference. Decisions are append-only review records with a named reviewer and a reason. Open and deferred entries remain visible in a read-only handoff snapshot. Reopening an entry preserves previous decisions. A complete review means no unresolved journal entries, not that a technical finding is valid or that an entire project has been examined.
+
+```sh
+python3 research_admin/journal.py --db "$DB" add demo note-1 question 'Documentation incomplete' 'Internal notes'
+python3 research_admin/journal.py --db "$DB" decide demo note-1 deferred reviewer 'Awaiting documentation'
+python3 research_admin/journal.py --db "$DB" handoff demo
+```
+
+No agent prompting, automated action selection, exploit-chain construction, network requests or test execution is performed. Do not publish private journal contents. References for the general documentation and manual-review approach: OWASP WSTG Introduction and Reporting Structure; NIST developer verification guidance.
