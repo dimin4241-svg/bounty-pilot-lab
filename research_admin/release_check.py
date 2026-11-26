@@ -30,13 +30,19 @@ def evaluate(root, paths):
     errors = []
     version = (root / "VERSION").read_text(encoding="utf-8").strip()
     plugin = json.loads((root / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))
+    if not isinstance(plugin, dict):
+        raise ValueError("Plugin metadata must be a JSON object")
     if not version or version != plugin.get("version"):
         errors.append("VERSION and plugin version differ or are empty")
     if plugin.get("name") != "bounty-pilot-lab":
         errors.append("Unexpected plugin name")
     marketplace = json.loads((root / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
-    entries = [p for p in marketplace.get("plugins", [])
-               if p.get("name") == plugin.get("name")]
+    if not isinstance(marketplace, dict):
+        raise ValueError("Marketplace metadata must be a JSON object")
+    plugins = marketplace.get("plugins")
+    if not isinstance(plugins, list) or not all(isinstance(p, dict) for p in plugins):
+        raise ValueError("Marketplace plugins must be a list of objects")
+    entries = [p for p in plugins if p.get("name") == plugin.get("name")]
     if len(entries) != 1 or entries[0].get("source") != "./":
         errors.append("Expected one matching local marketplace entry")
     flagged = private_paths(paths)
