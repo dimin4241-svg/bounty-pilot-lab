@@ -297,7 +297,7 @@ def _decision(doc, choices, observations, env, chooser=None):
                     raise ValueError("model response exceeds cap")
                 reply = json.loads(data)
                 choice = json.loads(reply["choices"][0]["message"]["content"])
-        except (urllib.error.URLError, json.JSONDecodeError, IndexError, KeyError, TypeError) as exc:
+        except (urllib.error.URLError, json.JSONDecodeError, IndexError, KeyError, TypeError):
             raise ValueError("bounded model decision failed") from None
     if not isinstance(choice, dict) or set(choice) != {"case_id"}:
         raise ValueError("model did not produce exact case selection")
