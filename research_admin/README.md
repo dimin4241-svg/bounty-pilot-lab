@@ -84,3 +84,15 @@ python3 research_admin/report_benchmark.py tasks.json references.json answers.js
 ```
 
 Exit 1 indicates a paired regression and exit 2 invalid input. The unit tests use synthetic order/receipt documents. This is a documentation-quality benchmark, not a benchmark of security vulnerability detection or proof of improved AI performance.
+
+## Manual technical review form
+
+`review_form.py` creates a blank JSON form with 15 named sections for a human reviewer, including cause, observed and expected behavior, documentation references, limitations and manual review. It is a completeness checker, not an analysis or proof engine. A documented section requires a note and reference strings; unresolved sections and missing reviewer details prevent a complete status. Core sections cannot be bypassed by marking them not applicable. Optional not-applicable sections require a justification. The tool never verifies the referenced material or determines the actual cause, impact, validity or severity. A complete document is not evidence of a verified finding.
+
+```sh
+python3 research_admin/review_form.py template "$HOME/private-review.json"
+# Edit the form manually using locally reviewed information.
+python3 research_admin/review_form.py check "$HOME/private-review.json"
+```
+
+Exit 0 means structurally complete, 1 incomplete, 2 malformed input or filesystem error. Do not publish populated forms or sensitive review materials to the public repository.
