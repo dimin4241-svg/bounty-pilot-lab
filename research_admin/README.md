@@ -117,7 +117,7 @@ Do not publish private participant responses. For an independent evaluation use 
 python3 research_admin/sarif_summary.py "$HOME/private/report.sarif"
 ```
 
-The reader caps input at 16 MiB, refuses final-component symlinks and nonregular files, and does not follow SARIF locations, external references or URLs. Report messages, target paths and evidence are not included in the summary. Counts describe the source's reported levels, not verified findings, unique issues or assessed severity. The fingerprint identifies bytes, not an authenticated author. This is a limited SARIF inventory, not a full schema validator. Tests use synthetic documents. Compatibility with a real Shannon export has not been established. No Shannon code, model integration, automatic execution or target testing is included.
+The reader caps input at 16 MiB, refuses final-component symlinks and nonregular files, and does not follow SARIF locations, external references or URLs. Report messages, target paths and evidence are not included in the summary. Counts describe the source's reported levels, not verified findings, unique issues or assessed severity. The fingerprint identifies bytes, not an authenticated author. This is a limited SARIF inventory, not a full schema validator. Unit tests use synthetic documents. A separate read-only compatibility smoke test on three public Shannon Photoview exports succeeded; see the release-readiness document for exact scope and hashes. No Shannon code, model integration, automatic execution or target testing is included.
 
 To persist the inventory privately and compare it later with the original file:
 
@@ -140,3 +140,15 @@ python3 research_admin/summary_workspace.py --workspace "$HOME/pilot-summaries" 
 ```
 
 The directory must be private (no group or other permissions). Identical report bytes map to the same SHA-256-based summary filename. Existing summaries are checked rather than overwritten. The inventory checks the complete administrative summary field set, allowed status values, byte bounds and arithmetic consistency of reported counts. It does not authenticate report authors, verify original reports, validate findings or validate the full SARIF schema. Use a trusted local directory, not a shared or adversarial filesystem. No report text, target paths, agents or test execution are imported.
+
+### Independent manual adjudication of documentation exercises
+
+Structural scoring alone cannot tell whether a free-text explanation contradicts the source. An independent human reviewer can now supply a separate JSON list of decisions (id, decision, reviewer, note). Allowed decisions: accepted, rejected, uncertain. Each decision must refer to a submitted answer.
+
+```sh
+python3 research_admin/report_benchmark.py tasks.json references.json answers.json --reviews "$HOME/private/reviews.json"
+```
+
+The output distinguishes the structural score from the manually reviewed score. Missing and uncertain reviews are not accepted; skipped tasks remain in the denominator. Exit 1 indicates incomplete manual review. Reviewer identity and independence are procedural, not authenticated by the checker. This option is for generic documentation exercises; it does not grade the validity of a security finding or automate a technical investigation.
+
+For a fair documentation comparison, use new private questions and a fixed reference set, the same input and time constraints, and a human reviewer who is unaware of the participant identity. Record both scores, missing reviews, cost and limitations. Do not use the public answer key as evidence of model performance.
