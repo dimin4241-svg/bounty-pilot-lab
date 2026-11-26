@@ -1,30 +1,6 @@
 name: Web native offline Mac research regression (manual only)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/web-native-mac.yml'
-      - 'skills/bounty-pilot/scripts/web_native_toolchain.py'
-      - 'skills/bounty-pilot/scripts/web_playwright_local.cjs'
-      - 'skills/bounty-pilot/scripts/web_benchmark_regression.py'
-      - 'skills/bounty-pilot/scripts/web_benchmark_readiness.py'
-      - 'tests/test_web_native_toolchain.py'
-      - 'skills/bounty-pilot/scripts/web_ts_flow.py'
-      - 'tests/test_web_ts_flow.py'
-      - 'skills/bounty-pilot/SKILL.md'
-      - 'skills/bounty-pilot/references/full-workflow-legacy.md'
-      - 'tests/test_web_benchmark_readiness.py'
-      - 'skills/bounty-pilot/scripts/web_workflow_capture.py'
-      - 'skills/bounty-pilot/scripts/web_hunt_loop.py'
-      - 'skills/bounty-pilot/scripts/web_dispatch_prepare.py'
-      - 'skills/bounty-pilot/scripts/web_evidence_packet.py'
-      - 'tests/test_web_hunt_loop.py'
-      - 'skills/bounty-pilot/scripts/harness_gen.py'
-      - 'skills/bounty-pilot/scripts/scenario_fuzz.py'
-      - 'skills/bounty-pilot/scripts/experimenter.py'
-      - 'tests/test_intent_mutation_phase6.py'
-      - 'skills/bounty-pilot/references/intent-mutation-phase6.md'
   workflow_dispatch:
 
 permissions:
@@ -36,6 +12,7 @@ concurrency:
 
 jobs:
   mac-native-synthetic:
+    if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, macOS]
     timeout-minutes: 20
     steps:
