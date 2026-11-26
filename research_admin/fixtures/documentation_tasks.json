@@ -1,0 +1,99 @@
+[
+  {
+    "id": "backup-01",
+    "question": "Did the scheduled backup complete successfully?",
+    "documents": {
+      "schedule": "Backup scheduled for 02:00.",
+      "log": "02:04 backup process exited with status 0; archive written.",
+      "verify": "Archive checksum verified."
+    }
+  },
+  {
+    "id": "backup-02",
+    "question": "Has restoration from the backup been demonstrated?",
+    "documents": {
+      "log": "Backup archive written successfully.",
+      "policy": "Quarterly restore drills are required."
+    }
+  },
+  {
+    "id": "backup-03",
+    "question": "Did the restoration drill meet the 30-minute target?",
+    "documents": {
+      "policy": "Target: no more than 30 minutes.",
+      "drill": "Restoration completed in 42 minutes."
+    }
+  },
+  {
+    "id": "version-01",
+    "question": "Do the two release manifests declare the same version?",
+    "documents": {
+      "manifest": "Application version 2.4.1.",
+      "package": "Package version 2.4.1."
+    }
+  },
+  {
+    "id": "version-02",
+    "question": "Does the deployment record establish that release 2.4.1 is currently running?",
+    "documents": {
+      "manifest": "Release 2.4.1 approved.",
+      "deployment": "Deployment scheduled; actual completion not recorded."
+    }
+  },
+  {
+    "id": "version-03",
+    "question": "Was the rollout completed on all ten machines?",
+    "documents": {
+      "plan": "Ten machines in rollout.",
+      "report": "Eight completed; two remain pending."
+    }
+  },
+  {
+    "id": "cost-01",
+    "question": "Does the recorded total remain within the approved budget?",
+    "documents": {
+      "budget": "Approved total: 100 units.",
+      "ledger": "Settled 40 units; outstanding commitments 20 units."
+    }
+  },
+  {
+    "id": "cost-02",
+    "question": "Is the final provider invoice reconciled against the internal ledger?",
+    "documents": {
+      "ledger": "Internal total: 60 units.",
+      "status": "Provider invoice has not arrived."
+    }
+  },
+  {
+    "id": "cost-03",
+    "question": "Is the sum of settled costs and commitments no more than 100 units?",
+    "documents": {
+      "budget": "Limit: 100 units.",
+      "ledger": "Settled 70; committed 40."
+    }
+  },
+  {
+    "id": "review-01",
+    "question": "Are both required reviewers recorded as approving the document?",
+    "documents": {
+      "policy": "Approval from A and B required.",
+      "record": "A approved on Monday. B approved on Tuesday."
+    }
+  },
+  {
+    "id": "review-02",
+    "question": "Was the reported fault caused by the configuration change?",
+    "documents": {
+      "timeline": "Configuration changed at 09:00. Fault appeared at 09:10.",
+      "record": "No diagnostic result recorded; cause remains unknown."
+    }
+  },
+  {
+    "id": "review-03",
+    "question": "Has the corrective action been independently verified?",
+    "documents": {
+      "record": "Author marked corrective action complete.",
+      "review": "Independent reviewer rejected verification; required measurement absent."
+    }
+  }
+]
