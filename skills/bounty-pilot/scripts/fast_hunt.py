@@ -8,7 +8,6 @@ and an explicit --execute flag. No credentials, cookies, redirects or writes are
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import hashlib
 import http.client
 import ipaddress
