@@ -50,5 +50,19 @@ class ReleaseCheckTests(unittest.TestCase):
         self.assertEqual(private_paths(["docs/keys.md","tests/test_db.py",
                                         "scripts/private_helpers.py"]),[])
 
+    def test_malformed_plugin_metadata(self):
+        for malformed in ([], None, "invalid"):
+            self.plugin = malformed
+            self.write_metadata()
+            with self.assertRaisesRegex(ValueError, "Plugin metadata"):
+                evaluate(self.root, [])
+
+    def test_malformed_marketplace_metadata(self):
+        for malformed in ([], None, {"plugins": None}, {"plugins": ["bad"]}):
+            self.market = malformed
+            self.write_metadata()
+            with self.assertRaisesRegex(ValueError, "Marketplace"):
+                evaluate(self.root, [])
+
 if __name__=="__main__":
     unittest.main()
