@@ -92,7 +92,7 @@ def adjudicate(tasks, references, answers, reviews):
         row["manual_decision"] = decision
         row["reviewed_pass"] = row["passed"] and decision == "accepted"
     result["reviewed_count"] = len(decisions)
-    result["review_complete"] = set(decisions) == answered and all(
+    result["review_complete"] = bool(answered) and set(decisions) == answered and all(
         d["decision"] != "uncertain" for d in decisions.values())
     result["reviewed_passed"] = sum(row["reviewed_pass"] for row in result["results"])
     result["reviewed_accuracy"] = result["reviewed_passed"] / result["cases"]
