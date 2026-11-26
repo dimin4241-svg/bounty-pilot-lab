@@ -108,3 +108,13 @@ python3 research_admin/report_benchmark.py research_admin/fixtures/documentation
 ```
 
 Do not publish private participant responses. For an independent evaluation use a new privately held dataset. No external model calls, automated target analysis or security tests are included.
+
+## Local SARIF inventory
+
+`sarif_summary.py` reads a manually supplied local SARIF 2.1.0 file from a completed authorized exercise or defensive review. It produces a JSON inventory with a SHA-256 fingerprint, file size, run count, reported result levels and a pending manual review status.
+
+```sh
+python3 research_admin/sarif_summary.py "$HOME/private/report.sarif"
+```
+
+The reader caps input at 16 MiB, refuses final-component symlinks and nonregular files, and does not follow SARIF locations, external references or URLs. Report messages, target paths and evidence are not included in the summary. Counts describe the source's reported levels, not verified findings, unique issues or assessed severity. The fingerprint identifies bytes, not an authenticated author. This is a limited SARIF inventory, not a full schema validator. Tests use synthetic documents. Compatibility with a real Shannon export has not been established. No Shannon code, model integration, automatic execution or target testing is included.
