@@ -128,3 +128,15 @@ python3 research_admin/sarif_summary.py "$HOME/private/report.sarif" --verify "$
 ```
 
 Use an existing private directory controlled by the operator. Export creates a new mode-0600 file and refuses overwrites. Verification compares the entire saved inventory with a newly calculated one; exit 0 means match, 1 means mismatch, 2 means invalid or unreadable input/output. Neither a match nor a report hash establishes authenticity or the technical truth of the report. This does not import report content into the ledger or connect to Shannon.
+
+## Private summary workspace
+
+For locally reviewed report inventories, use an owner-controlled directory outside the Git repository:
+
+```sh
+python3 research_admin/summary_workspace.py --workspace "$HOME/pilot-summaries" init
+python3 research_admin/summary_workspace.py --workspace "$HOME/pilot-summaries" store "$HOME/private/report.sarif"
+python3 research_admin/summary_workspace.py --workspace "$HOME/pilot-summaries" inventory
+```
+
+The directory must be private (no group or other permissions). Identical report bytes map to the same SHA-256-based summary filename. Existing summaries are checked rather than overwritten. The inventory reports counts of metadata files and visibly invalid records; it does not authenticate report authors, verify original reports, validate findings or provide a complete schema check. Use a trusted local directory, not a shared or adversarial filesystem. No report text, target paths, agents or test execution are imported.
