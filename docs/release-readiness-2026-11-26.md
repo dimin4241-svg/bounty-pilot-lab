@@ -47,6 +47,14 @@ Read-only smoke test of `sarif_summary.py` and `summary_workspace.py` from Pilot
 
 All three inputs passed summary creation and verification. Repeated imports reused the existing summary; final inventory contained three valid summaries and zero structurally invalid ones. Temporary test data was removed. These counts describe report records, not independently validated findings. This is compatibility evidence, not a comparative assessment of research performance. Shannon remains a separate tool.
 
+## Post-merge verification
+
+The administrative maintenance changes were merged into main in PR [#88](https://github.com/dimin4241-svg/bounty-pilot-lab/pull/88). At commit `5d378d2b6c45703ba566f7501a863e6e5fcb00dc`, [administrative CI](https://github.com/dimin4241-svg/bounty-pilot-lab/actions/runs/45849599142) passed. All 73 administrative tests also passed on a synchronized local checkout.
+
+The [full suite](https://github.com/dimin4241-svg/bounty-pilot-lab/actions/runs/45848998353) at the merge commit ran 2240 tests per Python version (3.9 and 3.12), with 2149 passing, 90 skipped, and one failing. The known entrypoint length assertion (236 versus 200 lines) remains unresolved. Lint also reported an unused exception variable in existing code. The subsequent [portable CI](https://github.com/dimin4241-svg/bounty-pilot-lab/actions/runs/45849599128) remained unsuccessful.
+
+A read-only comparison found differences between installed copies and the checkout. A package version alone does not prove identical content. The standalone administrative directory is not an installed agent skill. Preserve local changes until their provenance and suitability are understood; do not overwrite or publish unknown local files. No updated agent deployment, stable release, or model-performance claim is implied.
+
 ## Release gates
 - [ ] Full synthetic CI and lint succeed on the exact proposed release commit.
 - [ ] Resolve the entrypoint size failure without relaxing the assertion or deleting required safeguards.
