@@ -96,3 +96,15 @@ python3 research_admin/review_form.py check "$HOME/private-review.json"
 ```
 
 Exit 0 means structurally complete, 1 incomplete, 2 malformed input or filesystem error. Do not publish populated forms or sensitive review materials to the public repository.
+
+### Public documentation exercises
+
+The `fixtures/documentation_tasks.json` file contains 12 fictional documentation review questions across backup operations, version records, accounting and routine document review. The separate `fixtures/documentation_references.json` file contains four supported, four refuted and four unresolved reference labels. These are open examples, not a blind benchmark: the answer key is public. The unit tests use answers derived from that key solely to check the evaluator's behavior; they do not measure a model.
+
+For a manual classroom exercise, provide only the tasks to participants and collect answers using the documented format. Run the evaluator against those answers locally:
+
+```sh
+python3 research_admin/report_benchmark.py research_admin/fixtures/documentation_tasks.json research_admin/fixtures/documentation_references.json "$HOME/private/answers.json"
+```
+
+Do not publish private participant responses. For an independent evaluation use a new privately held dataset. No external model calls, automated target analysis or security tests are included.
