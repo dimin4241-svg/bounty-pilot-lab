@@ -5,6 +5,8 @@ This repository contains a reusable bounty-hunting workflow, not audit results.
 Keep target-specific data private: no private source, reports, wallet addresses, RPC keys, run
 directories, logs or credentials. The toolkit being public does not make any finding public.
 
+The standalone administrative utilities are documented in [research_admin/README.md](research_admin/README.md). They are manually operated and are not part of the installed skill or an automatic research pipeline. Keep private administrative data outside the repository. Consult [release readiness](docs/release-readiness-2026-11-26.md) for verified results and open release gates; passing administrative tests is not a full release validation.
+
 Preserve these invariants when editing:
 
 - **Web argument/spec gates are non-attesting preflights.** A `@Header` and
