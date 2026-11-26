@@ -12,3 +12,22 @@ known-hypotheses.md
 .solidity-auditor/
 .audit-*/
 backtests/
+
+# Local administration databases, SQLite sidecars and private review exports.
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
+*.sqlite-journal
+*.sqlite3-journal
+*.db-journal
+*.sqlite.backup
+*.sqlite3.backup
+*.db.backup
+private-review*.json
+research-status*.html
