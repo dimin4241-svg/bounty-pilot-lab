@@ -23,9 +23,36 @@ def doctor(path):
         result = check(conn)
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
-        required = {"projects","charges","artifacts","reviews","evaluations"}
-        result["missing_tables"] = sorted(required-tables)
-        result["ok"] = result["ok"] and not result["missing_tables"]
+        required = {
+            "projects": {"id","limit_micro","status"},
+            "charges": {"project","reserved","actual"},
+            "artifacts": {"project","path","digest","size"},
+            "reviews": {"project","outcome","note"},
+            "evaluations": {"suite","version","case_id","model","expected","observed","cost_micro"},
+        }
+        result["missing_tables"] = sorted(set(required)-tables)
+        result["missing_columns"] = {}
+        for table in sorted(set(required) & tables):
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(" + table + ")")}
+            missing = sorted(required[table]-columns)
+            if missing:
+                result["missing_columns"][table] = missing
+        result["budget_violations"] = None
+        if not result["missing_tables"] and not result["missing_columns"]:
+            result["budget_violations"] = [
+                {"project": row[0], "limit_micro": row[1], "committed_micro": row[2]}
+                for row in conn.execute("""
+                    SELECT p.id,p.limit_micro,
+                           COALESCE(SUM(COALESCE(c.actual,c.reserved)),0)
+                    FROM projects p LEFT JOIN charges c ON c.project=p.id
+                    GROUP BY p.id,p.limit_micro
+                    HAVING COALESCE(SUM(COALESCE(c.actual,c.reserved)),0)>p.limit_micro
+                    ORDER BY p.id
+                """)
+            ]
+        result["ok"] = bool(result["ok"] and not result["missing_tables"]
+                            and not result["missing_columns"]
+                            and result["budget_violations"] == [])
     return result
 
 def backup(source, destination):
