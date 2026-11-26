@@ -61,7 +61,7 @@ python3 research_admin/maintenance.py --db "$DB" backup "$DB.backup"
 python3 -m unittest discover -s research_admin -p 'test_*.py' -v
 ```
 
-The doctor is read-only and validates SQLite integrity, foreign keys and the base ledger tables. The backup uses SQLite's backup API and refuses to overwrite an existing file. Before restoring, close all writers, retain the original separately and verify the backup with doctor; the test suite verifies that a backup opens with matching administrative state. A new reservation for an archived project is rejected. The dedicated GitHub Actions workflow runs only the offline administrative unit tests under Python 3.11 and 3.12. This module is independent of the original research pipeline; CI coverage of this module is not evidence of security research effectiveness or full-project readiness.
+The doctor is read-only and validates SQLite integrity, foreign keys, base ledger tables, required columns and the aggregate of settled and reserved costs against each project's limit. It does not repair the database or verify provider invoices; a failed check blocks the backup command. The backup uses SQLite's backup API and refuses to overwrite an existing file. Before restoring, close all writers, retain the original separately and verify the backup with doctor; the test suite verifies that a backup opens with matching administrative state. A new reservation for an archived project is rejected. The dedicated GitHub Actions workflow runs only the offline administrative unit tests under Python 3.11 and 3.12. This module is independent of the original research pipeline; CI coverage of this module is not evidence of security research effectiveness or full-project readiness.
 
 ## Manual review journal
 
