@@ -28,6 +28,21 @@ source and trace evidence must be independently verified. See
 
 ---
 
+
+## Repository status — 26 November 2026
+
+The current package metadata is **0.60.1**. Administrative maintenance is now on main; it is not a new validated release. Use the exact Git commit when identifying a checkout. Historical release notes below describe earlier changes, not the current release.
+
+| Area | Reference |
+| --- | --- |
+| Current package version | [VERSION](VERSION) |
+| Installation and existing skill | [Quick start](#quick-start) |
+| Standalone local administration | [research_admin documentation](research_admin/README.md) |
+| Release limitations and verified results | [Release readiness](docs/release-readiness-2026-11-26.md) |
+| Change history | [CHANGELOG](CHANGELOG.md) |
+
+The administrative tools are manually operated, outside the installed skill directory, and not automatically invoked by it. They include local accounting, documentation review and aggregate SARIF inventories. Three public Shannon exports were read successfully; this does not establish discovery performance, autonomous integration, or model superiority. Full-project CI is not yet green. Keep private materials outside this public repository.
+
 ### Autonomous Fast Hunt — adaptive two-owned-account experiments
 
 The opt-in `bounty.py fast-hunt-agent` command runs a bounded, real HTTP
@@ -266,7 +281,7 @@ All results are **unverified leads or local fixture observations**; none proves
 a live vulnerability. No production scanning or secret ingestion.
 See [Web Invariant Research guide](skills/bounty-pilot/references/web-invariant-engine.md).
 
-## Current release: 0.56.1 — stricter reality-gate evidence
+## Historical release: 0.56.1 — stricter reality-gate evidence
 
 This patch tightens the offline reality gate introduced in 0.56.0:
 
@@ -399,7 +414,7 @@ again and run there by a new GitHub-hosted workflow, lab release notes moved to
 
 [Three-model runbook](skills/bounty-pilot/references/agent-dispatch.md).
 
-## Current release: 0.49.4 — Opus 5 thinking-only responses and spend accounting
+## Historical release: 0.49.4 — Opus 5 thinking-only responses and spend accounting
 
 The Charon trial now uses explicit `medium` thinking effort and a
 larger bounded `max_tokens=8192` output budget. Anthropic HTTP 200
@@ -414,7 +429,7 @@ The earlier version's `estimated_usd_spent=0.0` after
 Check Anthropic Console usage before retrying.
 [Local runbook](skills/bounty-pilot/references/opus5-charon-trial.md).
 
-## Current release: 0.49.3 — workspace-scoped Anthropic requests
+## Historical release: 0.49.3 — workspace-scoped Anthropic requests
 
 For Anthropic API keys **not bound to a workspace**, the pinned Opus 5
 local Charon trial now validates `ANTHROPIC_WORKSPACE_ID` from the process
@@ -424,7 +439,7 @@ work with no additional configuration. A rejected/malformed ID fails
 locally before contacting Anthropic, and no workspace ID or API key
 is included in saved results. [Local setup guide](skills/bounty-pilot/references/opus5-charon-trial.md).
 
-## Current release: 0.49.2 — diagnose Anthropic API 400 without leaking secrets
+## Historical release: 0.49.2 — diagnose Anthropic API 400 without leaking secrets
 
 Adds `--check-model` to the local Charon Opus 5 runner: a read-only
 provider model-availability check with no source analysis or token spend.
@@ -436,7 +451,7 @@ Anthropic API access is attempted in CI.
 
 [Updated local runbook](skills/bounty-pilot/references/opus5-charon-trial.md).
 
-## Current release: 0.49.1 — safe, pinned Claude Opus 5 local trial
+## Historical release: 0.49.1 — safe, pinned Claude Opus 5 local trial
 
 A narrowly scoped, opt-in **local** Anthropic Opus 5 audit runner for
 the public ObolNetwork/charon repository (pinned Git SHA). Three small,
@@ -454,7 +469,7 @@ tests passed; users must rotate any token ever pasted into chat and
 run the tool locally with a fresh key after reviewing the source.
 [Run guide](skills/bounty-pilot/references/opus5-charon-trial.md).
 
-## Current release: 0.49.0 — fixed-budget historical source A/B diagnostic
+## Historical release: 0.49.0 — fixed-budget historical source A/B diagnostic
 
 - A new GitHub Actions workflow executes a **real six-snapshot** public
   historical-source replay under the same 120-file/6,000-line/1MB/60s budget.
@@ -465,7 +480,7 @@ run the tool locally with a fresh key after reviewing the source.
   vulnerability rediscovery. Lexical cues never become finding claims.
   [Detailed measurement protocol and limitations](skills/bounty-pilot/references/web-ab-diagnostic.md).
 
-## Current release: 0.48.0 — repeatable native evidence + historical web benchmark
+## Historical release: 0.48.0 — repeatable native evidence + historical web benchmark
 
 - **Native capture** runs approved local candidate/control tests twice through
   the existing safe-command runner; checks pinned Git checkout and consistent
@@ -487,7 +502,7 @@ run the tool locally with a fresh key after reviewing the source.
   flags do NOT enforce network isolation; captured test output is not
   independently verified evidence of exploitability.
 
-## Current release: 0.47.0 — financial and browser integrity research
+## Historical release: 0.47.0 — financial and browser integrity research
 
 - **Web business invariants:** compare native candidate/control records for
   wrong-asset trades, signed negative fees and credits before finalized backing.
@@ -504,7 +519,7 @@ run the tool locally with a fresh key after reviewing the source.
   does not independently decode EIP-712, fetch live CDN code, execute
   target programs, confirm exploits or demonstrate improved payouts.
 
-## Current release: 0.46.0 — offline Web3 Security Research Engine
+## Historical release: 0.46.0 — offline Web3 Security Research Engine
 
 - **Scope gate:** exact-origin and explicitly permitted source-prefix validation
   using a researcher-provided offline policy; does not contact targets.
@@ -521,7 +536,7 @@ run the tool locally with a fresh key after reviewing the source.
   No live probing, generated production requests, native exploit verification,
   or measured detection uplift is claimed.
 
-## Current release: 0.45.0 — three reality differential engines
+## Historical release: 0.45.0 — three reality differential engines
 
 - **Settlement Truth:** checks exact atomic-unit changes against newly unbacked finalized liabilities in candidate/control observations.
 - **Outcome Propagation:** detects nested-operation failures recorded as finalized success, under an explicit batch success policy.
@@ -530,7 +545,7 @@ run the tool locally with a fresh key after reviewing the source.
 - Run `python3 skills/bounty-pilot/scripts/bounty.py reality-diff settlement --input /private/observations.json` (or `outcome`, `context`).
 - All source revisions, trace digests and observations are **researcher-supplied, not independently verified**. The engine executes no target code. It produces leads, not findings or evidence of improved real-world payouts. [Protocol](skills/bounty-pilot/references/reality-differential.md).
 
-## Current release: 0.44.0 — 1 November 2026
+## Historical release: 0.44.0 — 1 November 2026
 
 - **Research tools:** signing-control-plane lens (0.40), CaseForge and semantic
   differential leads (0.41), paired native research cycles, spec mapping and
