@@ -68,5 +68,31 @@ class MaintenanceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.db.reserve("demo","x","mock",invalid)
 
+    def test_doctor_rejects_overcommitted_budget(self):
+        self.db.reserve("demo","a","mock",800)
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("UPDATE projects SET limit_micro=700 WHERE id='demo'")
+        result = doctor(self.path)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["budget_violations"], [
+            {"project":"demo","limit_micro":700,"committed_micro":800}
+        ])
+        with self.assertRaises(ValueError):
+            backup(self.path,self.root/"invalid-backup.db")
+        self.assertFalse((self.root/"invalid-backup.db").exists())
+
+    def test_doctor_detects_missing_columns_without_repairing(self):
+        p = self.root/"incomplete.db"
+        with sqlite3.connect(p) as conn:
+            for name in ("projects","charges","artifacts","reviews","evaluations"):
+                conn.execute("CREATE TABLE "+name+"(id TEXT)")
+        result = doctor(p)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["missing_tables"],[])
+        self.assertIn("limit_micro",result["missing_columns"]["projects"])
+        self.assertIsNone(result["budget_violations"])
+        with sqlite3.connect(p) as conn:
+            self.assertEqual([r[1] for r in conn.execute("PRAGMA table_info(projects)")],["id"])
+
 if __name__ == "__main__":
     unittest.main()
