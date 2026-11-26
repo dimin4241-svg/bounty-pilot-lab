@@ -73,18 +73,52 @@ def compare(tasks,refs,baseline,candidate):
             "regressed":sum(x["passed"] and not y["passed"] for x,y in paired),
             "no_regression":all(not x["passed"] or y["passed"] for x,y in paired)}
 
+def adjudicate(tasks, references, answers, reviews):
+    """Combine structural scores with independent, manually entered prose reviews."""
+    result = score(tasks, references, answers)
+    decisions = index(reviews, ("id", "decision", "reviewer", "note"))
+    answered = {row["id"] for row in result["results"] if row["answered"]}
+    if not set(decisions) <= answered:
+        raise ValueError("Review must refer to a submitted answer")
+    for record in decisions.values():
+        if record["decision"] not in ("accepted", "rejected", "uncertain"):
+            raise ValueError("Unknown review decision")
+        if not all(isinstance(record[k], str) and record[k].strip()
+                   for k in ("reviewer", "note")):
+            raise ValueError("Reviewer and explanation required")
+    for row in result["results"]:
+        review = decisions.get(row["id"])
+        decision = review["decision"] if review else "pending"
+        row["manual_decision"] = decision
+        row["reviewed_pass"] = row["passed"] and decision == "accepted"
+    result["reviewed_count"] = len(decisions)
+    result["review_complete"] = set(decisions) == answered and all(
+        d["decision"] != "uncertain" for d in decisions.values())
+    result["reviewed_passed"] = sum(row["reviewed_pass"] for row in result["results"])
+    result["reviewed_accuracy"] = result["reviewed_passed"] / result["cases"]
+    result["notice"] = ("Review decisions are human attestations, not automatically "
+                        "verified facts or measurements of vulnerability discovery.")
+    return result
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tasks")
     parser.add_argument("references")
     parser.add_argument("answers")
-    parser.add_argument("--baseline")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--baseline")
+    mode.add_argument("--reviews", help="Independent manual review decisions (JSON list)")
     args=parser.parse_args()
     try:
         tasks,refs=map(load,(args.tasks,args.references))
         answers=load(args.answers, allow_empty=True)
-        result=compare(tasks,refs,load(args.baseline, allow_empty=True),answers) if args.baseline else score(tasks,refs,answers)
+        if args.reviews:
+            result = adjudicate(tasks, refs, answers, load(args.reviews, allow_empty=True))
+        else:
+            result = compare(tasks,refs,load(args.baseline, allow_empty=True),answers) if args.baseline else score(tasks,refs,answers)
         print(json.dumps(result,ensure_ascii=False,indent=2))
+        if args.reviews and not result["review_complete"]:
+            return 1
         return 1 if args.baseline and not result["no_regression"] else 0
     except (OSError,ValueError,TypeError) as exc:
         parser.exit(2,f"Error: {exc}\n")
