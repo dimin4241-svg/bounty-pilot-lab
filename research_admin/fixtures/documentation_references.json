@@ -1,0 +1,98 @@
+[
+  {
+    "id": "backup-01",
+    "label": "supported",
+    "source_ids": [
+      "log",
+      "verify"
+    ]
+  },
+  {
+    "id": "backup-02",
+    "label": "unresolved",
+    "source_ids": [
+      "log",
+      "policy"
+    ]
+  },
+  {
+    "id": "backup-03",
+    "label": "refuted",
+    "source_ids": [
+      "policy",
+      "drill"
+    ]
+  },
+  {
+    "id": "version-01",
+    "label": "supported",
+    "source_ids": [
+      "manifest",
+      "package"
+    ]
+  },
+  {
+    "id": "version-02",
+    "label": "unresolved",
+    "source_ids": [
+      "manifest",
+      "deployment"
+    ]
+  },
+  {
+    "id": "version-03",
+    "label": "refuted",
+    "source_ids": [
+      "plan",
+      "report"
+    ]
+  },
+  {
+    "id": "cost-01",
+    "label": "supported",
+    "source_ids": [
+      "budget",
+      "ledger"
+    ]
+  },
+  {
+    "id": "cost-02",
+    "label": "unresolved",
+    "source_ids": [
+      "ledger",
+      "status"
+    ]
+  },
+  {
+    "id": "cost-03",
+    "label": "refuted",
+    "source_ids": [
+      "budget",
+      "ledger"
+    ]
+  },
+  {
+    "id": "review-01",
+    "label": "supported",
+    "source_ids": [
+      "policy",
+      "record"
+    ]
+  },
+  {
+    "id": "review-02",
+    "label": "unresolved",
+    "source_ids": [
+      "timeline",
+      "record"
+    ]
+  },
+  {
+    "id": "review-03",
+    "label": "refuted",
+    "source_ids": [
+      "record",
+      "review"
+    ]
+  }
+]
