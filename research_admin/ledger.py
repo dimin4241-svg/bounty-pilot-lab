@@ -2,6 +2,8 @@
 import argparse
 import hashlib
 import json
+import os
+import stat
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -35,6 +37,14 @@ CREATE TABLE IF NOT EXISTS evaluations (
 OUTCOMES = {"pending","accepted","rejected","duplicate","downgraded","needs_review"}
 class Ledger:
     def __init__(self, path):
+        path = Path(path).expanduser()
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise ValueError("Database must be a regular file, not a link")
+        else:
+            os.close(fd)
         self.db = sqlite3.connect(path, timeout=10, isolation_level=None)
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
@@ -53,17 +63,21 @@ class Ledger:
             raise
 
     def project(self, name, limit_micro, note=""):
+        if not name.strip() or type(limit_micro) is not int or not 0 <= limit_micro <= 2**63-1:
+            raise ValueError("Project name and valid integer budget required")
         with self.transaction():
             self.db.execute("INSERT INTO projects(id,limit_micro,note) VALUES(?,?,?)",
                             (name,limit_micro,note))
 
     def reserve(self, name, charge_id, model, maximum):
-        if not isinstance(maximum,int) or maximum < 0:
+        if type(maximum) is not int or not 0 <= maximum <= 2**63-1:
             raise ValueError("Nonnegative integer microdollars required")
         with self.transaction():
-            row = self.db.execute("SELECT limit_micro FROM projects WHERE id=?", (name,)).fetchone()
+            row = self.db.execute("SELECT limit_micro,status FROM projects WHERE id=?", (name,)).fetchone()
             if row is None:
                 raise ValueError("Unknown project")
+            if row[1] == "archived":
+                raise ValueError("Project is archived")
             used = self.db.execute(
                 "SELECT COALESCE(SUM(COALESCE(actual,reserved)),0) FROM charges WHERE project=?",
                 (name,)).fetchone()[0]
@@ -73,7 +87,7 @@ class Ledger:
                             (charge_id,name,model,maximum))
 
     def settle(self, charge_id, actual):
-        if not isinstance(actual,int) or actual < 0:
+        if type(actual) is not int or not 0 <= actual <= 2**63-1:
             raise ValueError("Nonnegative integer microdollars required")
         with self.transaction():
             cur = self.db.execute(
@@ -166,6 +180,8 @@ def main():
         result = getattr(ledger,action)(**args)
         print(json.dumps(result,ensure_ascii=False,indent=2))
         return 1 if action == "verify" and result is False else 0
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        parser.exit(1, f"Error: {exc}\n")
     finally:
         ledger.close()
 

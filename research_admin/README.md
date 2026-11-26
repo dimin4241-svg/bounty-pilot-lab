@@ -46,3 +46,19 @@ python3 research_admin/quality.py --db "$DB" compare generic v1 mock-a v2 mock-b
 ```
 
 The comparison requires identical nonempty case IDs and reference labels on both sides, then computes accuracy, precision, recall, false-positive/negative counts, paired improvement/regression counts and cost deltas. Undefined ratios are null. The command consumes existing manually recorded evaluation rows; it does not generate or run benchmarks. No real-world model ranking can be inferred from the synthetic unit tests.
+
+## Operational checklist
+
+Use a private directory outside the repository. New database files, backups and static dashboard files are created with mode 0600; existing database permissions are not changed. Keep the parent directory private as well. Do not put actual reports, keys or provider credentials in this public repository.
+
+```sh
+umask 077
+mkdir -p "$HOME/.local/share/research-admin"
+chmod 700 "$HOME/.local/share/research-admin"
+DB="$HOME/.local/share/research-admin/ledger.db"
+python3 research_admin/maintenance.py --db "$DB" doctor
+python3 research_admin/maintenance.py --db "$DB" backup "$DB.backup"
+python3 -m unittest discover -s research_admin -p 'test_*.py' -v
+```
+
+The doctor is read-only and validates SQLite integrity, foreign keys and the base ledger tables. The backup uses SQLite's backup API and refuses to overwrite an existing file. Before restoring, close all writers, retain the original separately and verify the backup with doctor; the test suite verifies that a backup opens with matching administrative state. A new reservation for an archived project is rejected. The dedicated GitHub Actions workflow runs only the offline administrative unit tests under Python 3.9 and 3.12. This module is independent of the original research pipeline; CI coverage of this module is not evidence of security research effectiveness or full-project readiness.

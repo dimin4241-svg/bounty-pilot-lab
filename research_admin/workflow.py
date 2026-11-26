@@ -2,6 +2,7 @@
 import argparse
 import html
 import json
+import os
 from pathlib import Path
 
 from ledger import Ledger
@@ -161,7 +162,7 @@ def main():
             path = Path(args["output"])
             if path.suffix.lower() != ".html":
                 raise ValueError("Output must be an HTML file")
-            with path.open("x",encoding="utf-8") as f:
+            with os.fdopen(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "w", encoding="utf-8") as f:
                 f.write(render(db.snapshot()))
             print(str(path))
         else:
