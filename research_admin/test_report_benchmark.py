@@ -1,5 +1,5 @@
 import unittest
-from report_benchmark import score, compare
+from report_benchmark import score, compare, adjudicate
 
 TASKS=[
     {"id":"a","question":"Was the order delivered?","documents":{"d":"Delivery confirmed."}},
@@ -50,6 +50,39 @@ class BenchmarkTests(unittest.TestCase):
             score(TASKS,REFS[:-1],[])
         with self.assertRaises(ValueError):
             score(TASKS,[dict(r,source_ids=["bad"]) for r in REFS],[])
+
+    def test_manual_review_rejects_wrong_explanation(self):
+        answers = [answer("a", "supported", reason="The order was never delivered")]
+        reviews = [{"id":"a","decision":"rejected","reviewer":"human",
+                    "note":"Explanation contradicts the document"}]
+        result = adjudicate(TASKS, REFS, answers, reviews)
+        self.assertEqual(result["passed"], 1)
+        self.assertEqual(result["reviewed_passed"], 0)
+        self.assertTrue(result["review_complete"])
+
+    def test_pending_and_uncertain_reviews(self):
+        answers = [answer("a","supported"), answer("b","refuted")]
+        reviews = [{"id":"a","decision":"uncertain","reviewer":"human","note":"Needs review"}]
+        result = adjudicate(TASKS, REFS, answers, reviews)
+        self.assertFalse(result["review_complete"])
+        self.assertEqual(result["reviewed_passed"], 0)
+        self.assertFalse(adjudicate(TASKS, REFS, [], [])["review_complete"])
+
+    def test_accepted_review_does_not_override_structural_error(self):
+        answers = [answer("a","refuted"), answer("b","refuted")]
+        reviews = [{"id":key,"decision":"accepted","reviewer":"human","note":"Reviewed"}
+                   for key in ("a","b")]
+        result = adjudicate(TASKS, REFS, answers, reviews)
+        self.assertEqual(result["reviewed_passed"], 1)
+        self.assertAlmostEqual(result["reviewed_accuracy"], 1/3)
+
+    def test_invalid_manual_reviews(self):
+        answers = [answer("a","supported")]
+        review = {"id":"a","decision":"accepted","reviewer":"human","note":"Reviewed"}
+        for reviews in ([dict(review,id="b")], [review,review],
+                        [dict(review,note="")], [dict(review,decision="unknown")]):
+            with self.subTest(reviews=reviews), self.assertRaises(ValueError):
+                adjudicate(TASKS, REFS, answers, reviews)
 
 if __name__=="__main__":
     unittest.main()
