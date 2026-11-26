@@ -74,3 +74,13 @@ python3 research_admin/journal.py --db "$DB" handoff demo
 ```
 
 No agent prompting, automated action selection, exploit-chain construction, network requests or test execution is performed. Do not publish private journal contents. References for the general documentation and manual-review approach: OWASP WSTG Introduction and Reporting Structure; NIST developer verification guidance.
+
+## Offline documentation benchmark
+
+`report_benchmark.py` evaluates manually submitted answers to generic document-review questions, without invoking agents or running security tests. Task JSON records contain id, question and a mapping of source document IDs to text. Separate reference JSON records contain id, label (supported/refuted/unresolved) and required source_ids. Answer records contain id, label, source_ids and reason. Keep reference files outside participant access; separation is procedural, not an access-control sandbox. Missing answers count as failures, duplicate and unknown IDs are rejected, and a comparison flags individual regressions even if aggregate accuracy is unchanged. The evaluator verifies labels, source IDs and presence of a reason; it cannot establish the semantic validity of prose.
+
+```sh
+python3 research_admin/report_benchmark.py tasks.json references.json answers.json --baseline old-answers.json
+```
+
+Exit 1 indicates a paired regression and exit 2 invalid input. The unit tests use synthetic order/receipt documents. This is a documentation-quality benchmark, not a benchmark of security vulnerability detection or proof of improved AI performance.
