@@ -35,6 +35,18 @@ At commit `9ddf0aa17a06a0fa882064d586aecb97f9b1e01e`, [administrative CI](https:
 
 This checkpoint is not a release tag. Do not treat the maintenance branch as a tested replacement for main. The unresolved gates below remain open.
 
+## Observed Shannon export interoperability
+
+Read-only smoke test of `sarif_summary.py` and `summary_workspace.py` from Pilot Lab commit `950d6e9317163576db150b0f208a85f2fd8a355c` against the public [Shannon Photoview benchmark exports](https://github.com/KeygraphHQ/shannon/tree/main/benchmark), downloaded on 2026-11-26. Only aggregate metadata was read; no scanning engine or target was executed.
+
+| Export | Bytes | Reported records | SHA-256 |
+| --- | ---: | ---: | --- |
+| DeepSeek v4 Flash | 95060 | 18 | `5bff8b89b7fdc965a80a1e99c2598d69232eaf1b6abdbfd0ef7a6f4a80184c7b` |
+| Grok 4.6 | 47095 | 10 | `42a6c72b017e56f78656d5d128585bca47d5c779cbb43ec7ba8f05b70e6adffb` |
+| Claude Opus 5 | 101826 | 24 | `08796510f0484504b1f210914385e148cd09fda55704541a4b211f8d37328b54` |
+
+All three inputs passed summary creation and verification. Repeated imports reused the existing summary; final inventory contained three valid summaries and zero structurally invalid ones. Temporary test data was removed. These counts describe report records, not independently validated findings. This is compatibility evidence, not a comparative assessment of research performance. Shannon remains a separate tool.
+
 ## Release gates
 - [ ] Full synthetic CI and lint succeed on the exact proposed release commit.
 - [ ] Resolve the entrypoint size failure without relaxing the assertion or deleting required safeguards.
