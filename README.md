@@ -1,5 +1,13 @@
 <p align="center">
 
+## Research ledger P0
+
+Optional offline `bounty.py research-ledger` persists scope/revision-bound
+budget reservations, actual cost accounting, declared reviewer evidence hashes
+and triage feedback history. It does not invoke models, enforce provider limits,
+execute targets or independently verify findings.
+[Runbook](skills/bounty-pilot/references/research-ledger.md).
+
 ## Cantina-derived inter-operation invariant lab
 
 New offline `bounty.py sequence-invariants` integrates a bounded Solidity cue

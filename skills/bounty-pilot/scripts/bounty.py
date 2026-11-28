@@ -12014,6 +12014,7 @@ HELPER_COMMANDS = {
     'novelty-mechanism': ('novelty_mechanism_gate', 'offline root-cause duplicate risk grouping across reviewed local known findings'),
     'sequence-invariants': ('sequence_invariant_lab', 'offline source cues, cross-actor sequences, native evidence preflight and Cantina calibration'),
     'research-run': ('research_run_hub', 'one-command offline private multi-engine reviewer with scope snapshot'),
+    'research-ledger': ('research_ledger', 'private offline scope-bound budget and review ledger'),
     'mobile-decompile': ('mobile_decompile', 'opt-in offline local JADX/Apktool APK extraction with provenance'),
     'historical-paired-eval': ('historical_paired_eval', 'offline vulnerable/fixed paired evaluator; blinding not attested'),
     'graph-variant-lab': ('graph_variant_lab', 'offline bounded before/after guarded path and structural variant review'),
